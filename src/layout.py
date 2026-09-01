@@ -87,6 +87,12 @@ class PlacedRoom:
     y_m: float
     width_m: float
     depth_m: float
+    # The room type's real minimum plan size (src/defaults.py) — never the
+    # nominal/typical size. Carried through so the interactive canvas can
+    # let the owner shrink a room while dragging without ever going smaller
+    # than this.
+    min_width_m: float
+    min_depth_m: float
 
     @property
     def center(self) -> Point:
@@ -99,6 +105,11 @@ class CorridorSegment:
     y_m: float
     width_m: float
     depth_m: float
+    # A corridor's minimum in both directions is the fixed code hallway
+    # width itself (src.validation) — unlike rooms, it has no "typical"
+    # size to shrink from; nominal *is* the minimum on both axes.
+    min_width_m: float
+    min_depth_m: float
 
     @property
     def center(self) -> Point:
@@ -181,7 +192,7 @@ def _layout_from_rows(
     corridor_width: float,
     max_shrink: float,
 ) -> Tuple[
-    List[tuple[Room, str, float, float, float, float]],
+    List[tuple[Room, str, float, float, float, float, float, float]],
     List[Tuple[float, float, float, float]],
     float,
     List[Tuple[float, float, float]],
@@ -207,7 +218,7 @@ def _layout_from_rows(
         x = 0.0
         for room, base_name, w, d, min_w, min_d in row:
             d_final = row_height if abs(d - nominal_height) < 1e-9 else d
-            placed.append((room, base_name, x, y, w, d_final))
+            placed.append((room, base_name, x, y, w, d_final, min_w, min_d))
             x += w
         bands.append((row_widths[i], y, y + row_height))
         y += row_height
@@ -268,7 +279,7 @@ def pack_rooms(
         return (envelope.left_setback_m + x, envelope.back_setback_m + envelope.depth_m - y)
 
     placed_rooms = []
-    for room, base_name, x, y, w, d in placed:
+    for room, base_name, x, y, w, d, min_w, min_d in placed:
         site_x, site_y = to_site_coords(x, y + d)
         placed_rooms.append(
             PlacedRoom(
@@ -280,13 +291,19 @@ def pack_rooms(
                 y_m=site_y,
                 width_m=w,
                 depth_m=d,
+                min_width_m=min_w,
+                min_depth_m=min_d,
             )
         )
 
     corridor_segments = []
     for cx, cy, cw, cd in corridors:
         site_x, site_y = to_site_coords(cx, cy + cd)
-        corridor_segments.append(CorridorSegment(x_m=site_x, y_m=site_y, width_m=cw, depth_m=cd))
+        corridor_segments.append(
+            CorridorSegment(
+                x_m=site_x, y_m=site_y, width_m=cw, depth_m=cd, min_width_m=corridor_width, min_depth_m=corridor_width
+            )
+        )
 
     circulation_edges = _build_circulation_edges(placed, corridors, to_site_coords)
     footprint = [to_site_coords(x, y) for x, y in _footprint_polygon(bands)]
@@ -340,7 +357,7 @@ def _perpendicular_arrow(
 
 
 def _build_circulation_edges(
-    placed: List[tuple[Room, str, float, float, float, float]],
+    placed: List[tuple[Room, str, float, float, float, float, float, float]],
     corridors: List[Tuple[float, float, float, float]],
     to_site_coords,
 ) -> List[Tuple[Point, Point]]:
@@ -360,7 +377,7 @@ def _build_circulation_edges(
         x0, y0, x1, y1 = rect
         return ((x0 + x1) / 2, (y0 + y1) / 2)
 
-    nodes: List[Rect] = [rect_of(x, y, w, d) for _, _, x, y, w, d in placed]
+    nodes: List[Rect] = [rect_of(x, y, w, d) for _, _, x, y, w, d, _min_w, _min_d in placed]
     nodes += [rect_of(x, y, w, d) for x, y, w, d in corridors]
     centers = [center_of(rect) for rect in nodes]
 

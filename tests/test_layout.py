@@ -362,3 +362,32 @@ def test_footprint_is_a_plain_rectangle_when_everything_fits_in_one_row():
     ys = sorted({round(y, 6) for _, y in result.footprint})
     assert len(xs) == 2  # left wall and right wall only, no steps
     assert len(ys) == 2  # front wall and back wall only
+
+
+def test_placed_rooms_and_corridors_carry_their_real_minimum_size():
+    """The interactive canvas needs each box's true minimum (never the
+    nominal/typical size) so it can shrink a box while dragging without
+    ever going smaller than what's actually livable."""
+    from src.defaults import ROOM_DEFAULTS
+
+    rooms = [
+        Room(name="Entry", room_type="entry", is_entry=True),
+        Room(name="Kitchen", room_type="kitchen"),
+        Room(name="Bedroom", room_type="bedroom_primary", count=4),
+    ]
+    project = make_project(width=6.0, depth=40.0, rooms=rooms)
+    envelope = compute_buildable_envelope(project.site, project.setbacks)
+    result = pack_rooms(project, envelope)
+
+    for room in result.rooms:
+        default = ROOM_DEFAULTS[room.room_type]
+        assert room.min_width_m == pytest.approx(default.min_width_m)
+        assert room.min_depth_m == pytest.approx(default.min_depth_m)
+
+    assert result.corridors
+    for corridor in result.corridors:
+        # A corridor's minimum on both axes is the fixed code hallway
+        # width itself -- unlike a room, it has no "typical" size above
+        # that to shrink from.
+        assert corridor.min_width_m == pytest.approx(project.hallway_width_m)
+        assert corridor.min_depth_m == pytest.approx(project.hallway_width_m)

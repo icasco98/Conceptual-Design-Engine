@@ -3,17 +3,33 @@
 It shows Claude's recommended room grouping and layout (src.layout,
 src.layout_plan) — title, color-coded legend, and rationale included — as
 draggable boxes the owner can rearrange by hand to explore a different
-arrangement. Room and corridor *sizing* and colors never change here —
-only position is draggable. Corridors are draggable exactly like rooms
-(nothing here is a fixed zone); the site outline, the building footprint
-outline, the street marker, and faint recommended-circulation lines are
-the only static backdrop.
+arrangement. Corridors are draggable exactly like rooms (nothing here is a
+fixed zone); the site outline, the buildable envelope (setback) outline,
+the street marker, and faint recommended-circulation lines are the only
+static backdrop.
 
-Dragging a box pushes any other box it would overlap out of the way (and
-that box can cascade-push a third one), so two spaces can never end up
-overlapping — see `resolveOverlaps` in the generated JS. The box under the
-owner's cursor is "pinned": it goes exactly where they drag it and is
-never itself pushed by the resolution pass.
+Three constraints hold at all times while dragging, enforced client-side
+in the generated JS (never round-tripped through Python — see below):
+
+1. **No overlaps.** Dragging a box pushes any other box it would overlap
+   out of the way (and that box can cascade-push a third one) — see
+   `resolveOverlaps`. The box under the owner's cursor is "pinned": it
+   goes exactly where they drag it (position only, never resized) and is
+   never itself pushed by the resolution pass.
+2. **The setback line is a hard wall.** Every box — pinned or pushed — is
+   kept inside the buildable envelope (`data-env-*` on #canvas-container).
+   A pushed box shrinks toward its own minimum size before it's allowed to
+   cross that line; the dragged box's position is simply clamped to it.
+3. **Rooms may shrink, never below their minimum.** When resolving an
+   overlap or a setback violation, a non-pinned box first gives up size
+   (down to `data-min-width`/`data-min-height`, from `src/defaults.py` for
+   rooms and the fixed code hallway width for corridors) before it's
+   translated — same spirit as the initial packer's own compaction
+   (`src/layout.py`), just happening live as the owner drags.
+
+The building footprint outline is recomputed after every move — it's the
+live union of whatever boxes are currently on the canvas (`updateFootprint`
++ `computeFootprintPath`), not a fixed shape from the initial layout.
 
 Rendered as a single self-contained HTML/CSS/JS document via
 `streamlit.components.v1.html` — plain absolutely-positioned `<div>`s
@@ -24,8 +40,8 @@ Streamlit across every rerun, and the round trip was exactly what caused
 the flicker/reset the owner reported ("switching between the original
 shape and the modified shape"). A page that never sends anything back to
 Python during a drag has nothing to desync — dragging is instant, and a
-"Reset" button (also pure client-side JS) snaps everything back to
-Claude's recommended positions, stored in each box's own data attributes.
+"Reset" button (also pure client-side JS) snaps position AND size back to
+Claude's recommended layout, stored in each box's own data attributes.
 """
 
 from __future__ import annotations
@@ -87,10 +103,31 @@ def _esc(text: str) -> str:
     return html_module.escape(text, quote=True)
 
 
-def _static_svg(project: Project, result: LayoutResult) -> str:
-    """Site outline, building footprint outline, street marker(s), and
-    faint recommended-circulation lines — one non-interactive SVG layer
-    under the room/corridor boxes."""
+def _path_d(canvas_points: List[Tuple[float, float]]) -> str:
+    """Ordered polygon vertices (canvas px) -> an SVG path `d` string. Used
+    for the footprint outline both on first render (from `result.footprint`)
+    and — in the same format — by the client-side JS that recomputes it as
+    the owner drags (`computeFootprintPath` builds the identical `M ... Z`
+    shape from the live box positions)."""
+    if not canvas_points:
+        return ""
+    body = " L ".join(f"{x:.1f},{y:.1f}" for x, y in canvas_points)
+    return f"M {body} Z"
+
+
+def _envelope_canvas_rect(project: Project, envelope: BuildableEnvelope) -> Tuple[float, float, float, float]:
+    return _to_canvas_rect(
+        envelope.left_setback_m, envelope.back_setback_m, envelope.width_m, envelope.depth_m, project.site.depth_m
+    )
+
+
+def _static_svg(project: Project, envelope: BuildableEnvelope, result: LayoutResult) -> str:
+    """Site outline (property line), buildable envelope outline (the
+    setback line — a hard constraint boxes are kept inside of while
+    dragging), the building footprint outline (id="footprint-shape",
+    overwritten live by JS as boxes move), street marker(s), and faint
+    recommended-circulation lines — one non-interactive SVG layer under
+    the room/corridor boxes."""
     site = project.site
     width_px = site.width_m * PX_PER_METER
     depth_px = site.depth_m * PX_PER_METER
@@ -101,13 +138,17 @@ def _static_svg(project: Project, result: LayoutResult) -> str:
         f'rx="4" fill="none" stroke="#a8a8a3" stroke-width="1.5" />'
     ]
 
-    if result.footprint:
-        canvas_points = [_to_canvas_point(x, y, site.depth_m) for x, y in result.footprint]
-        path = " ".join(f"{x:.1f},{y:.1f}" for x, y in canvas_points)
-        parts.append(
-            f'<polygon points="{path}" fill="rgba(58,58,53,0.06)" '
-            f'stroke="#3a3a35" stroke-width="2.5" stroke-linejoin="round" />'
-        )
+    env_left, env_top, env_w, env_h = _envelope_canvas_rect(project, envelope)
+    parts.append(
+        f'<rect x="{env_left:.1f}" y="{env_top:.1f}" width="{env_w:.1f}" height="{env_h:.1f}" '
+        f'fill="none" stroke="#c9a15a" stroke-width="1.5" stroke-dasharray="6 4" />'
+    )
+
+    initial_d = _path_d([_to_canvas_point(x, y, site.depth_m) for x, y in result.footprint])
+    parts.append(
+        f'<path id="footprint-shape" d="{initial_d}" fill="rgba(58,58,53,0.06)" '
+        f'stroke="#3a3a35" stroke-width="2.5" stroke-linejoin="round" fill-rule="evenodd" />'
+    )
 
     for (x0, y0), (x1, y1) in result.circulation_edges:
         cx0, cy0 = _to_canvas_point(x0, y0, site.depth_m)
@@ -134,20 +175,26 @@ def _static_svg(project: Project, result: LayoutResult) -> str:
 
     total_w = width_px + 2 * MARGIN_PX
     total_h = depth_px + 2 * MARGIN_PX + STREET_LABEL_HEADROOM_PX
-    return f'<svg width="{total_w}" height="{total_h}" style="position:absolute;top:0;left:0;pointer-events:none;">{"".join(parts)}</svg>'
+    return f'<svg id="static-svg" width="{total_w}" height="{total_h}" style="position:absolute;top:0;left:0;pointer-events:none;">{"".join(parts)}</svg>'
 
 
 def _corridor_divs(project: Project, result: LayoutResult) -> str:
     """Corridors are draggable exactly like rooms — see the module
     docstring — so they share `.draggable` and the same data attributes
-    that hold each box's recommended (reset) position."""
+    that hold each box's recommended (reset) position AND size. A
+    corridor's minimum on both axes is the fixed code hallway width
+    itself — see `CorridorSegment.min_width_m`/`min_depth_m`."""
     divs = []
     for i, corridor in enumerate(result.corridors):
         left, top, w, h = _to_canvas_rect(corridor.x_m, corridor.y_m, corridor.width_m, corridor.depth_m, project.site.depth_m)
+        min_w_px = corridor.min_width_m * PX_PER_METER
+        min_h_px = corridor.min_depth_m * PX_PER_METER
         divs.append(
             f'<div class="corridor draggable" '
             f'style="left:{left:.1f}px;top:{top:.1f}px;width:{w:.1f}px;height:{h:.1f}px;" '
-            f'data-initial-left="{left:.1f}" data-initial-top="{top:.1f}">'
+            f'data-initial-left="{left:.1f}" data-initial-top="{top:.1f}" '
+            f'data-initial-width="{w:.1f}" data-initial-height="{h:.1f}" '
+            f'data-min-width="{min_w_px:.1f}" data-min-height="{min_h_px:.1f}">'
             f'<span class="label corridor-label">Hallway</span>'
             f"</div>"
         )
@@ -160,10 +207,14 @@ def _room_divs(project: Project, result: LayoutResult, assignments: Dict[str, st
         left, top, w, h = _to_canvas_rect(room.x_m, room.y_m, room.width_m, room.depth_m, project.site.depth_m)
         color = CATEGORY_COLORS.get(assignments.get(room.base_name, "category_a"), "#cccccc")
         entry_class = " entry" if room.is_entry else ""
+        min_w_px = room.min_width_m * PX_PER_METER
+        min_h_px = room.min_depth_m * PX_PER_METER
         divs.append(
             f'<div class="room-box draggable{entry_class}" '
             f'style="left:{left:.1f}px;top:{top:.1f}px;width:{w:.1f}px;height:{h:.1f}px;background:{color};" '
-            f'data-initial-left="{left:.1f}" data-initial-top="{top:.1f}">'
+            f'data-initial-left="{left:.1f}" data-initial-top="{top:.1f}" '
+            f'data-initial-width="{w:.1f}" data-initial-height="{h:.1f}" '
+            f'data-min-width="{min_w_px:.1f}" data-min-height="{min_h_px:.1f}">'
             f'<span class="label">{_esc(room.name)}</span>'
             f"</div>"
         )
@@ -193,6 +244,9 @@ def render_canvas_html(
     layout_plan: LayoutPlan,
 ) -> str:
     width_px, height_px = canvas_size_px(project.site)
+    env_left, env_top, env_w, env_h = _envelope_canvas_rect(project, envelope)
+    env_right = env_left + env_w
+    env_bottom = env_top + env_h
 
     return f"""
 <!doctype html>
@@ -318,19 +372,30 @@ def render_canvas_html(
     <h2 class="canvas-title">{_esc(layout_plan.grouping_label)}</h2>
     <div class="canvas-legend">{_legend_html(layout_plan.category_labels)}</div>
   </div>
-  <div id="canvas-container">
-    {_static_svg(project, result)}
+  <div id="canvas-container" data-env-left="{env_left:.1f}" data-env-top="{env_top:.1f}" data-env-right="{env_right:.1f}" data-env-bottom="{env_bottom:.1f}">
+    {_static_svg(project, envelope, result)}
     {_corridor_divs(project, result)}
     {_room_divs(project, result, assignments)}
   </div>
-  <button id="reset-btn" type="button">Reset to recommended positions</button>
+  <button id="reset-btn" type="button">Reset to recommended layout</button>
   <p class="canvas-rationale">{_esc(layout_plan.rationale)}</p>
 
 <script>
 (function() {{
   var container = document.getElementById('canvas-container');
+  var footprintPath = document.getElementById('footprint-shape');
   var boxes = Array.prototype.slice.call(document.querySelectorAll('.draggable'));
   var active = null, offsetX = 0, offsetY = 0;
+
+  // The buildable envelope in canvas px — the setback line. Every box,
+  // pinned or pushed, is kept inside this rectangle; see the module
+  // docstring for why this is a hard constraint rather than a suggestion.
+  var ENV = {{
+    left: parseFloat(container.dataset.envLeft),
+    top: parseFloat(container.dataset.envTop),
+    right: parseFloat(container.dataset.envRight),
+    bottom: parseFloat(container.dataset.envBottom)
+  }};
 
   function point(e) {{
     if (e.touches && e.touches.length) {{ return {{x: e.touches[0].clientX, y: e.touches[0].clientY}}; }}
@@ -346,7 +411,47 @@ def render_canvas_html(
     }};
   }}
 
+  function minOf(el) {{
+    return {{w: parseFloat(el.dataset.minWidth), h: parseFloat(el.dataset.minHeight)}};
+  }}
+
   function clamp(v, lo, hi) {{ return Math.max(lo, Math.min(v, hi)); }}
+
+  // Keeps a box fully inside the buildable envelope — shrinking it toward
+  // its own minimum first (never past it), only translating as a last
+  // resort. Applied to every box the resolution pass touches, so the
+  // setback constraint holds after every drag, not just at rest.
+  function clampToEnvelope(el) {{
+    var r = rectOf(el), m = minOf(el);
+    var left = r.left, top = r.top, width = r.width, height = r.height;
+
+    if (left < ENV.left) {{
+      width = Math.max(m.w, width - (ENV.left - left));
+      left = ENV.left;
+    }}
+    if (left + width > ENV.right) {{
+      width = Math.max(m.w, width - (left + width - ENV.right));
+    }}
+    if (left + width > ENV.right) {{
+      left = Math.max(ENV.left, ENV.right - width);
+    }}
+
+    if (top < ENV.top) {{
+      height = Math.max(m.h, height - (ENV.top - top));
+      top = ENV.top;
+    }}
+    if (top + height > ENV.bottom) {{
+      height = Math.max(m.h, height - (top + height - ENV.bottom));
+    }}
+    if (top + height > ENV.bottom) {{
+      top = Math.max(ENV.top, ENV.bottom - height);
+    }}
+
+    el.style.left = left + 'px';
+    el.style.top = top + 'px';
+    el.style.width = width + 'px';
+    el.style.height = height + 'px';
+  }}
 
   function overlapAmount(a, b) {{
     var ax2 = a.left + a.width, ay2 = a.top + a.height;
@@ -358,15 +463,19 @@ def render_canvas_html(
   }}
 
   // Pushes every box that overlaps another out of the way so nothing ever
-  // ends up overlapping. `pinned` (the box currently under the owner's
-  // cursor) always goes exactly where they put it and is never pushed;
-  // everything else can cascade-push a third box out of its own way.
+  // ends up overlapping, and keeps everything inside the buildable
+  // envelope. `pinned` (the box currently under the owner's cursor) always
+  // goes exactly where they put it, at its own size, and is never itself
+  // adjusted here; everything else may first shrink toward its own
+  // minimum size (on the axis it's being pushed along) before it's
+  // translated, and can cascade-push a third box out of its own way.
   function resolveOverlaps(pinned) {{
     for (var pass = 0; pass < 6; pass++) {{
       var any = false;
       for (var i = 0; i < boxes.length; i++) {{
         var a = boxes[i];
         if (a === pinned) continue;
+        var ma = minOf(a);
         for (var j = 0; j < boxes.length; j++) {{
           if (i === j) continue;
           var b = boxes[j];
@@ -376,15 +485,133 @@ def render_canvas_html(
           any = true;
           if (ov.x < ov.y) {{
             var dir = (ra.left + ra.width / 2) < (rb.left + rb.width / 2) ? -1 : 1;
-            a.style.left = clamp(ra.left + dir * ov.x, 0, container.clientWidth - ra.width) + 'px';
+            var newWidth = Math.max(ma.w, ra.width - ov.x);
+            var consumed = ra.width - newWidth;
+            var remaining = ov.x - consumed;
+            if (dir === -1) {{
+              // a sits left of b: shrink from the right edge (facing b)
+              // first, then push further left for whatever's left over.
+              a.style.width = newWidth + 'px';
+              if (remaining > 0) {{ a.style.left = (ra.left - remaining) + 'px'; }}
+            }} else {{
+              a.style.left = (ra.left + consumed) + 'px';
+              a.style.width = newWidth + 'px';
+              if (remaining > 0) {{ a.style.left = (parseFloat(a.style.left) + remaining) + 'px'; }}
+            }}
           }} else {{
             var dirY = (ra.top + ra.height / 2) < (rb.top + rb.height / 2) ? -1 : 1;
-            a.style.top = clamp(ra.top + dirY * ov.y, 0, container.clientHeight - ra.height) + 'px';
+            var newHeight = Math.max(ma.h, ra.height - ov.y);
+            var consumedY = ra.height - newHeight;
+            var remainingY = ov.y - consumedY;
+            if (dirY === -1) {{
+              a.style.height = newHeight + 'px';
+              if (remainingY > 0) {{ a.style.top = (ra.top - remainingY) + 'px'; }}
+            }} else {{
+              a.style.top = (ra.top + consumedY) + 'px';
+              a.style.height = newHeight + 'px';
+              if (remainingY > 0) {{ a.style.top = (parseFloat(a.style.top) + remainingY) + 'px'; }}
+            }}
           }}
+          clampToEnvelope(a);
         }}
       }}
       if (!any) break;
     }}
+  }}
+
+  // Traces the outline of the union of every current box (rooms +
+  // corridors) — the building's own footprint, recomputed from wherever
+  // things actually are right now rather than the initial layout. Works
+  // by rasterizing onto the grid formed by every box edge (coordinate
+  // compression keeps this small — a handful of rooms means a few dozen
+  // cells, not a full-resolution raster) and walking the boundary between
+  // covered/uncovered cells into one or more closed loops. Each cell
+  // contributes only the edges facing an uncovered neighbor, always in
+  // the same rotational direction, so loops close up on their own without
+  // needing any special-casing for T-junctions or multiple disjoint
+  // shapes (evenodd fill handles the rest, including any hole).
+  function computeFootprintPath() {{
+    var rects = boxes.map(rectOf);
+    if (!rects.length) return '';
+
+    var xsSet = {{}}, ysSet = {{}};
+    rects.forEach(function(r) {{
+      xsSet[r.left] = true; xsSet[r.left + r.width] = true;
+      ysSet[r.top] = true; ysSet[r.top + r.height] = true;
+    }});
+    var xs = Object.keys(xsSet).map(Number).sort(function(a, b) {{ return a - b; }});
+    var ys = Object.keys(ysSet).map(Number).sort(function(a, b) {{ return a - b; }});
+    var nx = xs.length - 1, ny = ys.length - 1;
+    if (nx <= 0 || ny <= 0) return '';
+
+    var covered = [];
+    for (var i = 0; i < nx; i++) {{
+      covered.push([]);
+      var cx = (xs[i] + xs[i + 1]) / 2;
+      for (var j = 0; j < ny; j++) {{
+        var cy = (ys[j] + ys[j + 1]) / 2;
+        var hit = false;
+        for (var k = 0; k < rects.length; k++) {{
+          var r = rects[k];
+          if (cx > r.left && cx < r.left + r.width && cy > r.top && cy < r.top + r.height) {{ hit = true; break; }}
+        }}
+        covered[i][j] = hit;
+      }}
+    }}
+
+    function isCovered(i, j) {{ return i >= 0 && i < nx && j >= 0 && j < ny && covered[i][j]; }}
+
+    var segs = [];
+    for (var i2 = 0; i2 < nx; i2++) {{
+      for (var j2 = 0; j2 < ny; j2++) {{
+        if (!covered[i2][j2]) continue;
+        if (!isCovered(i2 - 1, j2)) segs.push([[xs[i2], ys[j2]], [xs[i2], ys[j2 + 1]]]);
+        if (!isCovered(i2 + 1, j2)) segs.push([[xs[i2 + 1], ys[j2 + 1]], [xs[i2 + 1], ys[j2]]]);
+        if (!isCovered(i2, j2 - 1)) segs.push([[xs[i2], ys[j2]], [xs[i2 + 1], ys[j2]]]);
+        if (!isCovered(i2, j2 + 1)) segs.push([[xs[i2 + 1], ys[j2 + 1]], [xs[i2], ys[j2 + 1]]]);
+      }}
+    }}
+    if (!segs.length) return '';
+
+    var byStart = {{}};
+    segs.forEach(function(s, idx) {{
+      var key = s[0][0] + ',' + s[0][1];
+      byStart[key] = byStart[key] || [];
+      byStart[key].push(idx);
+    }});
+
+    var used = new Array(segs.length).fill(false);
+    var d = '';
+    for (var start = 0; start < segs.length; start++) {{
+      if (used[start]) continue;
+      var loopStart = segs[start][0];
+      var loop = [loopStart];
+      used[start] = true;
+      var next = segs[start][1];
+      var guard = 0;
+      while ((next[0] !== loopStart[0] || next[1] !== loopStart[1]) && guard < segs.length + 5) {{
+        var key2 = next[0] + ',' + next[1];
+        var candidates = byStart[key2] || [];
+        var found = -1;
+        for (var c = 0; c < candidates.length; c++) {{
+          if (!used[candidates[c]]) {{ found = candidates[c]; break; }}
+        }}
+        if (found === -1) break;
+        used[found] = true;
+        loop.push(next);
+        next = segs[found][1];
+        guard++;
+      }}
+      loop.push(next);
+      d += 'M ' + loop.map(function(p) {{ return p[0].toFixed(1) + ',' + p[1].toFixed(1); }}).join(' L ') + ' Z ';
+    }}
+    return d;
+  }}
+
+  function updateFootprint() {{
+    if (!footprintPath) return;
+    var d = computeFootprintPath();
+    if (d) {{ footprintPath.setAttribute('d', d); }}
   }}
 
   function onDown(e) {{
@@ -403,11 +630,12 @@ def render_canvas_html(
     var cRect = container.getBoundingClientRect();
     var newLeft = p.x - cRect.left - offsetX;
     var newTop = p.y - cRect.top - offsetY;
-    newLeft = clamp(newLeft, 0, container.clientWidth - active.offsetWidth);
-    newTop = clamp(newTop, 0, container.clientHeight - active.offsetHeight);
+    newLeft = clamp(newLeft, ENV.left, ENV.right - active.offsetWidth);
+    newTop = clamp(newTop, ENV.top, ENV.bottom - active.offsetHeight);
     active.style.left = newLeft + 'px';
     active.style.top = newTop + 'px';
     resolveOverlaps(active);
+    updateFootprint();
     e.preventDefault();
   }}
 
@@ -429,8 +657,13 @@ def render_canvas_html(
     for (var i = 0; i < boxes.length; i++) {{
       boxes[i].style.left = boxes[i].dataset.initialLeft + 'px';
       boxes[i].style.top = boxes[i].dataset.initialTop + 'px';
+      boxes[i].style.width = boxes[i].dataset.initialWidth + 'px';
+      boxes[i].style.height = boxes[i].dataset.initialHeight + 'px';
     }}
+    updateFootprint();
   }});
+
+  updateFootprint();
 }})();
 </script>
 </body>

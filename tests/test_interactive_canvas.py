@@ -108,9 +108,32 @@ def test_building_footprint_outline_is_drawn():
     html, result = _render(rooms)
 
     assert result.footprint
-    assert "<polygon points=" in html
-    # every footprint vertex should show up as a coordinate pair in the SVG
-    assert html.count(",") >= len(result.footprint)
+    assert '<path id="footprint-shape" d="M ' in html
+
+
+def test_footprint_recomputes_live_as_boxes_move():
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    # No fixed shape baked in at drag time — the outline is recomputed from
+    # wherever the boxes currently are, on load and after every move/reset.
+    assert "function computeFootprintPath" in html
+    assert "function updateFootprint" in html
+    assert html.count("updateFootprint();") >= 3  # onMove, reset handler, initial call
+
+
+def test_setback_envelope_bounds_and_room_minimums_are_exposed_to_js():
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    assert 'data-env-left="' in html
+    assert 'data-env-top="' in html
+    assert 'data-env-right="' in html
+    assert 'data-env-bottom="' in html
+    assert "ENV.left" in html and "ENV.right" in html
+    assert 'data-min-width="' in html
+    assert 'data-min-height="' in html
+    assert "clampToEnvelope" in html
 
 
 def test_collision_resolution_script_is_present():
@@ -148,6 +171,7 @@ def test_reset_button_and_drag_script_are_present():
 
     assert 'id="reset-btn"' in html
     assert "dataset.initialLeft" in html
+    assert "dataset.initialWidth" in html  # reset restores size, not just position
     assert "addEventListener('mousedown'" in html
 
 
