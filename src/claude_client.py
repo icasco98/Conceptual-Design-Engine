@@ -34,9 +34,13 @@ them to the homeowner in a few short, friendly sentences — no jargon, no \
 raw numbers dumped without context, no restating the issue codes. Where \
 relevant, connect the explanation to the priorities they told you about. \
 End with one concrete, low-effort suggestion for what they could tell you \
-next to resolve the biggest issue (e.g. a room to shrink, a setback to \
-double-check, a room to drop). Do not invent new numeric values — you may \
-reference the numbers already given to you, but do not compute new ones."""
+next to resolve the biggest issue — a room to shrink, drop, or move to a \
+different priority. Setbacks (2m street-facing, 1.5m neighbor-facing) are \
+confident defaults, not something to second-guess: never suggest "double \
+checking" or reconsidering a setback — only mention changing one if the \
+owner has already brought it up themselves. Do not invent new numeric \
+values — you may reference the numbers already given to you, but do not \
+compute new ones."""
 
 
 def explain_issues(

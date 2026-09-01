@@ -147,6 +147,24 @@ def render_sidebar(project: Project, envelope: BuildableEnvelope | None, issues:
             st.rerun()
 
 
+def _site_edge_boundary(position: str, width: float, depth: float) -> tuple:
+    return {
+        "front": ((0, depth), (width, depth)),
+        "back": ((0, 0), (width, 0)),
+        "left": ((0, 0), (0, depth)),
+        "right": ((width, 0), (width, depth)),
+    }[position]
+
+
+def _site_edge_label_anchor(position: str, width: float, depth: float, offset: float = 0.6) -> tuple:
+    return {
+        "front": ((width / 2, depth + offset), "center", "bottom"),
+        "back": ((width / 2, -offset), "center", "top"),
+        "left": ((-offset, depth / 2), "right", "center"),
+        "right": ((width + offset, depth / 2), "left", "center"),
+    }[position]
+
+
 def render_zoning_diagram(
     project: Project,
     envelope: BuildableEnvelope | None,
@@ -174,6 +192,13 @@ def render_zoning_diagram(
     ax.add_patch(
         patches.Rectangle((0, 0), site.width_m, site.depth_m, fill=False, edgecolor="#888888", linewidth=1.5)
     )
+    for edge in site.edges:
+        if edge.adjacency != "street":
+            continue
+        (x0, y0), (x1, y1) = _site_edge_boundary(edge.position, site.width_m, site.depth_m)
+        ax.plot([x0, x1], [y0, y1], color="#c0392b", linewidth=4, solid_capstyle="butt", zorder=4)
+        (lx, ly), ha, va = _site_edge_label_anchor(edge.position, site.width_m, site.depth_m)
+        ax.text(lx, ly, "STREET", color="#c0392b", fontsize=8, fontweight="bold", ha=ha, va=va, zorder=4)
 
     for corridor in result.corridors:
         ax.add_patch(
@@ -232,8 +257,8 @@ def render_zoning_diagram(
     legend_handles.append(Line2D([0], [0], color="#0b0b0b", alpha=0.6, lw=1.3, label="Circulation path"))
     ax.legend(handles=legend_handles, loc="upper left", bbox_to_anchor=(1.02, 1.0), fontsize=8, frameon=False)
 
-    ax.set_xlim(-0.5, site.width_m + 0.5)
-    ax.set_ylim(-0.5, site.depth_m + 0.5)
+    ax.set_xlim(-1.2, site.width_m + 1.2)
+    ax.set_ylim(-1.2, site.depth_m + 1.2)
     ax.set_aspect("equal")
     ax.set_xticks([])
     ax.set_yticks([])

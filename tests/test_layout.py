@@ -38,6 +38,23 @@ def _overlaps(a, b, tol=1e-9) -> bool:
     return not (ax1 <= bx0 + tol or bx1 <= ax0 + tol or ay1 <= by0 + tol or by1 <= ay0 + tol)
 
 
+def test_entry_lands_near_the_front_street_edge_not_the_back():
+    rooms = [
+        Room(name="Entry", room_type="entry", is_entry=True),
+        Room(name="Bedroom", room_type="bedroom_primary", count=3),
+    ]
+    project = make_project(width=10.0, depth=20.0, rooms=rooms)
+    envelope = compute_buildable_envelope(project.site, project.setbacks)
+    result = pack_rooms(project, envelope)
+
+    entry = next(r for r in result.rooms if r.is_entry)
+    front_edge_y = project.site.depth_m - envelope.front_setback_m
+    back_edge_y = envelope.back_setback_m
+
+    assert abs((entry.y_m + entry.depth_m) - front_edge_y) < 1e-6
+    assert entry.y_m > (front_edge_y + back_edge_y) / 2
+
+
 def test_no_overlaps_and_everything_fits_inside_envelope():
     rooms = [
         Room(name="Entry", room_type="entry", is_entry=True),

@@ -178,12 +178,20 @@ def pack_rooms(
     if total_height > envelope.depth_m > 0:
         placed, corridors, total_height = try_layout(envelope.depth_m / total_height)
 
+    # Row 0 (the entry) is built at local y=0 and subsequent rows increase
+    # y going "deeper" into the packing. That should land near the FRONT
+    # (street) edge, not the back — so the y-axis is flipped here: local
+    # y=0 maps to the far edge of the envelope (front_setback_m in from
+    # the site's front edge), and increasing local y moves back towards
+    # back_setback_m. `to_site_coords` takes a plain point; a rectangle's
+    # own origin needs `y + its own depth` passed in (see below) so the
+    # flip lands on the correct (smaller-y) corner.
     def to_site_coords(x: float, y: float) -> Point:
-        return (envelope.left_setback_m + x, envelope.back_setback_m + y)
+        return (envelope.left_setback_m + x, envelope.back_setback_m + envelope.depth_m - y)
 
     placed_rooms = []
     for room, base_name, x, y, w, d in placed:
-        site_x, site_y = to_site_coords(x, y)
+        site_x, site_y = to_site_coords(x, y + d)
         placed_rooms.append(
             PlacedRoom(
                 name=room.name,
@@ -199,7 +207,7 @@ def pack_rooms(
 
     corridor_segments = []
     for cx, cy, cw, cd in corridors:
-        site_x, site_y = to_site_coords(cx, cy)
+        site_x, site_y = to_site_coords(cx, cy + cd)
         corridor_segments.append(CorridorSegment(x_m=site_x, y_m=site_y, width_m=cw, depth_m=cd))
 
     circulation_edges = _build_circulation_edges(placed, corridors, to_site_coords)
