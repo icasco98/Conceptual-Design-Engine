@@ -18,12 +18,15 @@ every room ends up reachable, not just packed:
 2. The entry always anchors the path. Any room marked as the entry is
    moved to the front of the placement order before packing, so row 0
    always starts at the front door.
-3. Every room gets one path back to the entry. `circulation_edges` is a
-   list of (from_point, to_point) segments: entry -> first corridor ->
-   each subsequent corridor, and each room -> whichever corridor (or the
-   entry itself, for row 0) sits between it and the front door. Rendering
-   these as arrows is what makes "how do I get from one space to another"
-   visible on the diagram.
+3. Every room gets one path back to the entry, hop by hop through actual
+   touching neighbors only. `circulation_edges` is built by walking the
+   touching-graph breadth-first from the entry (rooms and corridors are
+   both nodes; an edge exists only where two rectangles literally share a
+   boundary segment) — so an arrow never skips over a room or corridor to
+   reach one further away, and each arrow is drawn perpendicular to the
+   wall it crosses (a shared vertical edge gets a horizontal arrow, a
+   shared horizontal edge gets a vertical one), not a diagonal line to a
+   room's center.
 
 Known limitation: a single room wider than the whole envelope isn't
 special-cased — it will visually overflow rather than being force-fit.
@@ -199,42 +202,93 @@ def pack_rooms(
         site_x, site_y = to_site_coords(cx, cy)
         corridor_segments.append(CorridorSegment(x_m=site_x, y_m=site_y, width_m=cw, depth_m=cd))
 
-    circulation_edges = _build_circulation_edges(placed, corridor_segments, to_site_coords)
+    circulation_edges = _build_circulation_edges(placed, corridors, to_site_coords)
 
     return LayoutResult(rooms=placed_rooms, corridors=corridor_segments, circulation_edges=circulation_edges)
 
 
+Rect = Tuple[float, float, float, float]  # x0, y0, x1, y1
+
+
+def _touching_edge(a: Rect, b: Rect, tol: float = 1e-6) -> Optional[Tuple[str, Point]]:
+    """If rectangles a and b share a boundary segment, return (axis,
+    midpoint) — axis is "x" when the shared edge is vertical (the two
+    rects sit side by side, so the connecting arrow should run
+    horizontally), or "y" when the shared edge is horizontal (stacked,
+    arrow runs vertically). None if they don't actually touch."""
+    ax0, ay0, ax1, ay1 = a
+    bx0, by0, bx1, by1 = b
+
+    if abs(ax1 - bx0) < tol or abs(bx1 - ax0) < tol:
+        y_lo, y_hi = max(ay0, by0), min(ay1, by1)
+        if y_hi - y_lo > tol:
+            shared_x = bx0 if abs(ax1 - bx0) < tol else ax0
+            return ("x", (shared_x, (y_lo + y_hi) / 2))
+
+    if abs(ay1 - by0) < tol or abs(by1 - ay0) < tol:
+        x_lo, x_hi = max(ax0, bx0), min(ax1, bx1)
+        if x_hi - x_lo > tol:
+            shared_y = by0 if abs(ay1 - by0) < tol else ay0
+            return ("y", ((x_lo + x_hi) / 2, shared_y))
+
+    return None
+
+
+def _perpendicular_arrow(
+    axis: str, midpoint: Point, from_center: Point, to_center: Point, inset: float = 0.35
+) -> Tuple[Point, Point]:
+    """A short arrow crossing straight through `midpoint`, perpendicular to
+    the shared wall, pointing from the `from_` side to the `to_` side."""
+    mx, my = midpoint
+    if axis == "x":
+        from_sign = -1.0 if from_center[0] < mx else 1.0
+        return (mx + from_sign * inset, my), (mx - from_sign * inset, my)
+    from_sign = -1.0 if from_center[1] < my else 1.0
+    return (mx, my + from_sign * inset), (mx, my - from_sign * inset)
+
+
 def _build_circulation_edges(
     placed: List[tuple[Room, str, float, float, float, float]],
-    corridor_segments: List[CorridorSegment],
+    corridors: List[Tuple[float, float, float, float]],
     to_site_coords,
 ) -> List[Tuple[Point, Point]]:
-    entry = next((p for p in placed if p[0].is_entry), None)
-    if entry is None:
+    """Breadth-first walk of the touching-graph (rooms + corridors as
+    nodes, an edge only where two rectangles share a boundary) starting
+    from the entry. Each node is connected by exactly one arrow — to
+    whichever touching neighbor first reached it — so every arrow is a
+    single hop between actual neighbors, never a shortcut past one."""
+    entry_index = next((i for i, p in enumerate(placed) if p[0].is_entry), None)
+    if entry_index is None:
         return []
 
-    entry_x, entry_y, entry_w, entry_d = entry[2], entry[3], entry[4], entry[5]
-    entry_center = to_site_coords(entry_x + entry_w / 2, entry_y + entry_d / 2)
+    def rect_of(x: float, y: float, w: float, d: float) -> Rect:
+        return (x, y, x + w, y + d)
 
+    def center_of(rect: Rect) -> Point:
+        x0, y0, x1, y1 = rect
+        return ((x0 + x1) / 2, (y0 + y1) / 2)
+
+    nodes: List[Rect] = [rect_of(x, y, w, d) for _, _, x, y, w, d in placed]
+    nodes += [rect_of(x, y, w, d) for x, y, w, d in corridors]
+    centers = [center_of(rect) for rect in nodes]
+
+    visited = [False] * len(nodes)
+    visited[entry_index] = True
+    queue = [entry_index]
     edges: List[Tuple[Point, Point]] = []
-    prev_corridor_center: Point | None = None
-    for corridor in corridor_segments:
-        anchor = prev_corridor_center if prev_corridor_center is not None else entry_center
-        edges.append((anchor, corridor.center))
-        prev_corridor_center = corridor.center
 
-    # Row index for each placed room, inferred from its y — row 0 rooms
-    # (same y as the entry) connect straight to the entry; deeper rooms
-    # connect to the corridor immediately before them.
-    row_ys = sorted({y for _, _, _, y, _, _ in placed})
-    for room, base_name, x, y, w, d in placed:
-        if room.is_entry:
-            continue
-        center = to_site_coords(x + w / 2, y + d / 2)
-        row_index = row_ys.index(y)
-        if row_index == 0:
-            edges.append((entry_center, center))
-        elif row_index - 1 < len(corridor_segments):
-            edges.append((corridor_segments[row_index - 1].center, center))
+    while queue:
+        current = queue.pop(0)
+        for other in range(len(nodes)):
+            if visited[other]:
+                continue
+            touch = _touching_edge(nodes[current], nodes[other])
+            if touch is None:
+                continue
+            visited[other] = True
+            axis, midpoint = touch
+            start, end = _perpendicular_arrow(axis, midpoint, centers[current], centers[other])
+            edges.append((to_site_coords(*start), to_site_coords(*end)))
+            queue.append(other)
 
     return edges

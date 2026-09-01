@@ -109,7 +109,11 @@ def test_entry_is_moved_to_front_regardless_of_placement_order():
     assert result.rooms[0].is_entry
 
 
-def test_circulation_edges_reach_every_non_entry_room():
+def test_circulation_is_a_single_hop_spanning_tree_from_entry():
+    # A spanning tree over every room + corridor, built one touching-pair
+    # hop at a time, has exactly (nodes - 1) edges — anything less means
+    # something didn't get reached; anything more (or a cycle) would mean
+    # a redundant/looping connection rather than one clean path per node.
     rooms = [
         Room(name="Entry", room_type="entry", is_entry=True),
         Room(name="Bedroom", room_type="bedroom_primary", count=4),
@@ -118,9 +122,42 @@ def test_circulation_edges_reach_every_non_entry_room():
     envelope = compute_buildable_envelope(project.site, project.setbacks)
     result = pack_rooms(project, envelope)
 
-    room_centers = {room.center for room in result.rooms if not room.is_entry}
-    edge_targets = {edge[1] for edge in result.circulation_edges}
-    assert room_centers.issubset(edge_targets)
+    total_nodes = len(result.rooms) + len(result.corridors)
+    assert len(result.corridors) >= 1  # this scenario should need multiple rows
+    assert len(result.circulation_edges) == total_nodes - 1
+
+
+def test_circulation_arrows_are_perpendicular_not_diagonal():
+    rooms = [
+        Room(name="Entry", room_type="entry", is_entry=True),
+        Room(name="Living Room", room_type="living_room"),
+        Room(name="Bedroom", room_type="bedroom_primary", count=4),
+    ]
+    project = make_project(width=8.0, depth=40.0, rooms=rooms)
+    envelope = compute_buildable_envelope(project.site, project.setbacks)
+    result = pack_rooms(project, envelope)
+
+    assert result.circulation_edges
+    for (x0, y0), (x1, y1) in result.circulation_edges:
+        # Axis-aligned: exactly one coordinate changes, never both (no diagonals).
+        assert abs(x0 - x1) < 1e-9 or abs(y0 - y1) < 1e-9
+
+
+def test_circulation_arrows_are_short_single_hops_not_skips():
+    # A skipped-over arrow would span roughly a room's full size; a
+    # genuine one-hop arrow only crosses the small inset on either side
+    # of the shared wall it's drawn at.
+    rooms = [
+        Room(name="Entry", room_type="entry", is_entry=True),
+        Room(name="Bedroom", room_type="bedroom_primary", count=4),
+    ]
+    project = make_project(width=6.0, depth=40.0, rooms=rooms)
+    envelope = compute_buildable_envelope(project.site, project.setbacks)
+    result = pack_rooms(project, envelope)
+
+    for (x0, y0), (x1, y1) in result.circulation_edges:
+        length = ((x1 - x0) ** 2 + (y1 - y0) ** 2) ** 0.5
+        assert length <= 1.0
 
 
 def test_no_entry_yields_no_circulation_edges_but_still_packs():
