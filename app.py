@@ -3,10 +3,12 @@
 Current scope: a conversational intake that extracts a structured site +
 room program from plain language, a deterministic geometry/validation
 layer that computes the buildable envelope and checks the room program
-against it, and a color-coded zoning diagram — Claude groups rooms into
+against it, a color-coded zoning diagram — Claude groups rooms into
 categories and suggests an adjacency order, then plain Python packs the
-actual rectangles (src/layout.py) so the geometry is always trustworthy.
-The interactive drag-to-rearrange canvas comes next — see README.md.
+actual rectangles (src/layout.py) so the geometry is always trustworthy —
+and an interactive canvas (src/interactive_canvas.py) where the owner can
+drag rooms around by hand to explore other arrangements on top of that
+recommendation.
 """
 
 from __future__ import annotations
@@ -19,10 +21,12 @@ import matplotlib.pyplot as plt
 import streamlit as st
 from dotenv import load_dotenv
 from matplotlib.lines import Line2D
+from streamlit_drawable_canvas import st_canvas
 
 from src.claude_client import explain_issues
 from src.extraction import extract_project
 from src.geometry import BuildableEnvelope, IncompleteSiteError, compute_buildable_envelope
+from src.interactive_canvas import build_initial_drawing, canvas_size_px, read_back_positions
 from src.layout import PlacedRoom, pack_rooms
 from src.layout_plan import LayoutPlan, plan_layout
 from src.models import Project
@@ -72,6 +76,8 @@ def init_state() -> None:
         st.session_state.project = Project()
     if "layout_plan" not in st.session_state:
         st.session_state.layout_plan = None
+    if "room_positions" not in st.session_state:
+        st.session_state.room_positions = {}
 
 
 def compute_envelope(project: Project) -> BuildableEnvelope | None:
@@ -144,6 +150,7 @@ def render_sidebar(project: Project, envelope: BuildableEnvelope | None, issues:
             st.session_state.history = []
             st.session_state.project = Project()
             st.session_state.layout_plan = None
+            st.session_state.room_positions = {}
             st.rerun()
 
 
@@ -270,6 +277,50 @@ def render_zoning_diagram(
     st.caption(layout_plan.rationale)
 
 
+def render_interactive_canvas(
+    project: Project,
+    envelope: BuildableEnvelope | None,
+    layout_plan: LayoutPlan | None,
+) -> None:
+    st.subheader("Try Rearranging Rooms")
+    st.caption(
+        "Drag a room to explore a different arrangement. Sizes and colors stay the same as "
+        "the recommendation above — only position changes. Circulation arrows and issue "
+        "checks above reflect Claude's recommendation, not what you drag here."
+    )
+
+    if envelope is None or not envelope.is_valid or not project.rooms or layout_plan is None:
+        st.info("This fills in once the zoning diagram above does.")
+        return
+
+    result = pack_rooms(project, envelope, layout_plan.placement_order)
+    assignments = {a.room_name: a.category for a in layout_plan.assignments}
+
+    initial_drawing, room_names = build_initial_drawing(
+        project, envelope, result, assignments, st.session_state.room_positions
+    )
+    width_px, height_px = canvas_size_px(project.site)
+
+    canvas_result = st_canvas(
+        background_color="#ffffff",
+        height=height_px,
+        width=width_px,
+        drawing_mode="transform",
+        initial_drawing=initial_drawing,
+        key="zoning_canvas",
+        display_toolbar=False,
+    )
+
+    if canvas_result.json_data is not None:
+        st.session_state.room_positions = read_back_positions(
+            canvas_result.json_data, room_names, project.site.depth_m
+        )
+
+    if st.button("Reset to recommended positions"):
+        st.session_state.room_positions = {}
+        st.rerun()
+
+
 def render_chat(history: list[dict]) -> str | None:
     chat_box = st.container(height=CHAT_HEIGHT_PX)
     with chat_box:
@@ -307,10 +358,14 @@ def process_new_message(prompt: str) -> None:
     if new_envelope is not None and new_envelope.is_valid and result.project.rooms:
         try:
             st.session_state.layout_plan = plan_layout(result.project)
+            # A genuinely new recommendation shouldn't fight stale drags
+            # from a previous room program/grouping.
+            st.session_state.room_positions = {}
         except Exception:  # noqa: BLE001 - diagram just won't refresh this turn
             pass
     else:
         st.session_state.layout_plan = None
+        st.session_state.room_positions = {}
 
 
 def main() -> None:
@@ -331,6 +386,7 @@ def main() -> None:
         st.rerun()
 
     render_zoning_diagram(st.session_state.project, envelope, st.session_state.layout_plan)
+    render_interactive_canvas(st.session_state.project, envelope, st.session_state.layout_plan)
 
 
 if __name__ == "__main__":

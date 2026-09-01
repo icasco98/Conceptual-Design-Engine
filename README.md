@@ -15,7 +15,7 @@ sequential stages are planned:
 Goal: turn a plain-language description of a house project into a
 zoning/bubble diagram of its rooms, before any detailed floor plan exists.
 
-**Current scope (this commit):** the first three steps of Phase 1 —
+**Current scope (this commit):** all four steps of Phase 1 —
 
 1. **Conversational intake.** You describe your project in the chat (site
    size, orientation, which sides face the street vs. neighbors, rooms you
@@ -29,15 +29,24 @@ zoning/bubble diagram of its rooms, before any detailed floor plan exists.
 3. **Zoning diagram.** Once the site and at least one room are described,
    a color-coded diagram appears below the chat: rooms as proportionally
    sized rectangles, grouped into 3 categories Claude picks based on your
-   stated priorities (e.g. privacy level), with the entry marked and
-   hallways hatched. Claude only decides the *grouping and adjacency*
-   (which rooms belong together, which should sit near each other); a
-   plain Python packing algorithm (`src/layout.py`) does the actual
-   arithmetic, so it's always geometrically valid — no overlaps, everything
-   fits inside the buildable envelope.
+   stated priorities (e.g. privacy level), with the entry marked, corridors
+   generated automatically between room clusters, and circulation arrows
+   showing how to get from the entry to any room (one hop at a time,
+   perpendicular to whatever wall it crosses — never a shortcut through an
+   unrelated room). Claude only decides the *grouping and adjacency* (which
+   rooms belong together, which should sit near each other); a plain Python
+   packing algorithm (`src/layout.py`) does the actual arithmetic, so it's
+   always geometrically valid — no overlaps, everything fits inside the
+   buildable envelope, every room reachable.
+4. **Interactive canvas.** Below the generated diagram, an editable canvas
+   (`src/interactive_canvas.py`, via `streamlit-drawable-canvas`) shows the
+   same rooms as draggable boxes — sizes and colors are locked, only
+   position moves — so you can explore a different arrangement by hand on
+   top of Claude's recommendation.
 
-**Not yet built:** dragging rooms to rearrange them by hand, with live
-adjacency feedback and a chat-driven revision loop. See Roadmap below.
+**Not yet built:** live adjacency/circulation feedback as you drag, and a
+chat-driven revision loop where the arrangement you dragged becomes the
+starting point for Claude's next suggestion. See Roadmap below.
 
 ### Design principles
 
@@ -88,15 +97,18 @@ pytest
 | `src/extraction.py` | Conversation → structured `Project` (Claude, structured output). |
 | `src/claude_client.py` | Anthropic client + plain-language explanation of issues. |
 | `src/layout_plan.py` | Claude picks room categories + adjacency order (structured output). |
-| `src/layout.py` | Deterministic rectangle packing — no LLM math, unit-tested. |
+| `src/layout.py` | Deterministic rectangle packing + circulation graph — no LLM math, unit-tested. |
+| `src/interactive_canvas.py` | Site/room ↔ canvas-pixel conversion for the drag canvas, unit-tested round-trip. |
 | `src/palette.py` | The 3 validated diagram colors (see dataviz notes in the module docstring). |
-| `tests/` | Unit tests for geometry/defaults/validation/layout. |
+| `tests/` | Unit tests for geometry/defaults/validation/layout/interactive canvas. |
 
 ## Roadmap
 
-- Interactive canvas: drag room rectangles to rearrange by hand, with
-  live-updating adjacencies.
-- Feedback loop: owner comments in chat → Claude revises the layout.
+- Live adjacency/circulation feedback as rooms are dragged in the
+  interactive canvas (today it only updates position; the generated
+  diagram above it keeps showing Claude's original recommendation).
+- Feedback loop: owner comments in chat → Claude revises the layout,
+  informed by whatever the owner dragged.
 - Phase 2 (massing) and Phase 3 (optimization), out of scope for now.
 
 ## Constraints baked in
