@@ -18,6 +18,7 @@ import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 import streamlit as st
 from dotenv import load_dotenv
+from matplotlib.lines import Line2D
 
 from src.claude_client import explain_issues
 from src.extraction import extract_project
@@ -163,7 +164,7 @@ def render_zoning_diagram(
         st.info("Working out a room grouping — say a bit more and it'll appear here.")
         return
 
-    placed = pack_rooms(project, envelope, layout_plan.placement_order)
+    result = pack_rooms(project, envelope, layout_plan.placement_order)
     assignments = {a.room_name: a.category for a in layout_plan.assignments}
     labels = layout_plan.category_labels
 
@@ -174,37 +175,61 @@ def render_zoning_diagram(
         patches.Rectangle((0, 0), site.width_m, site.depth_m, fill=False, edgecolor="#888888", linewidth=1.5)
     )
 
+    for corridor in result.corridors:
+        ax.add_patch(
+            patches.Rectangle(
+                (corridor.x_m, corridor.y_m),
+                corridor.width_m,
+                corridor.depth_m,
+                facecolor="#f2f2f2",
+                edgecolor="#999999",
+                hatch=CIRCULATION_HATCH,
+                linewidth=0.8,
+            )
+        )
+
     def room_style(room: PlacedRoom) -> dict:
         category = assignments.get(room.base_name, "category_a")
         style = {"facecolor": CATEGORY_COLORS.get(category, "#cccccc"), "edgecolor": "#333333", "linewidth": 1.0}
-        if room.room_type == "hallway":
-            style["hatch"] = CIRCULATION_HATCH
         if room.is_entry:
             style["edgecolor"] = ENTRY_BORDER_COLOR
             style["linewidth"] = 3.0
             style["linestyle"] = "--"
         return style
 
-    for room in placed:
+    for room in result.rooms:
         ax.add_patch(patches.Rectangle((room.x_m, room.y_m), room.width_m, room.depth_m, **room_style(room)))
         ax.text(
             room.x_m + room.width_m / 2,
             room.y_m + room.depth_m / 2,
-            room.name + (" (entry)" if room.is_entry else ""),
+            room.name,
             ha="center",
             va="center",
             fontsize=8,
             wrap=True,
+            zorder=3,
+        )
+
+    for start, end in result.circulation_edges:
+        ax.annotate(
+            "",
+            xy=end,
+            xytext=start,
+            arrowprops=dict(arrowstyle="-|>", color="#0b0b0b", lw=1.3, alpha=0.6, shrinkA=6, shrinkB=6),
+            zorder=2,
         )
 
     legend_handles = [
         patches.Patch(facecolor=CATEGORY_COLORS[key], edgecolor="#333333", label=getattr(labels, key))
         for key in ("category_a", "category_b", "category_c")
     ]
-    legend_handles.append(patches.Patch(facecolor="white", edgecolor="#333333", hatch=CIRCULATION_HATCH, label="Circulation (hallway)"))
+    legend_handles.append(
+        patches.Patch(facecolor="#f2f2f2", edgecolor="#999999", hatch=CIRCULATION_HATCH, label="Corridor")
+    )
     legend_handles.append(
         patches.Patch(facecolor="white", edgecolor=ENTRY_BORDER_COLOR, linewidth=2, linestyle="--", label="Entry")
     )
+    legend_handles.append(Line2D([0], [0], color="#0b0b0b", alpha=0.6, lw=1.3, label="Circulation path"))
     ax.legend(handles=legend_handles, loc="upper left", bbox_to_anchor=(1.02, 1.0), fontsize=8, frameon=False)
 
     ax.set_xlim(-0.5, site.width_m + 0.5)
