@@ -39,10 +39,18 @@ zoning/bubble diagram of its rooms, before any detailed floor plan exists.
    always geometrically valid — no overlaps, everything fits inside the
    buildable envelope, every room reachable.
 4. **Interactive canvas.** Below the generated diagram, an editable canvas
-   (`src/interactive_canvas.py`, via `streamlit-drawable-canvas`) shows the
-   same rooms as draggable boxes — sizes and colors are locked, only
-   position moves — so you can explore a different arrangement by hand on
-   top of Claude's recommendation.
+   (`src/interactive_canvas.py`) shows the same rooms as draggable boxes —
+   sizes and colors are locked, only position moves — so you can explore a
+   different arrangement by hand on top of Claude's recommendation. It's a
+   self-contained HTML/CSS/JS widget (`streamlit.components.v1.html`), not
+   a third-party Streamlit component: dragging happens entirely in the
+   browser with nothing sent back to Python, so there's no server round
+   trip for the two to fall out of sync over. The trade-off is that
+   dragging is local to that browser view — sending a new chat message
+   (or reloading the page) resets it back to Claude's recommended
+   positions, since Python was never told about the drag in the first
+   place. A "Reset to recommended positions" button (also pure JS) does
+   the same thing on demand.
 
 **Not yet built:** live adjacency/circulation feedback as you drag, and a
 chat-driven revision loop where the arrangement you dragged becomes the
@@ -62,6 +70,12 @@ starting point for Claude's next suggestion. See Roadmap below.
 - **Defaults are a starting point, not a black box.** Every room-sizing
   default lives in one readable table (`src/defaults.py`) and Claude tells
   you which ones it's relying on.
+- **The footprint is compacted, not just packed.** Each room may be nudged
+  up to 0.5m smaller than its nominal size — width to help it share a row
+  instead of forcing a wrap, depth to trim a row down to whichever room in
+  it actually needs the most depth — but never below that room type's
+  real minimum. A room only shrinks when doing so actually makes the
+  building smaller (`src/layout.py`, `MAX_SHRINK_M`).
 
 ## Setup
 
@@ -97,8 +111,8 @@ pytest
 | `src/extraction.py` | Conversation → structured `Project` (Claude, structured output). |
 | `src/claude_client.py` | Anthropic client + plain-language explanation of issues. |
 | `src/layout_plan.py` | Claude picks room categories + adjacency order (structured output). |
-| `src/layout.py` | Deterministic rectangle packing + circulation graph — no LLM math, unit-tested. |
-| `src/interactive_canvas.py` | Site/room ↔ canvas-pixel conversion for the drag canvas, unit-tested round-trip. |
+| `src/layout.py` | Deterministic rectangle packing, footprint compaction, and circulation graph — no LLM math, unit-tested. |
+| `src/interactive_canvas.py` | Renders the drag canvas as self-contained HTML/CSS/JS, unit-tested. |
 | `src/palette.py` | The 3 validated diagram colors (see dataviz notes in the module docstring). |
 | `tests/` | Unit tests for geometry/defaults/validation/layout/interactive canvas. |
 

@@ -3,4 +3,3 @@ anthropic>=0.90
 pydantic>=2.7
 python-dotenv>=1.0
 matplotlib>=3.8
-streamlit-drawable-canvas>=0.9.3

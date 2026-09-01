@@ -1,3 +1,5 @@
+import pytest
+
 from src.geometry import compute_buildable_envelope
 from src.layout import pack_rooms
 from src.models import Project, Room, Setbacks, Site, SiteEdge
@@ -209,3 +211,93 @@ def test_count_expands_into_named_instances():
     names = {room.name for room in result.rooms}
     assert names == {"Bedroom 1", "Bedroom 2", "Bedroom 3"}
     assert all(room.base_name == "Bedroom" for room in result.rooms)
+
+
+def test_width_shrinks_to_fit_one_more_room_into_the_row():
+    # Envelope width 5.0m. Room A takes 3.0m, leaving 2.0m. Room B's
+    # nominal width (2.3m) doesn't fit, but its shrink floor (2.3-0.5=1.8m,
+    # above its own 2.0m minimum) does -- so B should shrink to exactly
+    # fill the row (2.0m) rather than wrapping to a second row.
+    rooms = [
+        Room(name="Entry", room_type="entry", is_entry=True, explicit_width_m=0.1, explicit_depth_m=0.1),
+        Room(name="A", room_type="other", explicit_width_m=3.0, explicit_depth_m=3.0),
+        Room(name="B", room_type="other", explicit_width_m=2.3, explicit_depth_m=3.0),
+    ]
+    project = make_project(width=8.0 + 0.1, rooms=rooms)  # +0.1 to leave headroom for the tiny entry
+    envelope = compute_buildable_envelope(project.site, project.setbacks)
+    result = pack_rooms(project, envelope, placement_order=["Entry", "A", "B"])
+
+    room_b = next(r for r in result.rooms if r.name == "B")
+    assert room_b.width_m == pytest.approx(2.0, abs=1e-6)
+    assert room_b.width_m >= 2.0 - 1e-9  # never below "other"'s 2.0m minimum
+    assert len(result.corridors) == 0  # A and B shared one row -- no wrap needed
+
+
+def test_row_height_trims_only_the_deepest_room_not_below_its_minimum():
+    # Office (typical 3.0x3.3, min depth 2.7) and Bathroom (typical
+    # 1.8x2.4, min depth 1.75) side by side. The row's height is set by
+    # the office; it should trim toward its own minimum (3.3-0.5=2.8,
+    # above the 2.7 floor) while the shorter bathroom keeps its nominal
+    # 2.4m depth untouched.
+    rooms = [
+        Room(name="Entry", room_type="entry", is_entry=True, explicit_width_m=0.1, explicit_depth_m=0.1),
+        Room(name="Office", room_type="office"),
+        Room(name="Bathroom", room_type="bathroom"),
+    ]
+    project = make_project(width=9.1, rooms=rooms)
+    envelope = compute_buildable_envelope(project.site, project.setbacks)
+    result = pack_rooms(project, envelope, placement_order=["Entry", "Office", "Bathroom"])
+
+    office = next(r for r in result.rooms if r.name == "Office")
+    bathroom = next(r for r in result.rooms if r.name == "Bathroom")
+    assert office.depth_m == pytest.approx(2.8, abs=1e-6)
+    assert office.depth_m >= 2.7 - 1e-9  # never below office's minimum depth
+    assert bathroom.depth_m == pytest.approx(2.4, abs=1e-6)  # untouched -- wasn't the tall one
+
+
+def test_compaction_never_shrinks_a_room_below_its_own_minimum():
+    # A tight envelope that forces heavy shrinking -- every room's final
+    # size must still respect its own type minimum from src.defaults.
+    rooms = [
+        Room(name="Entry", room_type="entry", is_entry=True),
+        Room(name="Living Room", room_type="living_room"),
+        Room(name="Kitchen", room_type="kitchen"),
+        Room(name="Bedroom", room_type="bedroom_primary"),
+        Room(name="Bathroom", room_type="bathroom"),
+    ]
+    project = make_project(width=9.0, depth=12.0, rooms=rooms)
+    envelope = compute_buildable_envelope(project.site, project.setbacks)
+    result = pack_rooms(project, envelope)
+
+    minimums = {
+        "entry": (1.2, 1.2),
+        "living_room": (3.5, 4.0),
+        "kitchen": (2.7, 3.0),
+        "bedroom_primary": (3.3, 3.6),
+        "bathroom": (1.5, 1.75),
+    }
+    for room in result.rooms:
+        min_w, min_d = minimums[room.room_type]
+        assert room.width_m >= min_w - 1e-6, f"{room.name} width {room.width_m} below minimum {min_w}"
+        assert room.depth_m >= min_d - 1e-6, f"{room.name} depth {room.depth_m} below minimum {min_d}"
+
+
+def test_width_is_left_alone_when_the_row_already_has_room_to_spare():
+    # Width only ever shrinks to avoid a wrap -- with a wide-open envelope
+    # there's no wrap to avoid, so nominal widths should be untouched.
+    # (Depth is different: the tallest room in a row is always trimmed
+    # toward its minimum, spare envelope or not -- that's the "always
+    # minimize the footprint" rule, covered by the row-height test above.)
+    rooms = [
+        Room(name="Entry", room_type="entry", is_entry=True),
+        Room(name="Kitchen", room_type="kitchen"),
+    ]
+    project = make_project(width=30.0, depth=30.0, rooms=rooms)
+    envelope = compute_buildable_envelope(project.site, project.setbacks)
+    result = pack_rooms(project, envelope)
+
+    from src.defaults import ROOM_DEFAULTS
+
+    kitchen = next(r for r in result.rooms if r.name == "Kitchen")
+    typical = ROOM_DEFAULTS["kitchen"]
+    assert kitchen.width_m == pytest.approx(typical.typical_width_m, abs=1e-6)

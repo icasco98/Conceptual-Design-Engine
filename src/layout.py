@@ -27,16 +27,27 @@ every room ends up reachable, not just packed:
    wall it crosses (a shared vertical edge gets a horizontal arrow, a
    shared horizontal edge gets a vertical one), not a diagonal line to a
    room's center.
+4. The footprint is compacted, not just packed. Rooms are sized at their
+   nominal (explicit or typical) width/depth, but each one may be nudged
+   up to MAX_SHRINK_M (0.5m) smaller — width to help it fit an extra room
+   into a row instead of forcing a wrap, depth to trim a row down to
+   whichever of its rooms actually needs the most depth — and never below
+   that room type's real minimum (src/defaults.py). This only ever makes
+   the building's footprint smaller, never a room's stated/typical size
+   bigger, and a room only shrinks when doing so genuinely reduces the
+   footprint (a room that already fits, or isn't the tallest in its row,
+   keeps its nominal size).
 
 Known limitation: a single room wider than the whole envelope isn't
 special-cased — it will visually overflow rather than being force-fit.
 That's rare for realistic house programs and, more importantly, the
 project's own room-vs-envelope area check (src/validation.py) already
-warns the owner before it gets to this stage. Likewise, when the room
-program is scaled down to fit (see below), the corridor strips scale
-with everything else — for a conceptual diagram that's an acceptable
-approximation, and the area-exceeds-envelope check already flags the
-underlying overflow to the owner.
+warns the owner before it gets to this stage. If the room program still
+doesn't fit after compaction, the existing last-resort fallback (a
+uniform proportional scale-down of everything, corridors included) takes
+over — unlike the compaction above, that fallback does not respect
+per-room minimums, but it only ever engages in a scenario the
+area-exceeds-envelope validation check has already flagged to the owner.
 """
 
 from __future__ import annotations
@@ -49,6 +60,11 @@ from src.geometry import BuildableEnvelope
 from src.models import Project, Room
 
 Point = Tuple[float, float]
+
+# How much smaller (in meters, per dimension) a room may be nudged from its
+# nominal size to make the overall footprint more compact. Never applied
+# below the room type's own minimum (src/defaults.py).
+MAX_SHRINK_M = 0.5
 
 
 @dataclass(frozen=True)
@@ -114,20 +130,28 @@ def _expand_and_order(rooms: List[Room], order: List[str]) -> List[tuple[Room, s
 
 
 def _form_rows(
-    footprints: List[tuple[Room, str, float, float]],
+    footprints: List[tuple[Room, str, float, float, float, float]],
     envelope_width: float,
-    scale: float,
-) -> List[List[tuple[Room, str, float, float]]]:
-    rows: List[List[tuple[Room, str, float, float]]] = []
-    current: List[tuple[Room, str, float, float]] = []
+    max_shrink: float,
+) -> List[List[tuple[Room, str, float, float, float, float]]]:
+    """Place rooms left-to-right, wrapping into a new row when one doesn't
+    fit. Before wrapping, try shrinking the room's width (never below its
+    own minimum, never by more than `max_shrink`) to exactly fill the row's
+    remaining space instead — one fewer row is a smaller footprint."""
+    rows: List[List[tuple[Room, str, float, float, float, float]]] = []
+    current: List[tuple[Room, str, float, float, float, float]] = []
     row_width = 0.0
-    for room, base_name, w, d in footprints:
-        w, d = w * scale, d * scale
+    for room, base_name, w, d, min_w, min_d in footprints:
         if current and row_width + w > envelope_width + 1e-9:
-            rows.append(current)
-            current = []
-            row_width = 0.0
-        current.append((room, base_name, w, d))
+            shrink_floor = max(min_w, w - max_shrink)
+            available = envelope_width - row_width
+            if available >= shrink_floor - 1e-9:
+                w = available
+            else:
+                rows.append(current)
+                current = []
+                row_width = 0.0
+        current.append((room, base_name, w, d, min_w, min_d))
         row_width += w
     if current:
         rows.append(current)
@@ -135,20 +159,29 @@ def _form_rows(
 
 
 def _layout_from_rows(
-    rows: List[List[tuple[Room, str, float, float]]],
+    rows: List[List[tuple[Room, str, float, float, float, float]]],
     envelope: BuildableEnvelope,
     corridor_width: float,
+    max_shrink: float,
 ) -> Tuple[List[tuple[Room, str, float, float, float, float]], List[Tuple[float, float, float, float]], float]:
     """Place rows top-to-bottom with a corridor strip between each pair.
-    Returns (placed rooms with x/y, corridor rects, total height used)."""
+    A row's height is set by its deepest room; that room (or rooms, on a
+    tie) gets trimmed toward its own minimum (never past it, never by more
+    than `max_shrink`) since a shallower row is a smaller footprint —
+    shorter rooms in the same row already fit within that height and keep
+    their nominal depth. Returns (placed rooms with x/y, corridor rects,
+    total height used)."""
     placed = []
     corridors: List[Tuple[float, float, float, float]] = []
     y = 0.0
     for i, row in enumerate(rows):
-        row_height = max((d for _, _, _, d in row), default=0.0)
+        nominal_height = max((d for _, _, _, d, _, _ in row), default=0.0)
+        floors_at_max = [min_d for _, _, _, d, _, min_d in row if abs(d - nominal_height) < 1e-9]
+        row_height = max(max(floors_at_max), nominal_height - max_shrink) if floors_at_max else nominal_height
         x = 0.0
-        for room, base_name, w, d in row:
-            placed.append((room, base_name, x, y, w, d))
+        for room, base_name, w, d, min_w, min_d in row:
+            d_final = row_height if abs(d - nominal_height) < 1e-9 else d
+            placed.append((room, base_name, x, y, w, d_final))
             x += w
         y += row_height
         if i < len(rows) - 1:
@@ -164,19 +197,18 @@ def pack_rooms(
 ) -> LayoutResult:
     ordered = _expand_and_order(project.rooms, placement_order or [])
     footprints = [
-        (room, base_name, *resolve_footprint(room.room_type, room.explicit_width_m, room.explicit_depth_m)[:2])
+        (room, base_name, *resolve_footprint(room.room_type, room.explicit_width_m, room.explicit_depth_m))
         for room, base_name in ordered
     ]
 
     corridor_width = project.hallway_width_m
 
-    def try_layout(scale: float):
-        rows = _form_rows(footprints, envelope.width_m, scale)
-        return _layout_from_rows(rows, envelope, corridor_width * scale)
-
-    placed, corridors, total_height = try_layout(1.0)
-    if total_height > envelope.depth_m > 0:
-        placed, corridors, total_height = try_layout(envelope.depth_m / total_height)
+    rows = _form_rows(footprints, envelope.width_m, MAX_SHRINK_M)
+    placed, corridors, _ = _layout_from_rows(rows, envelope, corridor_width, MAX_SHRINK_M)
+    # If it still doesn't fit after compaction, that's left as-is rather
+    # than forced smaller — no room ever goes below its real minimum, and
+    # src.validation's area-exceeds-envelope check already tells the owner
+    # about the underlying overflow in plain language.
 
     # Row 0 (the entry) is built at local y=0 and subsequent rows increase
     # y going "deeper" into the packing. That should land near the FRONT

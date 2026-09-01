@@ -19,14 +19,14 @@ import os
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 import streamlit as st
+import streamlit.components.v1 as components
 from dotenv import load_dotenv
 from matplotlib.lines import Line2D
-from streamlit_drawable_canvas import st_canvas
 
 from src.claude_client import explain_issues
 from src.extraction import extract_project
 from src.geometry import BuildableEnvelope, IncompleteSiteError, compute_buildable_envelope
-from src.interactive_canvas import CANVAS_BACKGROUND, build_initial_drawing, canvas_size_px
+from src.interactive_canvas import canvas_size_px, render_canvas_html
 from src.layout import PlacedRoom, pack_rooms
 from src.layout_plan import LayoutPlan, plan_layout
 from src.models import Project
@@ -76,10 +76,6 @@ def init_state() -> None:
         st.session_state.project = Project()
     if "layout_plan" not in st.session_state:
         st.session_state.layout_plan = None
-    if "canvas_drawing" not in st.session_state:
-        st.session_state.canvas_drawing = None
-    if "canvas_room_names" not in st.session_state:
-        st.session_state.canvas_room_names = []
 
 
 def compute_envelope(project: Project) -> BuildableEnvelope | None:
@@ -152,8 +148,6 @@ def render_sidebar(project: Project, envelope: BuildableEnvelope | None, issues:
             st.session_state.history = []
             st.session_state.project = Project()
             st.session_state.layout_plan = None
-            st.session_state.canvas_drawing = None
-            st.session_state.canvas_room_names = []
             st.rerun()
 
 
@@ -289,45 +283,24 @@ def render_interactive_canvas(
     st.caption(
         "Drag a room to explore a different arrangement. Sizes and colors stay the same as "
         "the recommendation above — only position changes. Circulation arrows and issue "
-        "checks above reflect Claude's recommendation, not what you drag here."
+        "checks above reflect Claude's recommendation, not what you drag here. Dragging is "
+        "local to this browser view — sending a new chat message resets it to the recommendation."
     )
 
     if envelope is None or not envelope.is_valid or not project.rooms or layout_plan is None:
         st.info("This fills in once the zoning diagram above does.")
         return
 
-    # Built once per layout, not on every rerun — see the module docstring
-    # in src/interactive_canvas.py for why that matters (it's the fix for
-    # the flicker/reset the canvas used to show on every interaction).
-    if st.session_state.canvas_drawing is None:
-        result = pack_rooms(project, envelope, layout_plan.placement_order)
-        assignments = {a.room_name: a.category for a in layout_plan.assignments}
-        drawing, room_names = build_initial_drawing(project, envelope, result, assignments, {})
-        st.session_state.canvas_drawing = drawing
-        st.session_state.canvas_room_names = room_names
+    result = pack_rooms(project, envelope, layout_plan.placement_order)
+    assignments = {a.room_name: a.category for a in layout_plan.assignments}
+    html_doc = render_canvas_html(project, envelope, result, assignments)
+    _, height_px = canvas_size_px(project.site)
 
-    width_px, height_px = canvas_size_px(project.site)
-
-    canvas_result = st_canvas(
-        background_color=CANVAS_BACKGROUND,
-        height=height_px,
-        width=width_px,
-        drawing_mode="transform",
-        initial_drawing=st.session_state.canvas_drawing,
-        key="zoning_canvas",
-        display_toolbar=False,
-    )
-
-    # Feed back exactly what the canvas just reported, so next render
-    # passes in the same data it already has — not a value reconstructed
-    # from meters, which can differ by float noise and read as "changed."
-    if canvas_result.json_data is not None:
-        st.session_state.canvas_drawing = canvas_result.json_data
-
-    if st.button("Reset to recommended positions"):
-        st.session_state.canvas_drawing = None
-        st.session_state.canvas_room_names = []
-        st.rerun()
+    # A plain self-contained HTML/JS widget, not a Streamlit component:
+    # dragging happens entirely in the browser with nothing sent back to
+    # Python, so there's no round trip for the two states to fall out of
+    # sync over — see the module docstring in src/interactive_canvas.py.
+    components.html(html_doc, height=height_px + 50, scrolling=False)
 
 
 def render_chat(history: list[dict]) -> str | None:
@@ -367,17 +340,10 @@ def process_new_message(prompt: str) -> None:
     if new_envelope is not None and new_envelope.is_valid and result.project.rooms:
         try:
             st.session_state.layout_plan = plan_layout(result.project)
-            # A genuinely new recommendation shouldn't fight stale drags
-            # from a previous room program/grouping — force the canvas to
-            # rebuild fresh next render.
-            st.session_state.canvas_drawing = None
-            st.session_state.canvas_room_names = []
         except Exception:  # noqa: BLE001 - diagram just won't refresh this turn
             pass
     else:
         st.session_state.layout_plan = None
-        st.session_state.canvas_drawing = None
-        st.session_state.canvas_room_names = []
 
 
 def main() -> None:
