@@ -69,6 +69,18 @@ zoning/bubble diagram of its rooms, before any detailed floor plan exists.
      exactly, so it's easy to close an accidental sliver of empty space
      between zones instead of pixel-hunting for the exact touching spot.
 
+   **Shapes and the footprint.** A room's model is always a rectangle plus
+   a rotation — that's what the schedule reports and what resize edits —
+   but what it *draws* can be a polygon. Put a room next to a rotated one
+   and it grows a wedge that reaches over and stops flush against the
+   rotated room's slanted wall, so the triangular slot between them
+   becomes circulation instead of dead space. The wedge is clipped against
+   the neighbour's own wall line, so it meets that wall exactly and can
+   never cross it, and it's abandoned if it would swallow a third room.
+   The building outline is a true union of those shapes, so it follows a
+   rotated room's diagonal walls instead of approximating them with a
+   staircase.
+
    **Room schedule.** In the column left of the canvas, a table lists
    every box's current width, depth, and rotation in meters/degrees. It
    is the only room table in the app — the sidebar carries site, setback,
@@ -204,7 +216,7 @@ pytest
 | `src/claude_client.py` | Anthropic client + plain-language explanation of issues. |
 | `src/layout_plan.py` | Claude picks room categories + adjacency order (structured output). |
 | `src/layout.py` | Deterministic rectangle packing, footprint compaction, building footprint outline, and circulation graph — no LLM math, unit-tested. |
-| `src/interactive_canvas.py` | Renders the interactive zoning diagram (title, legend, live door arrows, a 0.25m snap grid, selection-gated draggable/resizable/rotatable/deletable rooms and hallways with multi-select group rotate/delete, a live-synced editable room schedule in a column left of the drawing, gap-closing snap, true rotated-shape collision, live footprint outline, setback-constrained collision resolution with shrink-toward-minimum) as self-contained HTML/CSS/JS, unit-tested. |
+| `src/interactive_canvas.py` | Renders the interactive zoning diagram (title, legend, live door arrows, a 0.25m snap grid, selection-gated draggable/resizable/rotatable/deletable rooms and hallways with multi-select group rotate/delete, a live-synced editable room schedule in a column left of the drawing, display-shape morphing around rotated neighbours, a true polygon-union footprint outline, gap-closing snap, true rotated-shape collision, live footprint outline, setback-constrained collision resolution with shrink-toward-minimum) as self-contained HTML/CSS/JS, unit-tested. |
 | `src/palette.py` | The 3 validated diagram colors (see dataviz notes in the module docstring). |
 | `tests/` | Unit tests for geometry/defaults/validation/layout/interactive canvas. |
 

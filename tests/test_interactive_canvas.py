@@ -176,13 +176,14 @@ def test_rotation_inflates_the_effective_rect_used_for_collision_and_footprint()
 
     # Rotating a box does push its neighbors and does grow the footprint --
     # resolveOverlaps reads the rotated bounding box (effectiveRectOf) for
-    # push magnitude, and computeFootprintPath reads the box's true
-    # rotated shape (obbOf/pointInObb) for its coverage test.
+    # push magnitude, and the footprint union builds each box's polygon
+    # from its true rotated corners (obbOf/cornersOfObb), never the AABB.
     assert "function effectiveRectOf" in html
     assert "effectiveRectOf(a), rb = effectiveRectOf(b)" in html
     assert "function obbOf" in html
-    assert "function pointInObb" in html
-    assert "pointInObb(cx, cy, obbs[k])" in html
+    assert "function cornersOfObb" in html
+    assert "function polyOfBox" in html
+    assert "cornersOfObb(obbOf(el))" in html
 
 
 def test_rotated_boxes_can_actually_touch_not_just_get_close():
@@ -405,3 +406,50 @@ def test_canvas_size_matches_site_proportions():
     assert width_px < height_px
     assert 400 < width_px < 700
     assert 700 < height_px < 900
+
+
+def test_footprint_is_a_true_polygon_union_not_a_rectilinear_raster():
+    """A rotated room's diagonal walls must reach the outline as diagonals.
+    The old rasterizer traced only axis-aligned cell boundaries, so a
+    rotated room came out as a staircase that visibly missed its corners."""
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    assert "function computeFootprintPath" in html
+    assert "function segCrossT" in html          # split at real crossings
+    assert "function projectionT" in html        # ...and at T-junctions
+    assert "function weldEndpoints" in html      # so loops can close
+    assert "function pointInPoly" in html
+    # The rasterizer's coordinate-compression grid is gone for good.
+    assert "covered[i][j]" not in html
+    assert "isCovered(" not in html
+    # An unclosed walk stays open instead of being closed across open floor.
+    assert "closed ? ' Z ' : ' '" in html
+
+
+def test_boxes_morph_around_a_rotated_neighbor_but_keep_a_rectangular_model():
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    assert "function morphedPolygonFor" in html
+    assert "function clipToHalfPlane" in html
+    assert "function growthHitsAnotherBox" in html
+    assert "function applyDisplayShapes" in html
+    # Painting moved to the .fill child so the box itself stays a plain
+    # rectangle for the schedule, resize and collision.
+    assert '<span class="fill"' in html
+    assert ".room-box > .fill {" in html
+    # Shapes are rebuilt before the footprint that consumes them.
+    refresh = html.split("function refreshDiagram")[1][:200]
+    assert refresh.index("applyDisplayShapes();") < refresh.index("updateFootprint();")
+
+
+def test_box_sizes_come_from_the_inline_style_not_rounded_offsets():
+    """offsetWidth rounds to whole pixels; against a fractional left that
+    leaves flush rooms ~0.2px apart, which fragments the footprint union
+    and made the schedule report 1.19m for a 1.20m hallway."""
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    assert "el.style.width ? parseFloat(el.style.width) : el.offsetWidth" in html
+    assert "el.style.height ? parseFloat(el.style.height) : el.offsetHeight" in html
