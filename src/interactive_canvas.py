@@ -2,34 +2,66 @@
 
 It shows Claude's recommended room grouping and layout (src.layout,
 src.layout_plan) — title, color-coded legend, and rationale included — as
-draggable boxes the owner can rearrange by hand to explore a different
-arrangement. Corridors are draggable exactly like rooms (nothing here is a
-fixed zone); the site outline, the buildable envelope (setback) outline,
-the street marker, and faint recommended-circulation lines are the only
-static backdrop.
+draggable, resizable, rotatable, deletable boxes the owner can rearrange by
+hand to explore a different arrangement. Corridors are draggable exactly
+like rooms (nothing here is a fixed zone); the site outline, the buildable
+envelope (setback) outline, the building footprint, the street marker, and
+faint recommended-circulation lines (rendered as door arrows — see below)
+are the only static backdrop.
 
-Three constraints hold at all times while dragging, enforced client-side
-in the generated JS (never round-tripped through Python — see below):
+Per-box controls, all pure client-side JS (see the generated `<script>`):
 
-1. **No overlaps.** Dragging a box pushes any other box it would overlap
-   out of the way (and that box can cascade-push a third one) — see
-   `resolveOverlaps`. The box under the owner's cursor is "pinned": it
-   goes exactly where they drag it (position only, never resized) and is
-   never itself pushed by the resolution pass.
+- **Drag** the body of a box to move it (`onDown`/`onMove`).
+- **Drag a corner handle** to resize it (`onResizeDown`/`doResize`) —
+  the opposite corner stays put.
+- **Drag the rotate handle** to spin it in fixed 5° steps (`onRotateDown`/
+  `doRotate`). Rotation is a pure CSS `transform`, layered on top of the
+  same axis-aligned box the rest of this file already reasons about — it
+  never feeds into collision, footprint, or envelope math. That keeps a
+  rotated room a deliberate visual/orientation cue rather than reopening
+  rotated-rectangle collision geometry for a conceptual-design tool.
+- **Click the delete handle** to remove a box (`onDeleteDown`) — it's
+  hidden (not destroyed) so "Reset to recommended layout" can always bring
+  it back.
+- **The grid checkbox** toggles a faint 0.25m reference grid
+  (`#grid-overlay`). Independent of that toggle, every box's position
+  always snaps to that same 0.25m grid while dragging or resizing
+  (`snapToGrid`, `GRID_PX`) — the grid is a visibility choice, snapping
+  isn't.
+
+Three constraints hold at all times while dragging or resizing, enforced
+client-side in the generated JS (never round-tripped through Python):
+
+1. **No overlaps.** Moving or resizing a box pushes any other box it would
+   overlap out of the way (and that box can cascade-push a third one) —
+   see `resolveOverlaps`. The box under the owner's cursor is "pinned": it
+   goes exactly where they put it and is never itself pushed or resized by
+   the resolution pass.
 2. **The setback line is a hard wall.** Every box — pinned or pushed — is
    kept inside the buildable envelope (`data-env-*` on #canvas-container).
    A pushed box shrinks toward its own minimum size before it's allowed to
-   cross that line; the dragged box's position is simply clamped to it.
+   cross that line; the pinned box's position/size is simply clamped to it.
 3. **Rooms may shrink, never below their minimum.** When resolving an
    overlap or a setback violation, a non-pinned box first gives up size
    (down to `data-min-width`/`data-min-height`, from `src/defaults.py` for
    rooms and the fixed code hallway width for corridors) before it's
    translated — same spirit as the initial packer's own compaction
-   (`src/layout.py`), just happening live as the owner drags.
+   (`src/layout.py`), just happening live as the owner drags or resizes.
+   A manual corner-resize is clamped to the same minimum directly.
 
-The building footprint outline is recomputed after every move — it's the
-live union of whatever boxes are currently on the canvas (`updateFootprint`
-+ `computeFootprintPath`), not a fixed shape from the initial layout.
+The building footprint outline is recomputed after every move, resize, or
+delete — it's the live union of whatever boxes are currently on the canvas
+and not deleted (`updateFootprint` + `computeFootprintPath`), not a fixed
+shape from the initial layout.
+
+Door arrows reuse the same touching-graph the packer already computed
+(`LayoutResult.circulation_edges` — one arrow per shared wall on the path
+out from the entry) drawn with an SVG arrowhead marker so they read as
+"the door is here, and which way it opens into," not just a faint path
+line. Like the rest of the static SVG backdrop, they're fixed to the
+initial recommendation and don't move with the boxes (see the Roadmap in
+README.md) — recomputing them live would mean re-running the touching-graph
+BFS against arbitrary drag state, a bigger feature.
 
 Rendered as a single self-contained HTML/CSS/JS document via
 `streamlit.components.v1.html` — plain absolutely-positioned `<div>`s
@@ -40,8 +72,9 @@ Streamlit across every rerun, and the round trip was exactly what caused
 the flicker/reset the owner reported ("switching between the original
 shape and the modified shape"). A page that never sends anything back to
 Python during a drag has nothing to desync — dragging is instant, and a
-"Reset" button (also pure client-side JS) snaps position AND size back to
-Claude's recommended layout, stored in each box's own data attributes.
+"Reset" button (also pure client-side JS) snaps position, size, rotation,
+and deleted-state all back to Claude's recommended layout, stored in each
+box's own data attributes.
 """
 
 from __future__ import annotations
@@ -60,6 +93,23 @@ MARGIN_PX = 34.0
 STREET_LABEL_HEADROOM_PX = 20.0
 FONT_STACK = "'Helvetica Neue', Helvetica, Arial, sans-serif"
 CANVAS_BACKGROUND = "#fbfbf9"
+
+# Every box's position snaps to this grid while dragging or resizing,
+# regardless of whether the grid overlay is visible (see #grid-toggle).
+GRID_M = 0.25
+GRID_PX = GRID_M * PX_PER_METER
+
+# Corner-resize handles, a rotate handle (5° increments — see the module
+# docstring for why rotation stays purely visual), and a delete handle,
+# appended into every room/corridor div. Static markup, no per-room data.
+_HANDLES_HTML = (
+    '<span class="resize-handle nw" data-corner="nw"></span>'
+    '<span class="resize-handle ne" data-corner="ne"></span>'
+    '<span class="resize-handle sw" data-corner="sw"></span>'
+    '<span class="resize-handle se" data-corner="se"></span>'
+    '<span class="rotate-handle" title="Rotate (5° steps)">&#8635;</span>'
+    '<span class="delete-handle" title="Delete">&times;</span>'
+)
 
 
 def canvas_size_px(site: Site) -> Tuple[int, int]:
@@ -122,20 +172,37 @@ def _envelope_canvas_rect(project: Project, envelope: BuildableEnvelope) -> Tupl
 
 
 def _static_svg(project: Project, envelope: BuildableEnvelope, result: LayoutResult) -> str:
-    """Site outline (property line), buildable envelope outline (the
-    setback line — a hard constraint boxes are kept inside of while
-    dragging), the building footprint outline (id="footprint-shape",
-    overwritten live by JS as boxes move), street marker(s), and faint
-    recommended-circulation lines — one non-interactive SVG layer under
-    the room/corridor boxes."""
+    """The faint 0.25m reference grid (`#grid-overlay`, hidden until the
+    checkbox is ticked), the site outline (property line), the buildable
+    envelope outline (the setback line — a hard constraint boxes are kept
+    inside of while dragging/resizing), the building footprint outline
+    (id="footprint-shape", overwritten live by JS as boxes move), the
+    street marker(s), and door arrows (one per shared wall on the
+    recommended circulation path, drawn with an arrowhead marker) — one
+    non-interactive SVG layer under the room/corridor boxes."""
     site = project.site
     width_px = site.width_m * PX_PER_METER
     depth_px = site.depth_m * PX_PER_METER
     top = MARGIN_PX + STREET_LABEL_HEADROOM_PX
+    total_w = width_px + 2 * MARGIN_PX
+    total_h = depth_px + 2 * MARGIN_PX + STREET_LABEL_HEADROOM_PX
+
+    defs = (
+        "<defs>"
+        f'<pattern id="grid-pattern" width="{GRID_PX}" height="{GRID_PX}" patternUnits="userSpaceOnUse">'
+        f'<path d="M {GRID_PX} 0 L 0 0 0 {GRID_PX}" fill="none" stroke="#d8d8d2" stroke-width="0.6" />'
+        "</pattern>"
+        '<marker id="door-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" '
+        'orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1a1a1a" fill-opacity="0.6" /></marker>'
+        "</defs>"
+    )
 
     parts = [
+        defs,
+        f'<rect id="grid-overlay" x="0" y="0" width="{total_w}" height="{total_h}" '
+        f'fill="url(#grid-pattern)" style="display:none;" />',
         f'<rect x="{MARGIN_PX}" y="{top}" width="{width_px}" height="{depth_px}" '
-        f'rx="4" fill="none" stroke="#a8a8a3" stroke-width="1.5" />'
+        f'rx="4" fill="none" stroke="#a8a8a3" stroke-width="1.5" />',
     ]
 
     env_left, env_top, env_w, env_h = _envelope_canvas_rect(project, envelope)
@@ -155,7 +222,7 @@ def _static_svg(project: Project, envelope: BuildableEnvelope, result: LayoutRes
         cx1, cy1 = _to_canvas_point(x1, y1, site.depth_m)
         parts.append(
             f'<line x1="{cx0:.1f}" y1="{cy0:.1f}" x2="{cx1:.1f}" y2="{cy1:.1f}" '
-            f'stroke="#0b0b0b" stroke-width="1" stroke-opacity="0.22" />'
+            f'stroke="#1a1a1a" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#door-arrow)" />'
         )
 
     for edge in site.edges:
@@ -173,17 +240,16 @@ def _static_svg(project: Project, envelope: BuildableEnvelope, result: LayoutRes
             f'font-size="11" font-family="{FONT_STACK}" text-anchor="{anchor}">STREET</text>'
         )
 
-    total_w = width_px + 2 * MARGIN_PX
-    total_h = depth_px + 2 * MARGIN_PX + STREET_LABEL_HEADROOM_PX
     return f'<svg id="static-svg" width="{total_w}" height="{total_h}" style="position:absolute;top:0;left:0;pointer-events:none;">{"".join(parts)}</svg>'
 
 
 def _corridor_divs(project: Project, result: LayoutResult) -> str:
-    """Corridors are draggable exactly like rooms — see the module
-    docstring — so they share `.draggable` and the same data attributes
-    that hold each box's recommended (reset) position AND size. A
-    corridor's minimum on both axes is the fixed code hallway width
-    itself — see `CorridorSegment.min_width_m`/`min_depth_m`."""
+    """Corridors are draggable/resizable/rotatable/deletable exactly like
+    rooms — see the module docstring — so they share `.draggable`, the
+    resize/rotate/delete handles, and the same data attributes that hold
+    each box's recommended (reset) position AND size. A corridor's minimum
+    on both axes is the fixed code hallway width itself — see
+    `CorridorSegment.min_width_m`/`min_depth_m`."""
     divs = []
     for i, corridor in enumerate(result.corridors):
         left, top, w, h = _to_canvas_rect(corridor.x_m, corridor.y_m, corridor.width_m, corridor.depth_m, project.site.depth_m)
@@ -196,6 +262,7 @@ def _corridor_divs(project: Project, result: LayoutResult) -> str:
             f'data-initial-width="{w:.1f}" data-initial-height="{h:.1f}" '
             f'data-min-width="{min_w_px:.1f}" data-min-height="{min_h_px:.1f}">'
             f'<span class="label corridor-label">Hallway</span>'
+            f"{_HANDLES_HTML}"
             f"</div>"
         )
     return "".join(divs)
@@ -216,14 +283,15 @@ def _room_divs(project: Project, result: LayoutResult, assignments: Dict[str, st
             f'data-initial-width="{w:.1f}" data-initial-height="{h:.1f}" '
             f'data-min-width="{min_w_px:.1f}" data-min-height="{min_h_px:.1f}">'
             f'<span class="label">{_esc(room.name)}</span>'
+            f"{_HANDLES_HTML}"
             f"</div>"
         )
     return "".join(divs)
 
 
 def _legend_html(category_labels: CategoryLabels) -> str:
-    """Category swatches plus the two fixed markers (Hallway, Entry) that
-    aren't a 4th color — see src.palette for why."""
+    """Category swatches plus the fixed markers (Hallway, Entry, Door)
+    that aren't a 4th color — see src.palette for why."""
     items = []
     for key in ("category_a", "category_b", "category_c"):
         label = getattr(category_labels, key)
@@ -233,6 +301,7 @@ def _legend_html(category_labels: CategoryLabels) -> str:
         )
     items.append('<span class="legend-item"><span class="swatch corridor-swatch"></span>Hallway</span>')
     items.append('<span class="legend-item"><span class="swatch entry-swatch"></span>Entry</span>')
+    items.append('<span class="legend-item"><span class="door-swatch">&#8594;</span>Door</span>')
     return "".join(items)
 
 
@@ -271,6 +340,7 @@ def render_canvas_html(
   .canvas-legend {{
     display: flex;
     flex-wrap: wrap;
+    align-items: center;
     gap: 14px;
   }}
   .legend-item {{
@@ -294,6 +364,22 @@ def render_canvas_html(
   .entry-swatch {{
     background: #ffffff;
     border: 2px dashed #0b0b0b;
+  }}
+  .door-swatch {{
+    font-size: 14px;
+    font-weight: 700;
+    color: #1a1a1a;
+    line-height: 14px;
+  }}
+  .grid-toggle-label {{
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    color: #333333;
+    cursor: pointer;
+    user-select: none;
+    margin-left: 4px;
   }}
   .canvas-rationale {{
     margin: 10px 4px 0 4px;
@@ -329,6 +415,9 @@ def render_canvas_html(
     z-index: 50;
     transition: none;
   }}
+  .draggable.deleted {{
+    display: none;
+  }}
   .corridor {{
     border: 1px dashed #b9b9b3;
     background-image: repeating-linear-gradient(45deg, #dcdcd6 0, #dcdcd6 4px, #f2f2ee 4px, #f2f2ee 10px);
@@ -354,6 +443,62 @@ def render_canvas_html(
     font-size: 10px;
     color: #55554f;
   }}
+  .resize-handle {{
+    position: absolute;
+    width: 9px;
+    height: 9px;
+    background: #ffffff;
+    border: 1.5px solid #333333;
+    border-radius: 2px;
+    opacity: 0.55;
+    z-index: 60;
+    touch-action: none;
+  }}
+  .draggable:hover .resize-handle {{ opacity: 1; }}
+  .resize-handle.nw {{ top: -5px; left: -5px; cursor: nwse-resize; }}
+  .resize-handle.ne {{ top: -5px; right: -5px; cursor: nesw-resize; }}
+  .resize-handle.sw {{ bottom: -5px; left: -5px; cursor: nesw-resize; }}
+  .resize-handle.se {{ bottom: -5px; right: -5px; cursor: nwse-resize; }}
+  .rotate-handle {{
+    position: absolute;
+    top: -22px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    background: #ffffff;
+    border: 1.5px solid #333333;
+    opacity: 0.55;
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    line-height: 1;
+    cursor: grab;
+    touch-action: none;
+  }}
+  .draggable:hover .rotate-handle {{ opacity: 1; }}
+  .delete-handle {{
+    position: absolute;
+    top: -9px;
+    right: -9px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #c0392b;
+    color: #ffffff;
+    font-size: 12px;
+    line-height: 16px;
+    text-align: center;
+    opacity: 0.55;
+    z-index: 61;
+    cursor: pointer;
+    touch-action: none;
+  }}
+  .draggable:hover .delete-handle {{ opacity: 0.9; }}
+  .delete-handle:hover {{ opacity: 1; background: #a5301f; }}
   #reset-btn {{
     margin-top: 10px;
     font-family: {FONT_STACK};
@@ -370,7 +515,10 @@ def render_canvas_html(
 <body>
   <div id="canvas-header">
     <h2 class="canvas-title">{_esc(layout_plan.grouping_label)}</h2>
-    <div class="canvas-legend">{_legend_html(layout_plan.category_labels)}</div>
+    <div class="canvas-legend">
+      {_legend_html(layout_plan.category_labels)}
+      <label class="grid-toggle-label"><input type="checkbox" id="grid-toggle" /> Show {GRID_M:g}m grid</label>
+    </div>
   </div>
   <div id="canvas-container" data-env-left="{env_left:.1f}" data-env-top="{env_top:.1f}" data-env-right="{env_right:.1f}" data-env-bottom="{env_bottom:.1f}">
     {_static_svg(project, envelope, result)}
@@ -382,10 +530,13 @@ def render_canvas_html(
 
 <script>
 (function() {{
+  var GRID_PX = {GRID_PX};
   var container = document.getElementById('canvas-container');
   var footprintPath = document.getElementById('footprint-shape');
   var boxes = Array.prototype.slice.call(document.querySelectorAll('.draggable'));
   var active = null, offsetX = 0, offsetY = 0;
+  var activeResize = null;
+  var activeRotate = null;
 
   // The buildable envelope in canvas px — the setback line. Every box,
   // pinned or pushed, is kept inside this rectangle; see the module
@@ -417,10 +568,20 @@ def render_canvas_html(
 
   function clamp(v, lo, hi) {{ return Math.max(lo, Math.min(v, hi)); }}
 
+  function snapToGrid(v) {{ return Math.round(v / GRID_PX) * GRID_PX; }}
+
+  // Boxes the owner has deleted are hidden, not removed — they're skipped
+  // by collision resolution and the footprint outline, but stay in
+  // `boxes` (and keep their data-initial-* attributes) so Reset can
+  // always bring them back.
+  function activeBoxes() {{
+    return boxes.filter(function(b) {{ return b.dataset.deleted !== '1'; }});
+  }}
+
   // Keeps a box fully inside the buildable envelope — shrinking it toward
   // its own minimum first (never past it), only translating as a last
-  // resort. Applied to every box the resolution pass touches, so the
-  // setback constraint holds after every drag, not just at rest.
+  // resort. Applied to every box the resolution/resize pass touches, so
+  // the setback constraint holds after every drag, not just at rest.
   function clampToEnvelope(el) {{
     var r = rectOf(el), m = minOf(el);
     var left = r.left, top = r.top, width = r.width, height = r.height;
@@ -462,23 +623,25 @@ def render_canvas_html(
     return {{x: ox, y: oy}};
   }}
 
-  // Pushes every box that overlaps another out of the way so nothing ever
-  // ends up overlapping, and keeps everything inside the buildable
-  // envelope. `pinned` (the box currently under the owner's cursor) always
-  // goes exactly where they put it, at its own size, and is never itself
-  // adjusted here; everything else may first shrink toward its own
-  // minimum size (on the axis it's being pushed along) before it's
-  // translated, and can cascade-push a third box out of its own way.
+  // Pushes every (non-deleted) box that overlaps another out of the way
+  // so nothing ever ends up overlapping, and keeps everything inside the
+  // buildable envelope. `pinned` (the box currently under the owner's
+  // cursor) always goes exactly where they put it, at its own size, and
+  // is never itself adjusted here; everything else may first shrink
+  // toward its own minimum size (on the axis it's being pushed along)
+  // before it's translated, and can cascade-push a third box out of its
+  // own way.
   function resolveOverlaps(pinned) {{
+    var live = activeBoxes();
     for (var pass = 0; pass < 6; pass++) {{
       var any = false;
-      for (var i = 0; i < boxes.length; i++) {{
-        var a = boxes[i];
+      for (var i = 0; i < live.length; i++) {{
+        var a = live[i];
         if (a === pinned) continue;
         var ma = minOf(a);
-        for (var j = 0; j < boxes.length; j++) {{
+        for (var j = 0; j < live.length; j++) {{
           if (i === j) continue;
-          var b = boxes[j];
+          var b = live[j];
           var ra = rectOf(a), rb = rectOf(b);
           var ov = overlapAmount(ra, rb);
           if (!ov) continue;
@@ -519,19 +682,20 @@ def render_canvas_html(
     }}
   }}
 
-  // Traces the outline of the union of every current box (rooms +
-  // corridors) — the building's own footprint, recomputed from wherever
-  // things actually are right now rather than the initial layout. Works
-  // by rasterizing onto the grid formed by every box edge (coordinate
-  // compression keeps this small — a handful of rooms means a few dozen
-  // cells, not a full-resolution raster) and walking the boundary between
-  // covered/uncovered cells into one or more closed loops. Each cell
-  // contributes only the edges facing an uncovered neighbor, always in
-  // the same rotational direction, so loops close up on their own without
-  // needing any special-casing for T-junctions or multiple disjoint
-  // shapes (evenodd fill handles the rest, including any hole).
+  // Traces the outline of the union of every current (non-deleted) box
+  // (rooms + corridors) — the building's own footprint, recomputed from
+  // wherever things actually are right now rather than the initial
+  // layout. Works by rasterizing onto the grid formed by every box edge
+  // (coordinate compression keeps this small — a handful of rooms means a
+  // few dozen cells, not a full-resolution raster) and walking the
+  // boundary between covered/uncovered cells into one or more closed
+  // loops. Each cell contributes only the edges facing an uncovered
+  // neighbor, always in the same rotational direction, so loops close up
+  // on their own without needing any special-casing for T-junctions or
+  // multiple disjoint shapes (evenodd fill handles the rest, including
+  // any hole).
   function computeFootprintPath() {{
-    var rects = boxes.map(rectOf);
+    var rects = activeBoxes().map(rectOf);
     if (!rects.length) return '';
 
     var xsSet = {{}}, ysSet = {{}};
@@ -611,7 +775,7 @@ def render_canvas_html(
   function updateFootprint() {{
     if (!footprintPath) return;
     var d = computeFootprintPath();
-    if (d) {{ footprintPath.setAttribute('d', d); }}
+    footprintPath.setAttribute('d', d);
   }}
 
   function onDown(e) {{
@@ -625,11 +789,17 @@ def render_canvas_html(
   }}
 
   function onMove(e) {{
+    if (activeResize) {{ doResize(e); return; }}
+    if (activeRotate) {{ doRotate(e); return; }}
     if (!active) return;
     var p = point(e);
     var cRect = container.getBoundingClientRect();
     var newLeft = p.x - cRect.left - offsetX;
     var newTop = p.y - cRect.top - offsetY;
+    newLeft = clamp(newLeft, ENV.left, ENV.right - active.offsetWidth);
+    newTop = clamp(newTop, ENV.top, ENV.bottom - active.offsetHeight);
+    newLeft = snapToGrid(newLeft);
+    newTop = snapToGrid(newTop);
     newLeft = clamp(newLeft, ENV.left, ENV.right - active.offsetWidth);
     newTop = clamp(newTop, ENV.top, ENV.bottom - active.offsetHeight);
     active.style.left = newLeft + 'px';
@@ -639,19 +809,128 @@ def render_canvas_html(
     e.preventDefault();
   }}
 
+  // Drags a corner handle: the opposite corner stays put, the dragged
+  // corner's edges snap to the grid and are clamped to the box's own
+  // minimum size, then the envelope constraint and collision resolution
+  // apply exactly as they do for a plain move (see resolveOverlaps).
+  function doResize(e) {{
+    var r = activeResize;
+    var p = point(e);
+    var dx = p.x - r.startPoint.x, dy = p.y - r.startPoint.y;
+    var m = minOf(r.el);
+    var left = r.start.left, top = r.start.top, width = r.start.width, height = r.start.height;
+
+    if (r.corner === 'ne' || r.corner === 'se') {{
+      var right = snapToGrid(r.start.left + r.start.width + dx);
+      width = Math.max(m.w, right - left);
+    }}
+    if (r.corner === 'nw' || r.corner === 'sw') {{
+      var newLeft = snapToGrid(r.start.left + dx);
+      width = Math.max(m.w, (r.start.left + r.start.width) - newLeft);
+      left = (r.start.left + r.start.width) - width;
+    }}
+    if (r.corner === 'se' || r.corner === 'sw') {{
+      var bottom = snapToGrid(r.start.top + r.start.height + dy);
+      height = Math.max(m.h, bottom - top);
+    }}
+    if (r.corner === 'ne' || r.corner === 'nw') {{
+      var newTop = snapToGrid(r.start.top + dy);
+      height = Math.max(m.h, (r.start.top + r.start.height) - newTop);
+      top = (r.start.top + r.start.height) - height;
+    }}
+
+    r.el.style.left = left + 'px';
+    r.el.style.top = top + 'px';
+    r.el.style.width = width + 'px';
+    r.el.style.height = height + 'px';
+    clampToEnvelope(r.el);
+    resolveOverlaps(r.el);
+    updateFootprint();
+    e.preventDefault();
+  }}
+
+  // Spins a box in fixed 5° steps around its own center. Purely a CSS
+  // transform layered on top of the same axis-aligned box the rest of
+  // this file reasons about — see the module docstring for why rotation
+  // never feeds into collision/footprint/envelope math.
+  function doRotate(e) {{
+    var p = point(e);
+    var rot = activeRotate;
+    var angle = Math.atan2(p.y - rot.cy, p.x - rot.cx) * 180 / Math.PI + 90;
+    var snapped = Math.round(angle / 5) * 5;
+    rot.el.style.transform = 'rotate(' + snapped + 'deg)';
+    rot.el.dataset.rotation = String(snapped);
+    e.preventDefault();
+  }}
+
+  function onResizeDown(e) {{
+    e.stopPropagation();
+    e.preventDefault();
+    var handle = e.currentTarget;
+    var box = handle.closest('.draggable');
+    activeResize = {{el: box, corner: handle.dataset.corner, start: rectOf(box), startPoint: point(e)}};
+    box.classList.add('dragging');
+  }}
+
+  function onRotateDown(e) {{
+    e.stopPropagation();
+    e.preventDefault();
+    var box = e.currentTarget.closest('.draggable');
+    var r = box.getBoundingClientRect();
+    activeRotate = {{el: box, cx: r.left + r.width / 2, cy: r.top + r.height / 2}};
+    box.classList.add('dragging');
+  }}
+
+  function onDeleteDown(e) {{
+    e.stopPropagation();
+    e.preventDefault();
+    var box = e.currentTarget.closest('.draggable');
+    box.dataset.deleted = '1';
+    box.classList.add('deleted');
+    updateFootprint();
+  }}
+
   function onUp() {{
     if (active) {{ active.classList.remove('dragging'); }}
+    if (activeResize) {{ activeResize.el.classList.remove('dragging'); }}
+    if (activeRotate) {{ activeRotate.el.classList.remove('dragging'); }}
     active = null;
+    activeResize = null;
+    activeRotate = null;
   }}
 
   for (var i = 0; i < boxes.length; i++) {{
     boxes[i].addEventListener('mousedown', onDown);
     boxes[i].addEventListener('touchstart', onDown, {{passive: false}});
   }}
+  var resizeHandles = document.querySelectorAll('.resize-handle');
+  for (var rh = 0; rh < resizeHandles.length; rh++) {{
+    resizeHandles[rh].addEventListener('mousedown', onResizeDown);
+    resizeHandles[rh].addEventListener('touchstart', onResizeDown, {{passive: false}});
+  }}
+  var rotateHandles = document.querySelectorAll('.rotate-handle');
+  for (var rt = 0; rt < rotateHandles.length; rt++) {{
+    rotateHandles[rt].addEventListener('mousedown', onRotateDown);
+    rotateHandles[rt].addEventListener('touchstart', onRotateDown, {{passive: false}});
+  }}
+  var deleteHandles = document.querySelectorAll('.delete-handle');
+  for (var dh = 0; dh < deleteHandles.length; dh++) {{
+    deleteHandles[dh].addEventListener('mousedown', onDeleteDown);
+    deleteHandles[dh].addEventListener('touchstart', onDeleteDown, {{passive: false}});
+  }}
+
   document.addEventListener('mousemove', onMove);
   document.addEventListener('touchmove', onMove, {{passive: false}});
   document.addEventListener('mouseup', onUp);
   document.addEventListener('touchend', onUp);
+
+  var gridToggle = document.getElementById('grid-toggle');
+  var gridOverlay = document.getElementById('grid-overlay');
+  if (gridToggle && gridOverlay) {{
+    gridToggle.addEventListener('change', function() {{
+      gridOverlay.style.display = gridToggle.checked ? 'block' : 'none';
+    }});
+  }}
 
   document.getElementById('reset-btn').addEventListener('click', function() {{
     for (var i = 0; i < boxes.length; i++) {{
@@ -659,6 +938,10 @@ def render_canvas_html(
       boxes[i].style.top = boxes[i].dataset.initialTop + 'px';
       boxes[i].style.width = boxes[i].dataset.initialWidth + 'px';
       boxes[i].style.height = boxes[i].dataset.initialHeight + 'px';
+      boxes[i].style.transform = '';
+      boxes[i].dataset.rotation = '0';
+      boxes[i].dataset.deleted = '0';
+      boxes[i].classList.remove('deleted');
     }}
     updateFootprint();
   }});

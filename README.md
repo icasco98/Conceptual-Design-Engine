@@ -44,20 +44,37 @@ zoning/bubble diagram of its rooms, before any detailed floor plan exists.
    is shown as a single interactive canvas (`src/interactive_canvas.py`):
    title, color legend, and rationale, with every room *and* hallway as a
    draggable box (nothing here is a fixed zone) so you can explore a
-   different arrangement by hand. Colors are locked, but as you drag, two
-   things stay continuously true instead of just at the start:
-   - **No overlaps.** Dragging a box pushes any other box it would overlap
-     out of the way, cascading if needed.
-   - **The setback line is a hard wall.** The buildable envelope is drawn
-     as a dashed line, and no box — dragged or pushed — can ever cross it.
-     A pushed box shrinks toward its own type minimum first (never below
-     it — `src/defaults.py` for rooms, the fixed code hallway width for
-     corridors) before it's displaced any further, the same idea as the
-     initial layout's own footprint compaction, just live.
+   different arrangement by hand. Each box also has:
+   - **Corner handles to resize it** — drag any corner and the opposite
+     one stays put.
+   - **A rotate handle**, spinning the box in fixed 5° steps.
+   - **A delete handle** (hides the box — not a fixed decision, since
+     "Reset to recommended layout" always brings it back).
+   - **A 0.25m grid** you can show or hide with a checkbox in the header;
+     independent of that, every drag or resize always snaps position to
+     that same grid, whether or not it's visible.
 
-   The building footprint outline updates after every move, too — it's
-   the union of wherever the boxes currently are, not a fixed shape from
-   the initial layout.
+   Door arrows — one per shared wall on the recommended circulation path,
+   drawn with an arrowhead — show where each room connects to the one
+   next to it.
+
+   Colors are locked, but as you drag or resize, three things stay
+   continuously true instead of just at the start:
+   - **No overlaps.** Moving or resizing a box pushes any other box it
+     would overlap out of the way, cascading if needed.
+   - **The setback line is a hard wall.** The buildable envelope is drawn
+     as a dashed line, and no box — dragged, resized, or pushed — can ever
+     cross it.
+   - **Rooms may shrink, never below their minimum.** A pushed box shrinks
+     toward its own type minimum first (never below it — `src/defaults.py`
+     for rooms, the fixed code hallway width for corridors) before it's
+     displaced any further, the same idea as the initial layout's own
+     footprint compaction, just live. A manual corner-resize is clamped to
+     that same minimum directly.
+
+   The building footprint outline updates after every move, resize, or
+   delete, too — it's the union of whatever boxes are currently on the
+   canvas and not deleted, not a fixed shape from the initial layout.
 
    It's a self-contained HTML/CSS/JS widget (`streamlit.components.v1.html`),
    not a third-party Streamlit component: dragging happens entirely in the
@@ -65,13 +82,20 @@ zoning/bubble diagram of its rooms, before any detailed floor plan exists.
    trip for the two to fall out of sync over. The trade-off is that
    dragging is local to that browser view — sending a new chat message
    (or reloading the page) resets it back to Claude's recommended layout,
-   since Python was never told about the drag in the first place. A
-   "Reset to recommended layout" button (also pure JS) restores both
-   position and size on demand.
+   since Python was never told about any of it in the first place. A
+   "Reset to recommended layout" button (also pure JS) restores position,
+   size, rotation, and any deleted spaces on demand.
 
-**Not yet built:** live adjacency/circulation feedback as you drag, and a
-chat-driven revision loop where the arrangement you dragged becomes the
-starting point for Claude's next suggestion. See Roadmap below.
+   Rotation is deliberately cosmetic — a CSS transform layered on top of
+   the same axis-aligned box the collision/footprint/envelope math already
+   reasons about, not fed back into any of it. Full rotated-rectangle
+   geometry is a much bigger feature than a conceptual zoning tool needs;
+   this gives you an orientation cue without it.
+
+**Not yet built:** live door-arrow/circulation feedback as you drag (they
+stay fixed to the initial recommendation), and a chat-driven revision loop
+where the arrangement you dragged becomes the starting point for Claude's
+next suggestion. See Roadmap below.
 
 ### Design principles
 
@@ -98,8 +122,13 @@ starting point for Claude's next suggestion. See Roadmap below.
   canvas; there's no separate static image to keep in sync with it.
 - **Constraints hold live, not just at generation time.** The setback
   line and each room's own minimum size aren't just inputs to the initial
-  packer — they're enforced the whole time you're dragging, in the
-  browser, with no server round trip (see step 4 above).
+  packer — they're enforced the whole time you're dragging or resizing, in
+  the browser, with no server round trip (see step 4 above).
+- **Editing tools stay decision-preserving.** Delete hides a box rather
+  than destroying it, and rotation is purely cosmetic (never fed into
+  collision/footprint/envelope math) — so nothing you do in the canvas can
+  put the geometry in a state "Reset to recommended layout" can't cleanly
+  undo.
 
 ## Setup
 
@@ -136,18 +165,19 @@ pytest
 | `src/claude_client.py` | Anthropic client + plain-language explanation of issues. |
 | `src/layout_plan.py` | Claude picks room categories + adjacency order (structured output). |
 | `src/layout.py` | Deterministic rectangle packing, footprint compaction, building footprint outline, and circulation graph — no LLM math, unit-tested. |
-| `src/interactive_canvas.py` | Renders the interactive zoning diagram (title, legend, draggable rooms/hallways, live footprint outline, setback-constrained collision resolution with shrink-toward-minimum) as self-contained HTML/CSS/JS, unit-tested. |
+| `src/interactive_canvas.py` | Renders the interactive zoning diagram (title, legend, door arrows, a 0.25m snap grid, draggable/resizable/rotatable/deletable rooms and hallways, live footprint outline, setback-constrained collision resolution with shrink-toward-minimum) as self-contained HTML/CSS/JS, unit-tested. |
 | `src/palette.py` | The 3 validated diagram colors (see dataviz notes in the module docstring). |
 | `tests/` | Unit tests for geometry/defaults/validation/layout/interactive canvas. |
 
 ## Roadmap
 
-- Live adjacency/circulation feedback as rooms are dragged in the
-  interactive canvas (today the faint circulation lines stay fixed to
-  Claude's original recommendation; the footprint outline, unlike them,
-  already updates live as you drag).
+- Live door-arrow/circulation feedback as rooms are dragged in the
+  interactive canvas (today the arrows stay fixed to Claude's original
+  recommendation, since they come from re-running a touching-graph BFS
+  that only runs once in Python; the footprint outline, by contrast,
+  already updates live client-side as you drag or resize).
 - Feedback loop: owner comments in chat → Claude revises the layout,
-  informed by whatever the owner dragged.
+  informed by whatever the owner dragged, resized, rotated, or deleted.
 - Phase 2 (massing) and Phase 3 (optimization), out of scope for now.
 
 ## Constraints baked in

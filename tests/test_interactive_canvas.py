@@ -151,7 +151,7 @@ def test_title_legend_and_rationale_are_rendered():
     assert "Grouped by privacy level" in html
     assert "Private" in html and "Shared" in html and "Service" in html
     assert "Private rooms sit away from the entry" in html
-    assert html.count('class="legend-item"') == 5  # 3 categories + Hallway + Entry
+    assert html.count('class="legend-item"') == 6  # 3 categories + Hallway + Entry + Door
 
 
 def test_html_is_escaped_against_untrusted_room_names():
@@ -173,6 +173,73 @@ def test_reset_button_and_drag_script_are_present():
     assert "dataset.initialLeft" in html
     assert "dataset.initialWidth" in html  # reset restores size, not just position
     assert "addEventListener('mousedown'" in html
+
+
+def test_grid_checkbox_and_snap_to_grid_are_present():
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    assert 'id="grid-toggle"' in html
+    assert 'type="checkbox"' in html
+    assert 'id="grid-overlay"' in html
+    assert "gridOverlay.style.display" in html  # checkbox actually toggles the overlay
+    assert "function snapToGrid" in html
+    assert "GRID_PX = 6.5" in html  # 0.25m grid at PX_PER_METER=26.0, snapping is unconditional
+
+
+def test_door_arrows_reuse_circulation_edges_with_arrowhead_marker():
+    rooms = [
+        Room(name="Entry", room_type="entry", is_entry=True),
+        Room(name="Kitchen", room_type="kitchen"),
+    ]
+    html, result = _render(rooms)
+
+    assert result.circulation_edges
+    assert '<marker id="door-arrow"' in html
+    assert html.count('marker-end="url(#door-arrow)"') == len(result.circulation_edges)
+
+
+def test_resize_handles_present_on_every_box():
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, result = _render(rooms)
+
+    total_boxes = len(result.rooms) + len(result.corridors)
+    assert html.count('class="resize-handle nw" data-corner="nw"') == total_boxes
+    assert html.count('class="resize-handle ne" data-corner="ne"') == total_boxes
+    assert html.count('class="resize-handle sw" data-corner="sw"') == total_boxes
+    assert html.count('class="resize-handle se" data-corner="se"') == total_boxes
+    assert "function doResize" in html
+    assert "function onResizeDown" in html
+
+
+def test_rotate_handle_present_and_snaps_in_5_degree_steps():
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, result = _render(rooms)
+
+    total_boxes = len(result.rooms) + len(result.corridors)
+    assert html.count('class="rotate-handle"') == total_boxes
+    assert "function doRotate" in html
+    assert "Math.round(angle / 5) * 5" in html
+
+
+def test_delete_handle_present_and_hides_rather_than_removes():
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, result = _render(rooms)
+
+    total_boxes = len(result.rooms) + len(result.corridors)
+    assert html.count('class="delete-handle"') == total_boxes
+    assert "function onDeleteDown" in html
+    assert "classList.add('deleted')" in html  # hidden via CSS, not removed from the DOM
+    assert "function activeBoxes" in html  # deleted boxes excluded from collision/footprint
+
+
+def test_reset_restores_rotation_and_deleted_state():
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    assert "dataset.rotation = '0'" in html
+    assert "dataset.deleted = '0'" in html
+    assert "classList.remove('deleted')" in html
 
 
 def test_canvas_size_matches_site_proportions():
