@@ -17,6 +17,13 @@ zoning/bubble diagram of its rooms, before any detailed floor plan exists.
 
 **Current scope (this commit):** all four steps of Phase 1 —
 
+The app opens on a worked example — a 20 x 28 m lot with a zoned program
+already inside it (`src/sample_project.py`) — so the first thing on screen
+is a live diagram to drag around rather than an empty canvas. It is a
+plain literal, needs no API call, and is replaced wholesale by your own
+project the moment you send your first chat message. It is never merged
+with yours and never sent to Claude as context.
+
 1. **Conversational intake.** You describe your project in the chat (site
    size, orientation, which sides face the street vs. neighbors, rooms you
    need, priorities). Claude extracts a structured site + room program from
@@ -207,6 +214,7 @@ pytest
 
 | Path | Purpose |
 |---|---|
+| `src/sample_project.py` | The worked example the app opens on — a complete, validating project plus the layout plan Claude would have returned for it, so the first paint needs no API call. |
 | `app.py` | Streamlit UI — chat (fixed-height, scrollable) + interactive zoning diagram below it (schedule panel left of the drawing), sidebar summary of captured site/setback/envelope/priority state. |
 | `src/models.py` | The shared data shapes (`Project`, `Site`, `Room`, ...). |
 | `src/defaults.py` | Room-sizing defaults table (widths/depths per room type). |

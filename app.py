@@ -26,16 +26,21 @@ from src.interactive_canvas import CANVAS_CHROME_HEIGHT_PX, canvas_size_px, rend
 from src.layout import pack_rooms
 from src.layout_plan import LayoutPlan, plan_layout
 from src.models import Project
+from src.sample_project import sample_layout_plan, sample_project
 from src.validation import Issue, validate_room_program
 
 load_dotenv()
 
 st.set_page_config(page_title="Conceptual Design Engine — Zoning Intake", layout="wide")
 
-# How tall the scrollable chat box is, in pixels — capped so the diagram
-# below is always visible without scrolling past a long conversation.
-# Tweak this if you'd like more/less chat visible at once.
+# How tall the scrollable chat box is, in pixels, ONCE there is a
+# conversation in it — capped so the diagram below is always visible
+# without scrolling past a long conversation. Tweak this if you'd like
+# more/less chat visible at once.
 CHAT_HEIGHT_PX = 480
+# Before the first message there's nothing to scroll, so the box only needs
+# to hold the input itself — see render_chat.
+EMPTY_CHAT_HEIGHT_PX = 90
 
 
 def load_api_key_from_cloud_secrets() -> None:
@@ -65,12 +70,19 @@ if not os.environ.get("ANTHROPIC_API_KEY"):
 
 
 def init_state() -> None:
+    """Open on the worked example (src/sample_project.py) rather than an
+    empty canvas, so the first thing on screen is a diagram to drag around
+    instead of a placeholder describing one. `showing_sample` is what every
+    "this isn't yours yet" caption keys off; the owner's first message
+    clears it and replaces the project outright."""
     if "history" not in st.session_state:
         st.session_state.history = []
     if "project" not in st.session_state:
-        st.session_state.project = Project()
-    if "layout_plan" not in st.session_state:
-        st.session_state.layout_plan = None
+        st.session_state.project = sample_project()
+        st.session_state.layout_plan = sample_layout_plan()
+        st.session_state.showing_sample = True
+    st.session_state.setdefault("layout_plan", None)
+    st.session_state.setdefault("showing_sample", False)
 
 
 def compute_envelope(project: Project) -> BuildableEnvelope | None:
@@ -80,9 +92,19 @@ def compute_envelope(project: Project) -> BuildableEnvelope | None:
         return None
 
 
-def render_sidebar(project: Project, envelope: BuildableEnvelope | None, issues: list[Issue]) -> None:
+def render_sidebar(
+    project: Project,
+    envelope: BuildableEnvelope | None,
+    issues: list[Issue],
+    showing_sample: bool,
+) -> None:
     with st.sidebar:
-        st.header("Captured so far")
+        st.header("Sample project" if showing_sample else "Captured so far")
+        if showing_sample:
+            st.caption(
+                "Nothing captured yet — this is a worked example so there's "
+                "something to look at. Your first chat message replaces it."
+            )
 
         if project.owner:
             st.caption(f"Owner: {project.owner}")
@@ -143,8 +165,9 @@ def render_sidebar(project: Project, envelope: BuildableEnvelope | None, issues:
         st.divider()
         if st.button("Reset conversation"):
             st.session_state.history = []
-            st.session_state.project = Project()
-            st.session_state.layout_plan = None
+            st.session_state.project = sample_project()
+            st.session_state.layout_plan = sample_layout_plan()
+            st.session_state.showing_sample = True
             st.rerun()
 
 
@@ -152,8 +175,17 @@ def render_interactive_canvas(
     project: Project,
     envelope: BuildableEnvelope | None,
     layout_plan: LayoutPlan | None,
+    showing_sample: bool,
 ) -> None:
-    st.subheader("Zoning Diagram")
+    if showing_sample:
+        st.subheader("Zoning Diagram — sample")
+        st.caption(
+            "A worked example on a 20 x 28 m lot: street at the front, neighbors on the "
+            "other three sides. It's fully live — drag, resize and rotate it to get a feel "
+            "for the canvas. Describe your own project in the chat and this is replaced."
+        )
+    else:
+        st.subheader("Zoning Diagram")
     st.caption(
         "Drag a room — or a hallway — to explore a different arrangement. Sizes and colors "
         "stay the same, only position changes, and spaces can never end up overlapping: moving "
@@ -189,15 +221,24 @@ def render_interactive_canvas(
 
 
 def render_chat(history: list[dict]) -> str | None:
-    chat_box = st.container(height=CHAT_HEIGHT_PX)
-    with chat_box:
+    """The scroll box only earns its full height once there's a conversation
+    in it. On first load an empty 480px box would push the sample diagram
+    below the fold, which defeats the point of opening on one. It still
+    stays a container rather than a bare input, so the input doesn't jump
+    to a different place on the page after the first message."""
+    placeholder = "Describe your project — site, rooms, priorities..."
+    with st.container(height=CHAT_HEIGHT_PX if history else EMPTY_CHAT_HEIGHT_PX):
         for msg in history:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
-        return st.chat_input("Describe your project — site, rooms, priorities...")
+        return st.chat_input(placeholder)
 
 
 def process_new_message(prompt: str) -> None:
+    # The sample is never merged with the owner's project and never sent to
+    # Claude: extraction reads the chat transcript alone, which up to this
+    # point is empty.
+    st.session_state.showing_sample = False
     st.session_state.history.append({"role": "user", "content": prompt})
 
     try:
@@ -240,7 +281,8 @@ def main() -> None:
     project = st.session_state.project
     envelope = compute_envelope(project)
     issues = validate_room_program(project, envelope)
-    render_sidebar(project, envelope, issues)
+    showing_sample = st.session_state.showing_sample
+    render_sidebar(project, envelope, issues, showing_sample)
 
     prompt = render_chat(st.session_state.history)
     if prompt:
@@ -248,7 +290,12 @@ def main() -> None:
             process_new_message(prompt)
         st.rerun()
 
-    render_interactive_canvas(st.session_state.project, envelope, st.session_state.layout_plan)
+    render_interactive_canvas(
+        st.session_state.project,
+        envelope,
+        st.session_state.layout_plan,
+        st.session_state.showing_sample,
+    )
 
 
 if __name__ == "__main__":
