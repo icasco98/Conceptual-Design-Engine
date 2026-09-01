@@ -26,7 +26,7 @@ from streamlit_drawable_canvas import st_canvas
 from src.claude_client import explain_issues
 from src.extraction import extract_project
 from src.geometry import BuildableEnvelope, IncompleteSiteError, compute_buildable_envelope
-from src.interactive_canvas import build_initial_drawing, canvas_size_px, read_back_positions
+from src.interactive_canvas import CANVAS_BACKGROUND, build_initial_drawing, canvas_size_px
 from src.layout import PlacedRoom, pack_rooms
 from src.layout_plan import LayoutPlan, plan_layout
 from src.models import Project
@@ -76,8 +76,10 @@ def init_state() -> None:
         st.session_state.project = Project()
     if "layout_plan" not in st.session_state:
         st.session_state.layout_plan = None
-    if "room_positions" not in st.session_state:
-        st.session_state.room_positions = {}
+    if "canvas_drawing" not in st.session_state:
+        st.session_state.canvas_drawing = None
+    if "canvas_room_names" not in st.session_state:
+        st.session_state.canvas_room_names = []
 
 
 def compute_envelope(project: Project) -> BuildableEnvelope | None:
@@ -150,7 +152,8 @@ def render_sidebar(project: Project, envelope: BuildableEnvelope | None, issues:
             st.session_state.history = []
             st.session_state.project = Project()
             st.session_state.layout_plan = None
-            st.session_state.room_positions = {}
+            st.session_state.canvas_drawing = None
+            st.session_state.canvas_room_names = []
             st.rerun()
 
 
@@ -293,31 +296,37 @@ def render_interactive_canvas(
         st.info("This fills in once the zoning diagram above does.")
         return
 
-    result = pack_rooms(project, envelope, layout_plan.placement_order)
-    assignments = {a.room_name: a.category for a in layout_plan.assignments}
+    # Built once per layout, not on every rerun — see the module docstring
+    # in src/interactive_canvas.py for why that matters (it's the fix for
+    # the flicker/reset the canvas used to show on every interaction).
+    if st.session_state.canvas_drawing is None:
+        result = pack_rooms(project, envelope, layout_plan.placement_order)
+        assignments = {a.room_name: a.category for a in layout_plan.assignments}
+        drawing, room_names = build_initial_drawing(project, envelope, result, assignments, {})
+        st.session_state.canvas_drawing = drawing
+        st.session_state.canvas_room_names = room_names
 
-    initial_drawing, room_names = build_initial_drawing(
-        project, envelope, result, assignments, st.session_state.room_positions
-    )
     width_px, height_px = canvas_size_px(project.site)
 
     canvas_result = st_canvas(
-        background_color="#ffffff",
+        background_color=CANVAS_BACKGROUND,
         height=height_px,
         width=width_px,
         drawing_mode="transform",
-        initial_drawing=initial_drawing,
+        initial_drawing=st.session_state.canvas_drawing,
         key="zoning_canvas",
         display_toolbar=False,
     )
 
+    # Feed back exactly what the canvas just reported, so next render
+    # passes in the same data it already has — not a value reconstructed
+    # from meters, which can differ by float noise and read as "changed."
     if canvas_result.json_data is not None:
-        st.session_state.room_positions = read_back_positions(
-            canvas_result.json_data, room_names, project.site.depth_m
-        )
+        st.session_state.canvas_drawing = canvas_result.json_data
 
     if st.button("Reset to recommended positions"):
-        st.session_state.room_positions = {}
+        st.session_state.canvas_drawing = None
+        st.session_state.canvas_room_names = []
         st.rerun()
 
 
@@ -359,13 +368,16 @@ def process_new_message(prompt: str) -> None:
         try:
             st.session_state.layout_plan = plan_layout(result.project)
             # A genuinely new recommendation shouldn't fight stale drags
-            # from a previous room program/grouping.
-            st.session_state.room_positions = {}
+            # from a previous room program/grouping — force the canvas to
+            # rebuild fresh next render.
+            st.session_state.canvas_drawing = None
+            st.session_state.canvas_room_names = []
         except Exception:  # noqa: BLE001 - diagram just won't refresh this turn
             pass
     else:
         st.session_state.layout_plan = None
-        st.session_state.room_positions = {}
+        st.session_state.canvas_drawing = None
+        st.session_state.canvas_room_names = []
 
 
 def main() -> None:

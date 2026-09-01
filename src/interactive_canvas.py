@@ -6,17 +6,18 @@ app.py: the generated diagram always shows Claude's own recommendation
 with full circulation detail; this canvas is the owner's own sandbox for
 trying different arrangements. Room sizing and colors never change here —
 only position is draggable (resizing is disabled), and only rooms are
-draggable — the site outline, street marker, and corridors are a static
-backdrop.
+draggable — the site outline, street marker, corridors, and the faint
+recommended-circulation lines are a static backdrop.
 
-State model: `st.session_state["room_positions"]` is the single source of
-truth for where each room sits (site-frame meters), keyed by room name.
-Every render rebuilds the canvas's `initial_drawing` from that dict, and
-every render immediately writes back whatever the canvas reports — so the
-loop is self-consistent regardless of whether the underlying component
-preserves its own state across a Streamlit rerun. app.py resets
-`room_positions` to a fresh pack_rooms() result whenever a new layout_plan
-is computed, so a genuinely new recommendation isn't fighting stale drags.
+State model (see app.py render_interactive_canvas): the canvas's own last
+reported drawing is the single source of truth passed back in as
+`initial_drawing` on every rerun, rather than being reconstructed from
+scratch each time. Reconstructing fresh from room positions on every
+render re-introduces tiny floating-point differences the component reads
+as "this changed," which is what produced the flicker/reset the owner
+saw — feeding back exactly what the canvas last reported keeps it stable.
+build_initial_drawing() is only called once, when a layout is first shown
+or explicitly reset.
 """
 
 from __future__ import annotations
@@ -24,28 +25,35 @@ from __future__ import annotations
 from typing import Dict, List, Tuple
 
 from src.geometry import BuildableEnvelope
-from src.layout import LayoutResult, PlacedRoom
+from src.layout import LayoutResult
 from src.models import Project, Site
 from src.palette import CATEGORY_COLORS
 
-PX_PER_METER = 22.0
-MARGIN_PX = 24.0
+PX_PER_METER = 26.0
+MARGIN_PX = 34.0
+FONT_STACK = "'Helvetica Neue', Helvetica, Arial, sans-serif"
+ROOM_SHADOW = {"color": "rgba(15, 23, 42, 0.22)", "blur": 7, "offsetX": 0, "offsetY": 3}
+CANVAS_BACKGROUND = "#fbfbf9"
 
 
 def canvas_size_px(site: Site) -> Tuple[int, int]:
     return (
         int(site.width_m * PX_PER_METER + 2 * MARGIN_PX),
-        int(site.depth_m * PX_PER_METER + 2 * MARGIN_PX),
+        int(site.depth_m * PX_PER_METER + 2 * MARGIN_PX + 20),  # +20 headroom for the STREET label
     )
 
 
+def _to_canvas_point(x_m: float, y_m: float, site_depth_m: float) -> Tuple[float, float]:
+    """Site-frame meters -> canvas pixels for a single point. Canvas y
+    grows downward; site y grows toward the front, so this flips y to
+    keep front-at-top, matching the static diagram's orientation."""
+    return MARGIN_PX + x_m * PX_PER_METER, MARGIN_PX + 20 + (site_depth_m - y_m) * PX_PER_METER
+
+
 def _to_canvas_rect(x_m: float, y_m: float, w_m: float, d_m: float, site_depth_m: float) -> Tuple[float, float, float, float]:
-    """Site-frame meters -> canvas pixels. Canvas y grows downward; site y
-    grows toward the front, so this flips y to keep front-at-top, matching
-    the static diagram's orientation."""
-    left = MARGIN_PX + x_m * PX_PER_METER
-    top = MARGIN_PX + (site_depth_m - y_m - d_m) * PX_PER_METER
-    return left, top, w_m * PX_PER_METER, d_m * PX_PER_METER
+    """Site-frame meters -> canvas pixels for a rectangle's top-left + size."""
+    left, bottom = _to_canvas_point(x_m, y_m, site_depth_m)
+    return left, bottom - d_m * PX_PER_METER, w_m * PX_PER_METER, d_m * PX_PER_METER
 
 
 def _from_canvas_point(left_px: float, top_px: float, w_px: float, h_px: float, site_depth_m: float) -> Tuple[float, float]:
@@ -53,7 +61,7 @@ def _from_canvas_point(left_px: float, top_px: float, w_px: float, h_px: float, 
     as reported back by the canvas. Returns the room's site-frame (x_m, y_m)."""
     x_m = (left_px - MARGIN_PX) / PX_PER_METER
     d_m = h_px / PX_PER_METER
-    top_m_from_front = (top_px - MARGIN_PX) / PX_PER_METER
+    top_m_from_front = (top_px - MARGIN_PX - 20) / PX_PER_METER
     y_m = site_depth_m - top_m_from_front - d_m
     return x_m, y_m
 
@@ -64,21 +72,31 @@ _EDGE_LINE = {
     "left": lambda w, d: ((0, 0), (0, d)),
     "right": lambda w, d: ((w, 0), (w, d)),
 }
+_EDGE_LABEL_ANCHOR = {
+    "front": lambda w, d: (w / 2, -16),
+    "back": lambda w, d: (w / 2, d + 16),
+    "left": lambda w, d: (-16, d / 2),
+    "right": lambda w, d: (w + 16, d / 2),
+}
 
 
-def _static_objects(project: Project, envelope: BuildableEnvelope, corridors) -> List[dict]:
+def _static_objects(project: Project, envelope: BuildableEnvelope, corridors, circulation_edges) -> List[dict]:
     site = project.site
     width_px = site.width_m * PX_PER_METER
     depth_px = site.depth_m * PX_PER_METER
+    top_offset = MARGIN_PX + 20
+
     objects = [
         {
             "type": "rect",
             "left": MARGIN_PX,
-            "top": MARGIN_PX,
+            "top": top_offset,
             "width": width_px,
             "height": depth_px,
+            "rx": 4,
+            "ry": 4,
             "fill": "",
-            "stroke": "#888888",
+            "stroke": "#a8a8a3",
             "strokeWidth": 1.5,
             "selectable": False,
             "evented": False,
@@ -97,9 +115,27 @@ def _static_objects(project: Project, envelope: BuildableEnvelope, corridors) ->
                 "x2": x1 - x0,
                 "y2": y1 - y0,
                 "left": MARGIN_PX + x0,
-                "top": MARGIN_PX + y0,
+                "top": top_offset + y0,
                 "stroke": "#c0392b",
                 "strokeWidth": 4,
+                "strokeLineCap": "round",
+                "selectable": False,
+                "evented": False,
+            }
+        )
+        lx, ly = _EDGE_LABEL_ANCHOR[edge.position](width_px, depth_px)
+        objects.append(
+            {
+                "type": "textbox",
+                "left": MARGIN_PX + lx - 30,
+                "top": top_offset + ly - 6,
+                "width": 60,
+                "fontSize": 11,
+                "fontFamily": FONT_STACK,
+                "fontWeight": "700",
+                "fill": "#c0392b",
+                "textAlign": "center",
+                "text": "STREET",
                 "selectable": False,
                 "evented": False,
             }
@@ -114,9 +150,32 @@ def _static_objects(project: Project, envelope: BuildableEnvelope, corridors) ->
                 "top": top,
                 "width": w,
                 "height": h,
-                "fill": "#f2f2f2",
-                "stroke": "#999999",
+                "rx": 2,
+                "ry": 2,
+                "fill": "#eeeeec",
+                "stroke": "#c9c9c4",
                 "strokeWidth": 0.8,
+                "strokeDashArray": [4, 3],
+                "selectable": False,
+                "evented": False,
+            }
+        )
+
+    # Faint recommended-circulation lines, for visual continuity with the
+    # generated diagram above — static, not recomputed as rooms are dragged.
+    for (x0, y0), (x1, y1) in circulation_edges:
+        cx0, cy0 = _to_canvas_point(x0, y0, site.depth_m)
+        cx1, cy1 = _to_canvas_point(x1, y1, site.depth_m)
+        objects.append(
+            {
+                "type": "line",
+                "x1": cx0,
+                "y1": cy0,
+                "x2": cx1,
+                "y2": cy1,
+                "stroke": "#0b0b0b",
+                "strokeWidth": 1,
+                "opacity": 0.22,
                 "selectable": False,
                 "evented": False,
             }
@@ -130,8 +189,8 @@ def _room_group(left: float, top: float, width: float, height: float, text: str,
     semantics with originX/Y="left"/"top") — the child rect/textbox below
     are positioned relative to the group's *center* regardless, which is
     an unrelated, always-on fabric.js convention for group children."""
-    stroke = "#0b0b0b" if is_entry else "#333333"
-    stroke_width = 3 if is_entry else 1
+    stroke = "#0b0b0b" if is_entry else "rgba(0,0,0,0.35)"
+    stroke_width = 2.5 if is_entry else 1
     stroke_dash = [6, 4] if is_entry else None
     return {
         "type": "group",
@@ -142,6 +201,8 @@ def _room_group(left: float, top: float, width: float, height: float, text: str,
         "width": width,
         "height": height,
         "hasControls": False,
+        "hoverCursor": "grab",
+        "moveCursor": "grabbing",
         "lockScalingX": True,
         "lockScalingY": True,
         "lockRotation": True,
@@ -154,10 +215,13 @@ def _room_group(left: float, top: float, width: float, height: float, text: str,
                 "top": -height / 2,
                 "width": width,
                 "height": height,
+                "rx": 7,
+                "ry": 7,
                 "fill": color,
                 "stroke": stroke,
                 "strokeWidth": stroke_width,
                 "strokeDashArray": stroke_dash,
+                "shadow": ROOM_SHADOW,
             },
             {
                 "type": "textbox",
@@ -167,7 +231,10 @@ def _room_group(left: float, top: float, width: float, height: float, text: str,
                 "top": -8,
                 "width": max(width - 8, 10),
                 "fontSize": 13,
-                "fill": "#000000",
+                "fontFamily": FONT_STACK,
+                "fontWeight": "600",
+                "fill": "#111111",
+                "textBackgroundColor": "rgba(255,255,255,0.5)",
                 "textAlign": "center",
                 "text": text,
             },
@@ -184,8 +251,9 @@ def build_initial_drawing(
 ) -> Tuple[dict, List[str]]:
     """Returns (initial_drawing, room_names_in_order) — room_names_in_order
     lines up with the LAST len(room_names_in_order) objects in the drawing,
-    which is where every draggable room group is placed."""
-    objects = _static_objects(project, envelope, result.corridors)
+    which is where every draggable room group is placed. Called once per
+    layout (see app.py) — not on every rerun."""
+    objects = _static_objects(project, envelope, result.corridors, result.circulation_edges)
 
     room_names: List[str] = []
     for room in result.rooms:
