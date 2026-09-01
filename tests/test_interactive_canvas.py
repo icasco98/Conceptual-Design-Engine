@@ -1,6 +1,7 @@
 from src.geometry import compute_buildable_envelope
 from src.interactive_canvas import canvas_size_px, render_canvas_html
 from src.layout import pack_rooms
+from src.layout_plan import CategoryLabels, LayoutPlan
 from src.models import Project, Room, Setbacks, Site, SiteEdge
 
 
@@ -15,11 +16,22 @@ def make_project(width=18.0, depth=25.0, rooms=None) -> Project:
     return Project(site=site, setbacks=Setbacks(), rooms=rooms or [])
 
 
+def make_layout_plan(rooms) -> LayoutPlan:
+    return LayoutPlan(
+        grouping_label="Grouped by privacy level",
+        category_labels=CategoryLabels(category_a="Private", category_b="Shared", category_c="Service"),
+        assignments=[],
+        placement_order=[r.name for r in rooms],
+        rationale="Private rooms sit away from the entry; shared rooms cluster near it.",
+    )
+
+
 def _render(rooms, assignments=None):
     project = make_project(rooms=rooms)
     envelope = compute_buildable_envelope(project.site, project.setbacks)
     result = pack_rooms(project, envelope)
-    return render_canvas_html(project, envelope, result, assignments or {}), result
+    layout_plan = make_layout_plan(rooms)
+    return render_canvas_html(project, envelope, result, assignments or {}, layout_plan), result
 
 
 def test_every_room_appears_exactly_once_as_a_draggable_box():
@@ -30,7 +42,7 @@ def test_every_room_appears_exactly_once_as_a_draggable_box():
     ]
     html, result = _render(rooms)
 
-    assert html.count('class="room-box') == len(result.rooms) == 4
+    assert html.count('class="room-box draggable') == len(result.rooms) == 4
     for room in result.rooms:
         assert f'>{room.name}<' in html or f">{room.name}</span>" in html
 
@@ -42,15 +54,15 @@ def test_entry_room_gets_the_entry_css_class():
     ]
     html, _ = _render(rooms)
 
-    assert 'class="room-box entry"' in html
-    assert html.count('class="room-box entry"') == 1
+    assert 'class="room-box draggable entry"' in html
+    assert html.count('class="room-box draggable entry"') == 1
 
 
 def test_corridors_render_when_present_none_when_not():
     single_row = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
     html_no_corridor, result_no_corridor = _render(single_row)
     assert not result_no_corridor.corridors
-    assert 'class="corridor"' not in html_no_corridor
+    assert 'class="corridor' not in html_no_corridor
 
     multi_row = [
         Room(name="Entry", room_type="entry", is_entry=True),
@@ -59,9 +71,64 @@ def test_corridors_render_when_present_none_when_not():
     project = make_project(width=6.0, depth=40.0, rooms=multi_row)
     envelope = compute_buildable_envelope(project.site, project.setbacks)
     result = pack_rooms(project, envelope)
-    html = render_canvas_html(project, envelope, result, {})
+    html = render_canvas_html(project, envelope, result, {}, make_layout_plan(multi_row))
     assert result.corridors
-    assert html.count('class="corridor"') == len(result.corridors)
+    assert html.count('class="corridor draggable"') == len(result.corridors)
+
+
+def test_corridors_are_draggable_like_rooms_not_fixed():
+    import re
+
+    rooms = [
+        Room(name="Entry", room_type="entry", is_entry=True),
+        Room(name="Bedroom", room_type="bedroom_primary", count=4),
+    ]
+    project = make_project(width=6.0, depth=40.0, rooms=rooms)
+    envelope = compute_buildable_envelope(project.site, project.setbacks)
+    result = pack_rooms(project, envelope)
+    html = render_canvas_html(project, envelope, result, {}, make_layout_plan(rooms))
+    assert result.corridors
+
+    # Corridors carry the same reset-position data attributes as rooms,
+    # and share the .draggable class the event listeners attach to. (The
+    # legend also says "Hallway" once, for the swatch — not counted here.)
+    assert html.count('corridor-label">Hallway') == len(result.corridors)
+    corridor_divs = re.findall(r'<div class="corridor draggable"[^>]*>', html)
+    assert len(corridor_divs) == len(result.corridors)
+    for div in corridor_divs:
+        assert "data-initial-left=" in div
+        assert "data-initial-top=" in div
+
+
+def test_building_footprint_outline_is_drawn():
+    rooms = [
+        Room(name="Entry", room_type="entry", is_entry=True),
+        Room(name="Kitchen", room_type="kitchen"),
+    ]
+    html, result = _render(rooms)
+
+    assert result.footprint
+    assert "<polygon points=" in html
+    # every footprint vertex should show up as a coordinate pair in the SVG
+    assert html.count(",") >= len(result.footprint)
+
+
+def test_collision_resolution_script_is_present():
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    assert "function resolveOverlaps" in html
+    assert "resolveOverlaps(active)" in html
+
+
+def test_title_legend_and_rationale_are_rendered():
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    assert "Grouped by privacy level" in html
+    assert "Private" in html and "Shared" in html and "Service" in html
+    assert "Private rooms sit away from the entry" in html
+    assert html.count('class="legend-item"') == 5  # 3 categories + Hallway + Entry
 
 
 def test_html_is_escaped_against_untrusted_room_names():

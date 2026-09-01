@@ -9,11 +9,13 @@ every room ends up reachable, not just packed:
 1. Circulation is structural. Rooms are placed left-to-right in rows;
    whenever there's more than one row, a corridor strip at the fixed code
    width (1.2m by default) is inserted between consecutive rows, spanning
-   the full envelope width — so every room touches a corridor above or
-   below it, instead of two rows floating with no shared edge. A room the
-   owner described as a "hallway" isn't placed as its own box: it's a
-   signal that circulation matters, and the generated corridors ARE that
-   circulation, sized to code rather than to whatever the owner (or
+   from x=0 out to whichever of the two rows is wider — enough to touch
+   every room in both, without padding out to the full buildable envelope
+   when the rooms themselves don't need that width (that padding would
+   otherwise show up as a false bulge in the building footprint, below).
+   A room the owner described as a "hallway" isn't placed as its own box:
+   it's a signal that circulation matters, and the generated corridors ARE
+   that circulation, sized to code rather than to whatever the owner (or
    Claude) guessed.
 2. The entry always anchors the path. Any room marked as the entry is
    moved to the front of the placement order before packing, so row 0
@@ -37,6 +39,14 @@ every room ends up reachable, not just packed:
    bigger, and a room only shrinks when doing so genuinely reduces the
    footprint (a room that already fits, or isn't the tallest in its row,
    keeps its nominal size).
+5. The building footprint is an exact outline, not the site boundary.
+   Every row and corridor is left-aligned at x=0 (rooms within a row are
+   placed left-to-right from there; corridors span 0 to the wider of
+   their two neighboring rows), so the packing is always a simple
+   left-aligned staircase — no general polygon-union math needed to trace
+   it. `LayoutResult.footprint` is that staircase's boundary in site-frame
+   coordinates: the building's own exterior wall line, which is usually
+   narrower than the buildable envelope it sits inside.
 
 Known limitation: a single room wider than the whole envelope isn't
 special-cased — it will visually overflow rather than being force-fit.
@@ -102,6 +112,10 @@ class LayoutResult:
     # (from_point, to_point) pairs — draw as arrows to show how to get
     # from the entry to any given room.
     circulation_edges: List[Tuple[Point, Point]]
+    # Ordered polygon vertices (site-frame meters) tracing the building's
+    # own exterior wall line — the union of every room and corridor, not
+    # the buildable envelope it sits inside.
+    footprint: List[Point]
 
 
 def _expand_and_order(rooms: List[Room], order: List[str]) -> List[tuple[Room, str]]:
@@ -158,21 +172,33 @@ def _form_rows(
     return rows
 
 
+def _row_width(row: List[tuple[Room, str, float, float, float, float]]) -> float:
+    return sum(w for _, _, w, _, _, _ in row)
+
+
 def _layout_from_rows(
     rows: List[List[tuple[Room, str, float, float, float, float]]],
-    envelope: BuildableEnvelope,
     corridor_width: float,
     max_shrink: float,
-) -> Tuple[List[tuple[Room, str, float, float, float, float]], List[Tuple[float, float, float, float]], float]:
-    """Place rows top-to-bottom with a corridor strip between each pair.
-    A row's height is set by its deepest room; that room (or rooms, on a
-    tie) gets trimmed toward its own minimum (never past it, never by more
-    than `max_shrink`) since a shallower row is a smaller footprint —
-    shorter rooms in the same row already fit within that height and keep
-    their nominal depth. Returns (placed rooms with x/y, corridor rects,
-    total height used)."""
+) -> Tuple[
+    List[tuple[Room, str, float, float, float, float]],
+    List[Tuple[float, float, float, float]],
+    float,
+    List[Tuple[float, float, float]],
+]:
+    """Place rows top-to-bottom with a corridor strip between each pair,
+    spanning x=0 to whichever of the two neighboring rows is wider (enough
+    to touch every room in both, no wider). A row's height is set by its
+    deepest room; that room (or rooms, on a tie) gets trimmed toward its
+    own minimum (never past it, never by more than `max_shrink`) since a
+    shallower row is a smaller footprint — shorter rooms in the same row
+    already fit within that height and keep their nominal depth. Returns
+    (placed rooms with x/y, corridor rects, total height used, bands —
+    (width, y_start, y_end) per row/corridor, for the footprint outline)."""
     placed = []
     corridors: List[Tuple[float, float, float, float]] = []
+    bands: List[Tuple[float, float, float]] = []
+    row_widths = [_row_width(row) for row in rows]
     y = 0.0
     for i, row in enumerate(rows):
         nominal_height = max((d for _, _, _, d, _, _ in row), default=0.0)
@@ -183,11 +209,31 @@ def _layout_from_rows(
             d_final = row_height if abs(d - nominal_height) < 1e-9 else d
             placed.append((room, base_name, x, y, w, d_final))
             x += w
+        bands.append((row_widths[i], y, y + row_height))
         y += row_height
         if i < len(rows) - 1:
-            corridors.append((0.0, y, envelope.width_m, corridor_width))
+            corridor_span = max(row_widths[i], row_widths[i + 1])
+            corridors.append((0.0, y, corridor_span, corridor_width))
+            bands.append((corridor_span, y, y + corridor_width))
             y += corridor_width
-    return placed, corridors, y
+    return placed, corridors, y, bands
+
+
+def _footprint_polygon(bands: List[Tuple[float, float, float]]) -> List[Point]:
+    """`bands` are (width, y_start, y_end) — contiguous in y from 0, each
+    left-aligned at x=0 (see module docstring, rule 5). Traces the
+    right-side staircase boundary and closes back down x=0."""
+    if not bands:
+        return []
+    points: List[Point] = [(0.0, 0.0)]
+    prev_width: Optional[float] = None
+    for width, y_start, y_end in bands:
+        if prev_width is None or abs(width - prev_width) > 1e-9:
+            points.append((width, y_start))
+        points.append((width, y_end))
+        prev_width = width
+    points.append((0.0, points[-1][1]))
+    return points
 
 
 def pack_rooms(
@@ -204,7 +250,7 @@ def pack_rooms(
     corridor_width = project.hallway_width_m
 
     rows = _form_rows(footprints, envelope.width_m, MAX_SHRINK_M)
-    placed, corridors, _ = _layout_from_rows(rows, envelope, corridor_width, MAX_SHRINK_M)
+    placed, corridors, _, bands = _layout_from_rows(rows, corridor_width, MAX_SHRINK_M)
     # If it still doesn't fit after compaction, that's left as-is rather
     # than forced smaller — no room ever goes below its real minimum, and
     # src.validation's area-exceeds-envelope check already tells the owner
@@ -243,8 +289,14 @@ def pack_rooms(
         corridor_segments.append(CorridorSegment(x_m=site_x, y_m=site_y, width_m=cw, depth_m=cd))
 
     circulation_edges = _build_circulation_edges(placed, corridors, to_site_coords)
+    footprint = [to_site_coords(x, y) for x, y in _footprint_polygon(bands)]
 
-    return LayoutResult(rooms=placed_rooms, corridors=corridor_segments, circulation_edges=circulation_edges)
+    return LayoutResult(
+        rooms=placed_rooms,
+        corridors=corridor_segments,
+        circulation_edges=circulation_edges,
+        footprint=footprint,
+    )
 
 
 Rect = Tuple[float, float, float, float]  # x0, y0, x1, y1

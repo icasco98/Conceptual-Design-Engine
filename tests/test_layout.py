@@ -301,3 +301,64 @@ def test_width_is_left_alone_when_the_row_already_has_room_to_spare():
     kitchen = next(r for r in result.rooms if r.name == "Kitchen")
     typical = ROOM_DEFAULTS["kitchen"]
     assert kitchen.width_m == pytest.approx(typical.typical_width_m, abs=1e-6)
+
+
+def test_corridor_spans_the_wider_of_its_two_rows_not_the_full_envelope():
+    # Row 0 (Entry + A + B) is 4.1m wide; envelope is 4.5m wide, so C
+    # (2.0m) doesn't fit alongside them and wraps to its own row. Under
+    # the old "always full envelope width" behavior the corridor would be
+    # 4.5m; it should actually be 4.1m -- the wider of its two neighbors,
+    # no more.
+    rooms = [
+        Room(name="Entry", room_type="entry", is_entry=True, explicit_width_m=0.1, explicit_depth_m=0.1),
+        Room(name="A", room_type="other", explicit_width_m=2.0, explicit_depth_m=2.0),
+        Room(name="B", room_type="other", explicit_width_m=2.0, explicit_depth_m=2.0),
+        Room(name="C", room_type="other", explicit_width_m=2.0, explicit_depth_m=2.0),
+    ]
+    project = make_project(width=7.5, depth=20.0, rooms=rooms)  # envelope width = 7.5 - 3.0 = 4.5
+    envelope = compute_buildable_envelope(project.site, project.setbacks)
+    result = pack_rooms(project, envelope, placement_order=["Entry", "A", "B", "C"])
+
+    assert len(result.corridors) == 1
+    assert result.corridors[0].width_m == pytest.approx(4.1, abs=1e-6)
+    assert result.corridors[0].width_m < envelope.width_m - 1e-6
+
+
+def test_footprint_traces_the_actual_room_extents_not_the_envelope():
+    # Same scenario as above: the footprint's widest point should match
+    # row 0's 4.1m, clearly narrower than the 4.5m envelope -- proving it
+    # traces the rooms, not just redrawing the buildable envelope.
+    rooms = [
+        Room(name="Entry", room_type="entry", is_entry=True, explicit_width_m=0.1, explicit_depth_m=0.1),
+        Room(name="A", room_type="other", explicit_width_m=2.0, explicit_depth_m=2.0),
+        Room(name="B", room_type="other", explicit_width_m=2.0, explicit_depth_m=2.0),
+        Room(name="C", room_type="other", explicit_width_m=2.0, explicit_depth_m=2.0),
+    ]
+    project = make_project(width=7.5, depth=20.0, rooms=rooms)
+    envelope = compute_buildable_envelope(project.site, project.setbacks)
+    result = pack_rooms(project, envelope, placement_order=["Entry", "A", "B", "C"])
+
+    assert len(result.footprint) >= 4
+    xs = [x - envelope.left_setback_m for x, _ in result.footprint]
+    assert max(xs) == pytest.approx(4.1, abs=1e-6)
+    assert min(xs) == pytest.approx(0.0, abs=1e-6)
+    assert max(xs) < envelope.width_m - 1e-6  # narrower than the buildable envelope
+
+    # Closed polygon: first and last vertex sit on the same (left) wall.
+    assert result.footprint[0][0] == pytest.approx(result.footprint[-1][0], abs=1e-6)
+
+
+def test_footprint_is_a_plain_rectangle_when_everything_fits_in_one_row():
+    rooms = [
+        Room(name="Entry", room_type="entry", is_entry=True),
+        Room(name="Kitchen", room_type="kitchen"),
+    ]
+    project = make_project(width=30.0, depth=30.0, rooms=rooms)
+    envelope = compute_buildable_envelope(project.site, project.setbacks)
+    result = pack_rooms(project, envelope)
+
+    assert not result.corridors  # single row -- sanity check
+    xs = sorted({round(x, 6) for x, _ in result.footprint})
+    ys = sorted({round(y, 6) for _, y in result.footprint})
+    assert len(xs) == 2  # left wall and right wall only, no steps
+    assert len(ys) == 2  # front wall and back wall only
