@@ -10,6 +10,7 @@ README.md for the roadmap.
 from __future__ import annotations
 
 import json
+import os
 
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
@@ -25,6 +26,32 @@ from src.validation import Issue, validate_room_program
 load_dotenv()
 
 st.set_page_config(page_title="Conceptual Design Engine — Zoning Intake", layout="wide")
+
+
+def load_api_key_from_cloud_secrets() -> None:
+    """When hosted on Streamlit Community Cloud, the key lives in st.secrets
+    (set via the app's dashboard) rather than a local .env file. Mirror it
+    into the environment so src.claude_client picks it up the same way
+    either way."""
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return
+    try:
+        key = st.secrets["ANTHROPIC_API_KEY"]
+    except Exception:
+        return
+    if key:
+        os.environ["ANTHROPIC_API_KEY"] = key
+
+
+load_api_key_from_cloud_secrets()
+
+if not os.environ.get("ANTHROPIC_API_KEY"):
+    st.error(
+        "No Anthropic API key found. Locally: add it to a `.env` file. "
+        "On Streamlit Community Cloud: add it under your app's Settings → Secrets "
+        "as `ANTHROPIC_API_KEY = \"sk-ant-...\"`."
+    )
+    st.stop()
 
 
 def init_state() -> None:
