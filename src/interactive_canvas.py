@@ -4,8 +4,8 @@ It shows Claude's recommended room grouping and layout (src.layout,
 src.layout_plan) — title, color-coded legend, and rationale included — as
 draggable, resizable, rotatable, deletable boxes the owner can rearrange by
 hand to explore a different arrangement, plus a live-synced room schedule
-below it. Corridors are draggable exactly like rooms (nothing here is a
-fixed zone); the site outline, the buildable envelope (setback) outline,
+in a panel to its left. Corridors are draggable exactly like rooms
+(nothing here is a fixed zone); the site outline, the buildable envelope (setback) outline,
 the building footprint, the street marker, and door arrows are the only
 static-position backdrop — everything else recomputes live as boxes move.
 
@@ -44,11 +44,11 @@ Per-box controls, all pure client-side JS (see the generated `<script>`):
   always snaps to that same 0.25m grid while dragging or resizing
   (`snapToGrid`, `GRID_PX`) — the grid is a visibility choice, snapping
   isn't.
-- **The room schedule** below the canvas lists every box's current width
-  and depth in meters, editable in place — typing a new value resizes the
-  box on the canvas (`applyScheduleEdit`) exactly as if you'd dragged its
-  corner, growing/shrinking from its center since a table cell has no
-  natural corner to anchor to. It stays live-synced with the canvas in
+- **The room schedule** in the column left of the canvas lists every
+  box's current width and depth in meters, editable in place — typing a
+  new value resizes the box on the canvas (`applyScheduleEdit`) exactly
+  as if you'd dragged its corner, growing/shrinking from its center since
+  a table cell has no natural corner to anchor to. It stays live-synced with the canvas in
   both directions (`renderSchedule`, folded into `refreshDiagram` so it
   updates on every move/resize/rotate/delete/reset) — clicking a row
   selects the matching box and vice versa, and in-place DOM updates (not a
@@ -147,6 +147,21 @@ MARGIN_PX = 34.0
 STREET_LABEL_HEADROOM_PX = 20.0
 FONT_STACK = "'Helvetica Neue', Helvetica, Arial, sans-serif"
 CANVAS_BACKGROUND = "#fbfbf9"
+
+# The room-schedule panel sits to the LEFT of the diagram (see
+# #canvas-layout). This is its preferred width — wide enough for a typical
+# room name plus the width/depth inputs, the rotation readout and the
+# delete button. It shrinks toward the minimum on a narrow viewport rather
+# than pushing the diagram out of the component's fixed height.
+SCHEDULE_WIDTH_PX = 340
+SCHEDULE_MIN_WIDTH_PX = 250
+# Gap between the schedule panel and the diagram (matches #canvas-layout).
+SCHEDULE_GAP_PX = 18
+# Vertical space the component needs on top of the canvas itself: title +
+# legend row above it, and the reset button + rationale below. app.py uses
+# this to size the Streamlit component — the schedule no longer adds any
+# height of its own now that it sits beside the diagram.
+CANVAS_CHROME_HEIGHT_PX = 220
 
 # Every box's position snaps to this grid while dragging or resizing,
 # regardless of whether the grid overlay is visible (see #grid-toggle).
@@ -590,9 +605,28 @@ def render_canvas_html(
     cursor: pointer;
   }}
   #reset-btn:hover {{ background: #f2f2f0; }}
+  /* The diagram and the schedule sit side by side, schedule on the left,
+     so there is exactly one room table in the whole app and it reads as a
+     panel beside the drawing rather than a second thing below it.
+     Deliberately nowrap: the component's height is fixed by app.py from
+     the canvas size, so a wrap would push the diagram down out of view.
+     The canvas column is a fixed pixel size (absolutely-positioned boxes
+     live in it) and the schedule is the flexible one — on a narrow
+     viewport it shrinks toward SCHEDULE_MIN_WIDTH_PX and its table
+     scrolls sideways rather than displacing the drawing. */
+  #canvas-layout {{
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: flex-start;
+    gap: {SCHEDULE_GAP_PX}px;
+  }}
+  #canvas-column {{
+    flex: 0 0 auto;
+  }}
   #schedule-section {{
-    margin-top: 16px;
-    max-width: {width_px}px;
+    flex: 1 1 {SCHEDULE_WIDTH_PX}px;
+    min-width: {SCHEDULE_MIN_WIDTH_PX}px;
+    max-width: {SCHEDULE_WIDTH_PX}px;
   }}
   .schedule-title {{
     font-size: 14px;
@@ -605,9 +639,13 @@ def render_canvas_html(
     color: #77776f;
     margin: 0 0 6px 4px;
   }}
+  /* Tall enough to sit alongside the diagram and scroll internally when a
+     program has more rooms than the drawing is tall. overflow-x covers the
+     squeezed case described on #schedule-section. */
   #schedule-scroll {{
-    max-height: 240px;
+    max-height: {height_px}px;
     overflow-y: auto;
+    overflow-x: auto;
     border: 1px solid #e5e5e0;
     border-radius: 6px;
   }}
@@ -615,11 +653,22 @@ def render_canvas_html(
     border-collapse: collapse;
     font-size: 12.5px;
     width: 100%;
+    min-width: {SCHEDULE_MIN_WIDTH_PX}px;
   }}
   #schedule-table th, #schedule-table td {{
     border-bottom: 1px solid #e5e5e0;
-    padding: 5px 8px;
+    padding: 5px 6px;
     text-align: left;
+  }}
+  /* Keep the name column from starving the size inputs and the delete
+     button of width when a room name is long. */
+  #schedule-table th:first-child, #schedule-table td:first-child {{
+    max-width: 110px;
+  }}
+  #schedule-table th:last-child, #schedule-table td:last-child {{
+    width: 22px;
+    padding-left: 0;
+    padding-right: 4px;
   }}
   #schedule-table thead th {{
     position: sticky;
@@ -634,7 +683,7 @@ def render_canvas_html(
   #schedule-table tbody tr:hover {{ background: rgba(0,0,0,0.02); }}
   #schedule-table tr.schedule-row-selected {{ background: rgba(42,120,214,0.10); }}
   #schedule-table input[type="number"] {{
-    width: 58px;
+    width: 54px;
     font-size: 12.5px;
     padding: 2px 4px;
     border: 1px solid #ccc;
@@ -661,24 +710,28 @@ def render_canvas_html(
       <label class="grid-toggle-label"><input type="checkbox" id="grid-toggle" /> Show {GRID_M:g}m grid</label>
     </div>
   </div>
-  <div id="canvas-container" data-env-left="{env_left:.1f}" data-env-top="{env_top:.1f}" data-env-right="{env_right:.1f}" data-env-bottom="{env_bottom:.1f}">
-    {_static_svg(project, envelope, result)}
-    {_corridor_divs(project, result)}
-    {_room_divs(project, result, assignments)}
-  </div>
-  <button id="reset-btn" type="button">Reset to recommended layout</button>
-  <p class="canvas-rationale">{_esc(layout_plan.rationale)}</p>
+  <div id="canvas-layout">
+    <div id="schedule-section">
+      <h3 class="schedule-title">Room Schedule</h3>
+      <p class="schedule-hint">Click a row to select it on the diagram. Edit width/depth here or by dragging a corner.</p>
+      <div id="schedule-scroll">
+        <table id="schedule-table">
+          <thead>
+            <tr><th>Space</th><th>Width (m)</th><th>Depth (m)</th><th>Rotation</th><th></th></tr>
+          </thead>
+          <tbody id="schedule-body"></tbody>
+        </table>
+      </div>
+    </div>
 
-  <div id="schedule-section">
-    <h3 class="schedule-title">Room Schedule</h3>
-    <p class="schedule-hint">Click a row to select it on the diagram. Edit width/depth here or by dragging a corner above.</p>
-    <div id="schedule-scroll">
-      <table id="schedule-table">
-        <thead>
-          <tr><th>Space</th><th>Width (m)</th><th>Depth (m)</th><th>Rotation</th><th></th></tr>
-        </thead>
-        <tbody id="schedule-body"></tbody>
-      </table>
+    <div id="canvas-column">
+      <div id="canvas-container" data-env-left="{env_left:.1f}" data-env-top="{env_top:.1f}" data-env-right="{env_right:.1f}" data-env-bottom="{env_bottom:.1f}">
+        {_static_svg(project, envelope, result)}
+        {_corridor_divs(project, result)}
+        {_room_divs(project, result, assignments)}
+      </div>
+      <button id="reset-btn" type="button">Reset to recommended layout</button>
+      <p class="canvas-rationale">{_esc(layout_plan.rationale)}</p>
     </div>
   </div>
 

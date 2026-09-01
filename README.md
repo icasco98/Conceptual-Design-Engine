@@ -42,9 +42,10 @@ zoning/bubble diagram of its rooms, before any detailed floor plan exists.
    "inside the building" from "buildable but unused site."
 4. **Interactive canvas — the diagram itself.** The recommendation above
    is shown as a single interactive canvas (`src/interactive_canvas.py`):
-   title, color legend, rationale, and a live room schedule below it, with
-   every room *and* hallway as a draggable box (nothing here is a fixed
-   zone) so you can explore a different arrangement by hand.
+   title, color legend, rationale, and a live room schedule in a panel to
+   its left, with every room *and* hallway as a draggable box (nothing
+   here is a fixed zone) so you can explore a different arrangement by
+   hand.
 
    **Selection.** A box's handles are hidden until you select it —
    clicking its body (or its row in the schedule) selects it and clears
@@ -68,9 +69,11 @@ zoning/bubble diagram of its rooms, before any detailed floor plan exists.
      exactly, so it's easy to close an accidental sliver of empty space
      between zones instead of pixel-hunting for the exact touching spot.
 
-   **Room schedule.** Below the canvas, a table lists every box's current
-   width, depth, and rotation in meters/degrees. Width and depth are
-   editable in place — typing a new value resizes the box on the canvas
+   **Room schedule.** In the column left of the canvas, a table lists
+   every box's current width, depth, and rotation in meters/degrees. It
+   is the only room table in the app — the sidebar carries site, setback,
+   envelope and priority context, but no second list of rooms. Width and
+   depth are editable in place — typing a new value resizes the box on the canvas
    (growing/shrinking from its center, since a table cell has no natural
    corner to anchor to) exactly as if you'd dragged its corner. It's
    kept live-synced with the canvas in both directions, and clicking a row
@@ -192,7 +195,7 @@ pytest
 
 | Path | Purpose |
 |---|---|
-| `app.py` | Streamlit UI — chat (fixed-height, scrollable) + interactive zoning diagram below it, sidebar summary of captured state. |
+| `app.py` | Streamlit UI — chat (fixed-height, scrollable) + interactive zoning diagram below it (schedule panel left of the drawing), sidebar summary of captured site/setback/envelope/priority state. |
 | `src/models.py` | The shared data shapes (`Project`, `Site`, `Room`, ...). |
 | `src/defaults.py` | Room-sizing defaults table (widths/depths per room type). |
 | `src/geometry.py` | Buildable envelope from site + setbacks. |
@@ -201,7 +204,7 @@ pytest
 | `src/claude_client.py` | Anthropic client + plain-language explanation of issues. |
 | `src/layout_plan.py` | Claude picks room categories + adjacency order (structured output). |
 | `src/layout.py` | Deterministic rectangle packing, footprint compaction, building footprint outline, and circulation graph — no LLM math, unit-tested. |
-| `src/interactive_canvas.py` | Renders the interactive zoning diagram (title, legend, live door arrows, a 0.25m snap grid, selection-gated draggable/resizable/rotatable/deletable rooms and hallways with multi-select group rotate/delete, a live-synced editable room schedule, gap-closing snap, true rotated-shape collision, live footprint outline, setback-constrained collision resolution with shrink-toward-minimum) as self-contained HTML/CSS/JS, unit-tested. |
+| `src/interactive_canvas.py` | Renders the interactive zoning diagram (title, legend, live door arrows, a 0.25m snap grid, selection-gated draggable/resizable/rotatable/deletable rooms and hallways with multi-select group rotate/delete, a live-synced editable room schedule in a column left of the drawing, gap-closing snap, true rotated-shape collision, live footprint outline, setback-constrained collision resolution with shrink-toward-minimum) as self-contained HTML/CSS/JS, unit-tested. |
 | `src/palette.py` | The 3 validated diagram colors (see dataviz notes in the module docstring). |
 | `tests/` | Unit tests for geometry/defaults/validation/layout/interactive canvas. |
 

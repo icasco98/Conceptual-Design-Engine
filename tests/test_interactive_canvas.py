@@ -1,5 +1,5 @@
 from src.geometry import compute_buildable_envelope
-from src.interactive_canvas import canvas_size_px, render_canvas_html
+from src.interactive_canvas import SCHEDULE_MIN_WIDTH_PX, canvas_size_px, render_canvas_html
 from src.layout import pack_rooms
 from src.layout_plan import CategoryLabels, LayoutPlan
 from src.models import Project, Room, Setbacks, Site, SiteEdge
@@ -345,6 +345,25 @@ def test_room_schedule_lists_editable_dimensions_and_stays_synced():
     # resize/rotate/delete/reset -- same wiring the footprint/door arrows use.
     assert "renderSchedule();" in html
     assert "updateFootprint();" in html.split("function refreshDiagram")[1][:200]
+
+
+def test_room_schedule_sits_in_a_column_left_of_the_diagram():
+    """The schedule is the app's only room table and reads as a panel beside
+    the drawing, not a second table under it -- app.py sizes the Streamlit
+    component from the canvas height alone, so anything stacked below the
+    canvas would be cut off."""
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    body = html.split("<body>")[1]
+    schedule_at = body.index('id="schedule-section"')
+    canvas_at = body.index('id="canvas-container"')
+    assert schedule_at < canvas_at, "schedule must come first in source order to land on the left"
+    assert body.index('id="canvas-layout"') < schedule_at
+    # nowrap on purpose: wrapping would push the diagram below the fixed
+    # component height instead of just narrowing the panel.
+    assert "flex-wrap: nowrap;" in html
+    assert f"min-width: {SCHEDULE_MIN_WIDTH_PX}px;" in html
 
 
 def test_gap_closing_snaps_boxes_within_1m_to_touch():

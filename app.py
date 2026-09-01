@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 from src.claude_client import explain_issues
 from src.extraction import extract_project
 from src.geometry import BuildableEnvelope, IncompleteSiteError, compute_buildable_envelope
-from src.interactive_canvas import canvas_size_px, render_canvas_html
+from src.interactive_canvas import CANVAS_CHROME_HEIGHT_PX, canvas_size_px, render_canvas_html
 from src.layout import pack_rooms
 from src.layout_plan import LayoutPlan, plan_layout
 from src.models import Project
@@ -112,19 +112,21 @@ def render_sidebar(project: Project, envelope: BuildableEnvelope | None, issues:
         else:
             st.write(f"{envelope.width_m:.1f} m x {envelope.depth_m:.1f} m ({envelope.area_m2:.1f} m²)")
 
+        # No room table here on purpose. The diagram's own room schedule
+        # (src/interactive_canvas.py, the panel left of the drawing) is the
+        # single place rooms are listed — it's live-synced with the canvas
+        # and editable, which a server-rendered st.table can't be, and two
+        # room tables on one screen invited the question of which one was
+        # authoritative. Only the count is echoed here as intake context.
         st.subheader(f"Room program ({len(project.rooms)})")
         if project.rooms:
-            st.table(
-                [
-                    {
-                        "name": r.name,
-                        "type": r.room_type,
-                        "count": r.count,
-                        "entry": "yes" if r.is_entry else "",
-                    }
-                    for r in project.rooms
-                ]
+            entry_count = sum(1 for r in project.rooms if r.is_entry)
+            total = sum(r.count for r in project.rooms)
+            st.write(
+                f"{total} space{'s' if total != 1 else ''} captured"
+                f"{' · entry marked' if entry_count else ' · no entry marked yet'}"
             )
+            st.caption("Listed in the room schedule beside the diagram.")
         else:
             st.write("_no rooms described yet_")
 
@@ -180,9 +182,10 @@ def render_interactive_canvas(
     # Python, so there's no round trip for the two states to fall out of
     # sync over — see the module docstring in src/interactive_canvas.py.
     # Extra headroom above the canvas's own pixel size for the title,
-    # legend, reset button, rationale caption, and the room schedule
-    # (title + hint + a capped, internally-scrolling table) below it.
-    components.html(html_doc, height=height_px + 220 + 310, scrolling=False)
+    # legend, reset button and rationale caption. The room schedule sits
+    # in a column to the LEFT of the drawing rather than below it, so it
+    # adds width, not height.
+    components.html(html_doc, height=height_px + CANVAS_CHROME_HEIGHT_PX, scrolling=False)
 
 
 def render_chat(history: list[dict]) -> str | None:
