@@ -92,10 +92,14 @@ zoning/bubble diagram of its rooms, before any detailed floor plan exists.
    geometry is a much bigger feature than a conceptual zoning tool needs;
    this gives you an orientation cue without it.
 
-**Not yet built:** live door-arrow/circulation feedback as you drag (they
-stay fixed to the initial recommendation), and a chat-driven revision loop
-where the arrangement you dragged becomes the starting point for Claude's
-next suggestion. See Roadmap below.
+Door arrows update live too — they're re-walked from whichever boxes are
+actually touching right now, not fixed to the initial recommendation, and
+every arrow is guaranteed strictly perpendicular to the wall it crosses
+(never a diagonal line to a room's center) by construction.
+
+**Not yet built:** a chat-driven revision loop where the arrangement you
+dragged becomes the starting point for Claude's next suggestion. See
+Roadmap below.
 
 ### Design principles
 
@@ -165,17 +169,12 @@ pytest
 | `src/claude_client.py` | Anthropic client + plain-language explanation of issues. |
 | `src/layout_plan.py` | Claude picks room categories + adjacency order (structured output). |
 | `src/layout.py` | Deterministic rectangle packing, footprint compaction, building footprint outline, and circulation graph — no LLM math, unit-tested. |
-| `src/interactive_canvas.py` | Renders the interactive zoning diagram (title, legend, door arrows, a 0.25m snap grid, draggable/resizable/rotatable/deletable rooms and hallways, live footprint outline, setback-constrained collision resolution with shrink-toward-minimum) as self-contained HTML/CSS/JS, unit-tested. |
+| `src/interactive_canvas.py` | Renders the interactive zoning diagram (title, legend, live door arrows, a 0.25m snap grid, draggable/resizable/rotatable/deletable rooms and hallways, live footprint outline, setback-constrained collision resolution with shrink-toward-minimum) as self-contained HTML/CSS/JS, unit-tested. |
 | `src/palette.py` | The 3 validated diagram colors (see dataviz notes in the module docstring). |
 | `tests/` | Unit tests for geometry/defaults/validation/layout/interactive canvas. |
 
 ## Roadmap
 
-- Live door-arrow/circulation feedback as rooms are dragged in the
-  interactive canvas (today the arrows stay fixed to Claude's original
-  recommendation, since they come from re-running a touching-graph BFS
-  that only runs once in Python; the footprint outline, by contrast,
-  already updates live client-side as you drag or resize).
 - Feedback loop: owner comments in chat → Claude revises the layout,
   informed by whatever the owner dragged, resized, rotated, or deleted.
 - Phase 2 (massing) and Phase 3 (optimization), out of scope for now.

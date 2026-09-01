@@ -116,10 +116,70 @@ def test_footprint_recomputes_live_as_boxes_move():
     html, _ = _render(rooms)
 
     # No fixed shape baked in at drag time — the outline is recomputed from
-    # wherever the boxes currently are, on load and after every move/reset.
+    # wherever the boxes currently are, on load and after every move/resize/
+    # rotate/delete/reset, via refreshDiagram (footprint + door arrows).
     assert "function computeFootprintPath" in html
     assert "function updateFootprint" in html
-    assert html.count("updateFootprint();") >= 3  # onMove, reset handler, initial call
+    assert "function refreshDiagram" in html
+    assert html.count("refreshDiagram();") >= 6  # onMove, doResize, doRotate, delete, reset, initial call
+
+
+def test_door_arrows_recompute_live_from_whichever_boxes_are_touching():
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    # Re-walks the touching-graph from the entry every time, instead of
+    # staying fixed to the initial recommendation — so arrows stop pointing
+    # at walls that no longer exist once rooms have been dragged apart.
+    assert "function computeDoorArrowSegments" in html
+    assert "function touchingEdge" in html
+    assert "function updateDoorArrows" in html
+    assert "classList.contains('entry')" in html
+
+
+def test_door_arrows_are_always_axis_aligned_perpendicular_to_the_shared_wall():
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    # perpendicularArrow only ever varies ONE coordinate between its two
+    # endpoints (my is reused unchanged for a horizontal arrow, mx for a
+    # vertical one) -- that's what guarantees every door arrow is strictly
+    # horizontal or vertical, never a diagonal line to a room's center,
+    # regardless of where the rooms currently are.
+    assert "function perpendicularArrow" in html
+    assert "[mx + fromSign * DOOR_INSET_PX, my], [mx - fromSign * DOOR_INSET_PX, my]" in html
+    assert "[mx, my + fromSignY * DOOR_INSET_PX], [mx, my - fromSignY * DOOR_INSET_PX]" in html
+
+
+def test_pinned_box_is_pushed_clear_as_a_last_resort_never_left_overlapping():
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    # The overlap invariant's real guarantee: if a neighbor has already
+    # shrunk to its own minimum and hit the envelope wall with nowhere
+    # left to go, the box under the owner's cursor gets nudged (position
+    # only) to clear it too, instead of visibly overlapping.
+    assert "function pushPinnedClearOfOverlaps" in html
+    assert "function shrinkAndPushNonPinned" in html
+    assert "pushPinnedClearOfOverlaps(pinned)" in html
+    # Even the gentler shrink-then-push heuristic can fail to converge in
+    # a crowded scene (several boxes pushed toward the same small area) --
+    # this unconditional both-sides separator is what actually guarantees
+    # zero overlap in every scene, not just the common ones.
+    assert "function forceSeparateAnyRemainingOverlaps" in html
+    assert "forceSeparateAnyRemainingOverlaps()" in html
+
+
+def test_rotation_inflates_the_effective_rect_used_for_collision_and_footprint():
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    # Rotating a box does push its neighbors and does grow the footprint --
+    # both resolveOverlaps and computeFootprintPath read the rotated
+    # bounding box (effectiveRectOf), not the box's plain unrotated rect.
+    assert "function effectiveRectOf" in html
+    assert "activeBoxes().map(effectiveRectOf)" in html
+    assert "effectiveRectOf(a), rb = effectiveRectOf(b)" in html
 
 
 def test_setback_envelope_bounds_and_room_minimums_are_exposed_to_js():

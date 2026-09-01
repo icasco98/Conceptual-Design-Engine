@@ -6,8 +6,8 @@ draggable, resizable, rotatable, deletable boxes the owner can rearrange by
 hand to explore a different arrangement. Corridors are draggable exactly
 like rooms (nothing here is a fixed zone); the site outline, the buildable
 envelope (setback) outline, the building footprint, the street marker, and
-faint recommended-circulation lines (rendered as door arrows — see below)
-are the only static backdrop.
+door arrows are the only static-position backdrop — everything else
+recomputes live as boxes move (see below).
 
 Per-box controls, all pure client-side JS (see the generated `<script>`):
 
@@ -15,11 +15,11 @@ Per-box controls, all pure client-side JS (see the generated `<script>`):
 - **Drag a corner handle** to resize it (`onResizeDown`/`doResize`) —
   the opposite corner stays put.
 - **Drag the rotate handle** to spin it in fixed 5° steps (`onRotateDown`/
-  `doRotate`). Rotation is a pure CSS `transform`, layered on top of the
-  same axis-aligned box the rest of this file already reasons about — it
-  never feeds into collision, footprint, or envelope math. That keeps a
-  rotated room a deliberate visual/orientation cue rather than reopening
-  rotated-rectangle collision geometry for a conceptual-design tool.
+  `doRotate`). Rotation is a CSS `transform` for rendering, but its
+  *collision footprint* is the rotated shape's axis-aligned bounding box
+  (`effectiveRectOf`) — so rotating a box does push its neighbors out of
+  the way and does grow the building footprint, without needing full
+  rotated-rectangle (SAT) collision geometry.
 - **Click the delete handle** to remove a box (`onDeleteDown`) — it's
   hidden (not destroyed) so "Reset to recommended layout" can always bring
   it back.
@@ -29,39 +29,48 @@ Per-box controls, all pure client-side JS (see the generated `<script>`):
   (`snapToGrid`, `GRID_PX`) — the grid is a visibility choice, snapping
   isn't.
 
-Three constraints hold at all times while dragging or resizing, enforced
-client-side in the generated JS (never round-tripped through Python):
+Three constraints hold at all times while dragging, resizing, or rotating,
+enforced client-side in the generated JS (never round-tripped through
+Python):
 
-1. **No overlaps.** Moving or resizing a box pushes any other box it would
-   overlap out of the way (and that box can cascade-push a third one) —
-   see `resolveOverlaps`. The box under the owner's cursor is "pinned": it
-   goes exactly where they put it and is never itself pushed or resized by
-   the resolution pass.
-2. **The setback line is a hard wall.** Every box — pinned or pushed — is
-   kept inside the buildable envelope (`data-env-*` on #canvas-container).
-   A pushed box shrinks toward its own minimum size before it's allowed to
-   cross that line; the pinned box's position/size is simply clamped to it.
-3. **Rooms may shrink, never below their minimum.** When resolving an
-   overlap or a setback violation, a non-pinned box first gives up size
-   (down to `data-min-width`/`data-min-height`, from `src/defaults.py` for
-   rooms and the fixed code hallway width for corridors) before it's
-   translated — same spirit as the initial packer's own compaction
-   (`src/layout.py`), just happening live as the owner drags or resizes.
-   A manual corner-resize is clamped to the same minimum directly.
+1. **No overlaps, ever — not even for the box you're holding.**
+   `resolveOverlaps` runs three strategies together, every round: every
+   *other* box shrinks toward its own minimum size and/or is pushed out
+   of the way of whatever it overlaps (`shrinkAndPushNonPinned`,
+   cascading further if needed); the box under the owner's cursor, never
+   touched by that, gets nudged (position only, never resized) if a
+   neighbor genuinely had nowhere left to go and still overlaps it
+   (`pushPinnedClearOfOverlaps`); and finally, whatever still overlaps
+   after both of those — a dense enough scene can leave the gentler
+   one-box-at-a-time heuristics cycling instead of settling — gets split
+   apart unconditionally, half the separation to each side
+   (`forceSeparateAnyRemainingOverlaps`). Running all three every round,
+   not just the first two until they give up, is what makes "no overlaps"
+   an actual invariant rather than a best effort that quietly fails in a
+   crowded corner.
+2. **The setback line is a hard wall.** Every box is kept inside the
+   buildable envelope (`data-env-*` on #canvas-container) — an unrotated
+   box shrinks toward its own minimum before crossing it; a rotated box
+   (whose true shape isn't axis-aligned) is translated instead, since
+   shrinking its underlying rectangle while rotated would distort it.
+3. **Rooms may shrink, never below their minimum.** Same minimums as the
+   initial packer's own compaction (`src/layout.py`) — `data-min-width`/
+   `data-min-height`, from `src/defaults.py` for rooms and the fixed code
+   hallway width for corridors.
 
-The building footprint outline is recomputed after every move, resize, or
-delete — it's the live union of whatever boxes are currently on the canvas
-and not deleted (`updateFootprint` + `computeFootprintPath`), not a fixed
-shape from the initial layout.
+Two things are recomputed from scratch after every move, resize, rotate,
+or delete (`refreshDiagram`), never left stale from the initial layout:
 
-Door arrows reuse the same touching-graph the packer already computed
-(`LayoutResult.circulation_edges` — one arrow per shared wall on the path
-out from the entry) drawn with an SVG arrowhead marker so they read as
-"the door is here, and which way it opens into," not just a faint path
-line. Like the rest of the static SVG backdrop, they're fixed to the
-initial recommendation and don't move with the boxes (see the Roadmap in
-README.md) — recomputing them live would mean re-running the touching-graph
-BFS against arbitrary drag state, a bigger feature.
+- **The building footprint outline** — the live union of every current
+  box's *effective* (rotation-aware) rect (`computeFootprintPath`).
+- **The door arrows** — one per shared wall between boxes that are
+  actually touching right now, found by re-walking the touching-graph
+  breadth-first from the entry (`computeDoorArrowSegments`, the same
+  algorithm `src/layout.py` uses for the initial recommendation, ported to
+  JS) and drawn with an arrowhead marker. Unlike the footprint, this uses
+  each box's true (unrotated) rect — a door is a literal wall opening, not
+  a safety margin, so a merely-rotated room shouldn't spuriously "touch" a
+  neighbor it doesn't actually share a wall with.
 
 Rendered as a single self-contained HTML/CSS/JS document via
 `streamlit.components.v1.html` — plain absolutely-positioned `<div>`s
@@ -99,9 +108,15 @@ CANVAS_BACKGROUND = "#fbfbf9"
 GRID_M = 0.25
 GRID_PX = GRID_M * PX_PER_METER
 
+# How far each door arrow's endpoints sit from the wall it crosses — same
+# value src/layout.py's _perpendicular_arrow uses, in meters.
+DOOR_INSET_M = 0.35
+DOOR_INSET_PX = DOOR_INSET_M * PX_PER_METER
+
 # Corner-resize handles, a rotate handle (5° increments — see the module
-# docstring for why rotation stays purely visual), and a delete handle,
-# appended into every room/corridor div. Static markup, no per-room data.
+# docstring for how rotation still affects neighbors despite being a CSS
+# transform), and a delete handle, appended into every room/corridor div.
+# Static markup, no per-room data.
 _HANDLES_HTML = (
     '<span class="resize-handle nw" data-corner="nw"></span>'
     '<span class="resize-handle ne" data-corner="ne"></span>'
@@ -174,12 +189,11 @@ def _envelope_canvas_rect(project: Project, envelope: BuildableEnvelope) -> Tupl
 def _static_svg(project: Project, envelope: BuildableEnvelope, result: LayoutResult) -> str:
     """The faint 0.25m reference grid (`#grid-overlay`, hidden until the
     checkbox is ticked), the site outline (property line), the buildable
-    envelope outline (the setback line — a hard constraint boxes are kept
-    inside of while dragging/resizing), the building footprint outline
-    (id="footprint-shape", overwritten live by JS as boxes move), the
-    street marker(s), and door arrows (one per shared wall on the
-    recommended circulation path, drawn with an arrowhead marker) — one
-    non-interactive SVG layer under the room/corridor boxes."""
+    envelope outline (the setback line), the building footprint outline
+    (id="footprint-shape", overwritten live by JS as boxes move/rotate),
+    the street marker(s), and door arrows (`#door-arrows-group`, rebuilt
+    live by JS from whichever boxes are actually touching right now) —
+    one non-interactive SVG layer under the room/corridor boxes."""
     site = project.site
     width_px = site.width_m * PX_PER_METER
     depth_px = site.depth_m * PX_PER_METER
@@ -217,13 +231,15 @@ def _static_svg(project: Project, envelope: BuildableEnvelope, result: LayoutRes
         f'stroke="#3a3a35" stroke-width="2.5" stroke-linejoin="round" fill-rule="evenodd" />'
     )
 
+    door_parts = []
     for (x0, y0), (x1, y1) in result.circulation_edges:
         cx0, cy0 = _to_canvas_point(x0, y0, site.depth_m)
         cx1, cy1 = _to_canvas_point(x1, y1, site.depth_m)
-        parts.append(
+        door_parts.append(
             f'<line x1="{cx0:.1f}" y1="{cy0:.1f}" x2="{cx1:.1f}" y2="{cy1:.1f}" '
             f'stroke="#1a1a1a" stroke-width="1.6" stroke-opacity="0.55" marker-end="url(#door-arrow)" />'
         )
+    parts.append(f'<g id="door-arrows-group">{"".join(door_parts)}</g>')
 
     for edge in site.edges:
         if edge.adjacency != "street":
@@ -531,16 +547,18 @@ def render_canvas_html(
 <script>
 (function() {{
   var GRID_PX = {GRID_PX};
+  var DOOR_INSET_PX = {DOOR_INSET_PX};
   var container = document.getElementById('canvas-container');
   var footprintPath = document.getElementById('footprint-shape');
+  var doorArrowsGroup = document.getElementById('door-arrows-group');
   var boxes = Array.prototype.slice.call(document.querySelectorAll('.draggable'));
   var active = null, offsetX = 0, offsetY = 0;
   var activeResize = null;
   var activeRotate = null;
 
-  // The buildable envelope in canvas px — the setback line. Every box,
-  // pinned or pushed, is kept inside this rectangle; see the module
-  // docstring for why this is a hard constraint rather than a suggestion.
+  // The buildable envelope in canvas px — the setback line. Every box is
+  // kept inside this rectangle; see the module docstring for why this is
+  // a hard constraint rather than a suggestion.
   var ENV = {{
     left: parseFloat(container.dataset.envLeft),
     top: parseFloat(container.dataset.envTop),
@@ -553,6 +571,8 @@ def render_canvas_html(
     return {{x: e.clientX, y: e.clientY}};
   }}
 
+  // The box's own true (unrotated) rect — its actual plan dimensions,
+  // exactly what gets rendered before the CSS rotate transform is applied.
   function rectOf(el) {{
     return {{
       left: parseFloat(el.style.left),
@@ -560,6 +580,26 @@ def render_canvas_html(
       width: el.offsetWidth,
       height: el.offsetHeight
     }};
+  }}
+
+  function rotationOf(el) {{ return parseFloat(el.dataset.rotation || '0'); }}
+
+  // The rect collision/footprint math should actually use: for an
+  // unrotated box this is identical to rectOf. For a rotated one, it's
+  // the axis-aligned bounding box of the rotated shape, centered on the
+  // same point — bigger than the box's true footprint by design, which is
+  // exactly what makes rotating a room visibly push its neighbors and
+  // grow the building footprint outline instead of silently doing nothing.
+  function effectiveRectOf(el) {{
+    var r = rectOf(el);
+    var deg = rotationOf(el);
+    if (!deg) return r;
+    var rad = deg * Math.PI / 180;
+    var cosA = Math.abs(Math.cos(rad)), sinA = Math.abs(Math.sin(rad));
+    var bboxW = r.width * cosA + r.height * sinA;
+    var bboxH = r.width * sinA + r.height * cosA;
+    var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    return {{left: cx - bboxW / 2, top: cy - bboxH / 2, width: bboxW, height: bboxH}};
   }}
 
   function minOf(el) {{
@@ -571,18 +611,40 @@ def render_canvas_html(
   function snapToGrid(v) {{ return Math.round(v / GRID_PX) * GRID_PX; }}
 
   // Boxes the owner has deleted are hidden, not removed — they're skipped
-  // by collision resolution and the footprint outline, but stay in
-  // `boxes` (and keep their data-initial-* attributes) so Reset can
-  // always bring them back.
+  // by collision resolution, the footprint outline, and door arrows, but
+  // stay in `boxes` (and keep their data-initial-* attributes) so Reset
+  // can always bring them back.
   function activeBoxes() {{
     return boxes.filter(function(b) {{ return b.dataset.deleted !== '1'; }});
   }}
 
-  // Keeps a box fully inside the buildable envelope — shrinking it toward
-  // its own minimum first (never past it), only translating as a last
-  // resort. Applied to every box the resolution/resize pass touches, so
-  // the setback constraint holds after every drag, not just at rest.
+  // Translate-only envelope clamp, using the box's *effective* (rotation-
+  // aware) rect to decide how far it's over the line, but writing the
+  // shift to its true left/top — a shift moves the AABB and the true rect
+  // by exactly the same amount, since the AABB is centered on the box's
+  // own center. Used for rotated boxes (shrinking a rotated box's true
+  // rectangle would distort it) and as the pinned box's own last-resort
+  // clamp (a pinned box is never resized, only ever repositioned).
+  function clampPositionOnly(el) {{
+    var r = rectOf(el), eff = effectiveRectOf(el);
+    var dLeft = 0, dTop = 0;
+    if (eff.left < ENV.left) {{ dLeft = ENV.left - eff.left; }}
+    else if (eff.left + eff.width > ENV.right) {{ dLeft = ENV.right - (eff.left + eff.width); }}
+    if (eff.top < ENV.top) {{ dTop = ENV.top - eff.top; }}
+    else if (eff.top + eff.height > ENV.bottom) {{ dTop = ENV.bottom - (eff.top + eff.height); }}
+    if (dLeft) {{ el.style.left = (r.left + dLeft) + 'px'; }}
+    if (dTop) {{ el.style.top = (r.top + dTop) + 'px'; }}
+  }}
+
+  // Keeps a box fully inside the buildable envelope. An unrotated box
+  // shrinks toward its own minimum first (never past it), only
+  // translating as a last resort — same as before. A rotated box is only
+  // ever translated (see clampPositionOnly): resizing its true rectangle
+  // while a CSS rotation is applied would visibly distort it, which is a
+  // worse outcome than just sliding it to stay inside the line.
   function clampToEnvelope(el) {{
+    if (rotationOf(el)) {{ clampPositionOnly(el); return; }}
+
     var r = rectOf(el), m = minOf(el);
     var left = r.left, top = r.top, width = r.width, height = r.height;
 
@@ -623,67 +685,163 @@ def render_canvas_html(
     return {{x: ox, y: oy}};
   }}
 
-  // Pushes every (non-deleted) box that overlaps another out of the way
-  // so nothing ever ends up overlapping, and keeps everything inside the
-  // buildable envelope. `pinned` (the box currently under the owner's
-  // cursor) always goes exactly where they put it, at its own size, and
-  // is never itself adjusted here; everything else may first shrink
-  // toward its own minimum size (on the axis it's being pushed along)
-  // before it's translated, and can cascade-push a third box out of its
-  // own way.
-  function resolveOverlaps(pinned) {{
+  // Phase 1 of overlap resolution: every non-pinned box shrinks toward
+  // its own minimum size and/or is pushed out of the way of whatever it
+  // overlaps (using each box's *effective* rect, so a rotated neighbor's
+  // larger swept footprint is respected too), cascading through further
+  // overlaps across passes. A rotated box is only ever translated here —
+  // never resized — for the same reason clampToEnvelope treats it
+  // specially. Returns whether anything changed.
+  function shrinkAndPushNonPinned(pinned) {{
     var live = activeBoxes();
+    var changedAtAll = false;
     for (var pass = 0; pass < 6; pass++) {{
       var any = false;
       for (var i = 0; i < live.length; i++) {{
         var a = live[i];
         if (a === pinned) continue;
         var ma = minOf(a);
+        var aRotated = !!rotationOf(a);
         for (var j = 0; j < live.length; j++) {{
           if (i === j) continue;
           var b = live[j];
-          var ra = rectOf(a), rb = rectOf(b);
+          var ra = effectiveRectOf(a), rb = effectiveRectOf(b);
           var ov = overlapAmount(ra, rb);
           if (!ov) continue;
           any = true;
           if (ov.x < ov.y) {{
             var dir = (ra.left + ra.width / 2) < (rb.left + rb.width / 2) ? -1 : 1;
-            var newWidth = Math.max(ma.w, ra.width - ov.x);
-            var consumed = ra.width - newWidth;
-            var remaining = ov.x - consumed;
-            if (dir === -1) {{
-              // a sits left of b: shrink from the right edge (facing b)
-              // first, then push further left for whatever's left over.
-              a.style.width = newWidth + 'px';
-              if (remaining > 0) {{ a.style.left = (ra.left - remaining) + 'px'; }}
+            if (aRotated) {{
+              a.style.left = (parseFloat(a.style.left) + dir * ov.x) + 'px';
             }} else {{
-              a.style.left = (ra.left + consumed) + 'px';
-              a.style.width = newWidth + 'px';
-              if (remaining > 0) {{ a.style.left = (parseFloat(a.style.left) + remaining) + 'px'; }}
+              var newWidth = Math.max(ma.w, ra.width - ov.x);
+              var consumed = ra.width - newWidth;
+              var remaining = ov.x - consumed;
+              if (dir === -1) {{
+                a.style.width = newWidth + 'px';
+                if (remaining > 0) {{ a.style.left = (ra.left - remaining) + 'px'; }}
+              }} else {{
+                a.style.left = (ra.left + consumed) + 'px';
+                a.style.width = newWidth + 'px';
+                if (remaining > 0) {{ a.style.left = (parseFloat(a.style.left) + remaining) + 'px'; }}
+              }}
             }}
           }} else {{
             var dirY = (ra.top + ra.height / 2) < (rb.top + rb.height / 2) ? -1 : 1;
-            var newHeight = Math.max(ma.h, ra.height - ov.y);
-            var consumedY = ra.height - newHeight;
-            var remainingY = ov.y - consumedY;
-            if (dirY === -1) {{
-              a.style.height = newHeight + 'px';
-              if (remainingY > 0) {{ a.style.top = (ra.top - remainingY) + 'px'; }}
+            if (aRotated) {{
+              a.style.top = (parseFloat(a.style.top) + dirY * ov.y) + 'px';
             }} else {{
-              a.style.top = (ra.top + consumedY) + 'px';
-              a.style.height = newHeight + 'px';
-              if (remainingY > 0) {{ a.style.top = (parseFloat(a.style.top) + remainingY) + 'px'; }}
+              var newHeight = Math.max(ma.h, ra.height - ov.y);
+              var consumedY = ra.height - newHeight;
+              var remainingY = ov.y - consumedY;
+              if (dirY === -1) {{
+                a.style.height = newHeight + 'px';
+                if (remainingY > 0) {{ a.style.top = (ra.top - remainingY) + 'px'; }}
+              }} else {{
+                a.style.top = (ra.top + consumedY) + 'px';
+                a.style.height = newHeight + 'px';
+                if (remainingY > 0) {{ a.style.top = (parseFloat(a.style.top) + remainingY) + 'px'; }}
+              }}
             }}
           }}
           clampToEnvelope(a);
         }}
       }}
+      if (any) {{ changedAtAll = true; }}
       if (!any) break;
+    }}
+    return changedAtAll;
+  }}
+
+  // Phase 2, the overlap invariant's real guarantee: after phase 1, check
+  // whether the pinned box — never touched by phase 1 — still overlaps
+  // anything. It can, if a neighbor was already at its own minimum size
+  // and the envelope wall and genuinely had nowhere left to go. Rather
+  // than accept that as a visible glitch, nudge the pinned box itself
+  // (position only, its size is never touched) just enough to clear it.
+  function pushPinnedClearOfOverlaps(pinned) {{
+    if (!pinned) return false;
+    var live = activeBoxes();
+    var changed = false;
+    for (var k = 0; k < live.length; k++) {{
+      var other = live[k];
+      if (other === pinned) continue;
+      var pr = effectiveRectOf(pinned), ro = effectiveRectOf(other);
+      var ov = overlapAmount(pr, ro);
+      if (!ov) continue;
+      changed = true;
+      if (ov.x < ov.y) {{
+        var dir = (pr.left + pr.width / 2) < (ro.left + ro.width / 2) ? -1 : 1;
+        pinned.style.left = (parseFloat(pinned.style.left) + dir * ov.x) + 'px';
+      }} else {{
+        var dirY = (pr.top + pr.height / 2) < (ro.top + ro.height / 2) ? -1 : 1;
+        pinned.style.top = (parseFloat(pinned.style.top) + dirY * ov.y) + 'px';
+      }}
+      clampPositionOnly(pinned);
+    }}
+    return changed;
+  }}
+
+  // Absolute last resort, tried only once phases 1 and 2 give up: split
+  // whatever overlap is still left between BOTH boxes directly, half the
+  // separation to each, along whichever axis needs less movement. In a
+  // scene crowded enough (several rooms squeezed toward the same small
+  // area), the gentler one-box-at-a-time heuristic above can genuinely
+  // fail to converge — each box's individual fix can undo a different
+  // box's fix, cycling instead of settling. Moving both sides of a
+  // conflict at once instead of just one breaks that cycle. This ignores
+  // the pinned exemption on purpose: by the time this runs, "no overlap"
+  // matters more than "the box under the cursor never moves."
+  function forceSeparateAnyRemainingOverlaps() {{
+    var live = activeBoxes();
+    var changed = false;
+    for (var i = 0; i < live.length; i++) {{
+      for (var j = i + 1; j < live.length; j++) {{
+        var a = live[i], b = live[j];
+        var ra = effectiveRectOf(a), rb = effectiveRectOf(b);
+        var ov = overlapAmount(ra, rb);
+        if (!ov) continue;
+        changed = true;
+        if (ov.x < ov.y) {{
+          // dir=1 means a's center is to the right of b's -- a moves
+          // further right (+= ) to separate, b moves further left (-= ).
+          var dir = (ra.left + ra.width / 2) < (rb.left + rb.width / 2) ? -1 : 1;
+          a.style.left = (parseFloat(a.style.left) + dir * ov.x / 2) + 'px';
+          b.style.left = (parseFloat(b.style.left) - dir * ov.x / 2) + 'px';
+        }} else {{
+          var dirY = (ra.top + ra.height / 2) < (rb.top + rb.height / 2) ? -1 : 1;
+          a.style.top = (parseFloat(a.style.top) + dirY * ov.y / 2) + 'px';
+          b.style.top = (parseFloat(b.style.top) - dirY * ov.y / 2) + 'px';
+        }}
+        clampToEnvelope(a);
+        clampToEnvelope(b);
+      }}
+    }}
+    return changed;
+  }}
+
+  // The full overlap-resolution pass: every round runs all three
+  // strategies together — phase 1 (push/shrink everything else), phase 2
+  // (nudge the pinned box itself as a last resort), and the unconditional
+  // both-sides separator — rather than exhausting phases 1-2 first and
+  // only falling back to the separator once. In a dense, heavily-crowded
+  // scene (several rooms all pushed toward the same small area) fixing
+  // one pair can reopen another; running every strategy every round, over
+  // a generous budget, gives the whole arrangement many chances to reach
+  // mutual consistency instead of just one. This is what makes "no
+  // overlaps" an invariant rather than a best effort.
+  function resolveOverlaps(pinned) {{
+    for (var outer = 0; outer < 8; outer++) {{
+      var changed1 = shrinkAndPushNonPinned(pinned);
+      var changed2 = pushPinnedClearOfOverlaps(pinned);
+      var changed3 = forceSeparateAnyRemainingOverlaps();
+      if (!changed1 && !changed2 && !changed3) break;
     }}
   }}
 
-  // Traces the outline of the union of every current (non-deleted) box
-  // (rooms + corridors) — the building's own footprint, recomputed from
+  // Traces the outline of the union of every current (non-deleted) box's
+  // *effective* rect — rooms + corridors, rotated ones included via their
+  // swept bounding box — the building's own footprint, recomputed from
   // wherever things actually are right now rather than the initial
   // layout. Works by rasterizing onto the grid formed by every box edge
   // (coordinate compression keeps this small — a handful of rooms means a
@@ -695,7 +853,7 @@ def render_canvas_html(
   // multiple disjoint shapes (evenodd fill handles the rest, including
   // any hole).
   function computeFootprintPath() {{
-    var rects = activeBoxes().map(rectOf);
+    var rects = activeBoxes().map(effectiveRectOf);
     if (!rects.length) return '';
 
     var xsSet = {{}}, ysSet = {{}};
@@ -778,6 +936,103 @@ def render_canvas_html(
     footprintPath.setAttribute('d', d);
   }}
 
+  // If two rects share a boundary segment, returns {{axis, mid}} — axis
+  // 'x' when the shared edge is vertical (side by side, so the door arrow
+  // should run horizontally), 'y' when horizontal (stacked, arrow runs
+  // vertically). Same algorithm as src/layout.py's _touching_edge, ported
+  // to JS so door arrows can be re-walked after every move instead of
+  // staying fixed to the initial layout.
+  function touchingEdge(a, b, tol) {{
+    var ax0 = a.left, ay0 = a.top, ax1 = a.left + a.width, ay1 = a.top + a.height;
+    var bx0 = b.left, by0 = b.top, bx1 = b.left + b.width, by1 = b.top + b.height;
+
+    if (Math.abs(ax1 - bx0) < tol || Math.abs(bx1 - ax0) < tol) {{
+      var yLo = Math.max(ay0, by0), yHi = Math.min(ay1, by1);
+      if (yHi - yLo > tol) {{
+        var sharedX = Math.abs(ax1 - bx0) < tol ? bx0 : ax0;
+        return {{axis: 'x', mid: [sharedX, (yLo + yHi) / 2]}};
+      }}
+    }}
+    if (Math.abs(ay1 - by0) < tol || Math.abs(by1 - ay0) < tol) {{
+      var xLo = Math.max(ax0, bx0), xHi = Math.min(ax1, bx1);
+      if (xHi - xLo > tol) {{
+        var sharedY = Math.abs(ay1 - by0) < tol ? by0 : ay0;
+        return {{axis: 'y', mid: [(xLo + xHi) / 2, sharedY]}};
+      }}
+    }}
+    return null;
+  }}
+
+  function perpendicularArrow(axis, mid, fromCenter, toCenter) {{
+    var mx = mid[0], my = mid[1];
+    if (axis === 'x') {{
+      var fromSign = fromCenter[0] < mx ? -1 : 1;
+      return [[mx + fromSign * DOOR_INSET_PX, my], [mx - fromSign * DOOR_INSET_PX, my]];
+    }}
+    var fromSignY = fromCenter[1] < my ? -1 : 1;
+    return [[mx, my + fromSignY * DOOR_INSET_PX], [mx, my - fromSignY * DOOR_INSET_PX]];
+  }}
+
+  // Breadth-first walk of the touching-graph starting from the entry room
+  // — the live equivalent of src/layout.py's _build_circulation_edges.
+  // Uses each box's *true* rect (not the rotation-inflated effective
+  // one): a door is a literal wall opening, so a merely-rotated room
+  // shouldn't register as "touching" a neighbor it doesn't actually share
+  // a wall with.
+  function computeDoorArrowSegments() {{
+    var live = activeBoxes();
+    var entryIndex = -1;
+    for (var i = 0; i < live.length; i++) {{
+      if (live[i].classList.contains('entry')) {{ entryIndex = i; break; }}
+    }}
+    if (entryIndex === -1) return [];
+
+    var rects = live.map(rectOf);
+    var centers = rects.map(function(r) {{ return [r.left + r.width / 2, r.top + r.height / 2]; }});
+    var visited = new Array(live.length).fill(false);
+    visited[entryIndex] = true;
+    var queue = [entryIndex];
+    var segs = [];
+
+    while (queue.length) {{
+      var cur = queue.shift();
+      for (var j = 0; j < live.length; j++) {{
+        if (visited[j]) continue;
+        var touch = touchingEdge(rects[cur], rects[j], 1.0);
+        if (!touch) continue;
+        visited[j] = true;
+        segs.push(perpendicularArrow(touch.axis, touch.mid, centers[cur], centers[j]));
+        queue.push(j);
+      }}
+    }}
+    return segs;
+  }}
+
+  function updateDoorArrows() {{
+    if (!doorArrowsGroup) return;
+    while (doorArrowsGroup.firstChild) {{ doorArrowsGroup.removeChild(doorArrowsGroup.firstChild); }}
+    var svgNS = 'http://www.w3.org/2000/svg';
+    computeDoorArrowSegments().forEach(function(seg) {{
+      var line = document.createElementNS(svgNS, 'line');
+      line.setAttribute('x1', seg[0][0].toFixed(1));
+      line.setAttribute('y1', seg[0][1].toFixed(1));
+      line.setAttribute('x2', seg[1][0].toFixed(1));
+      line.setAttribute('y2', seg[1][1].toFixed(1));
+      line.setAttribute('stroke', '#1a1a1a');
+      line.setAttribute('stroke-width', '1.6');
+      line.setAttribute('stroke-opacity', '0.55');
+      line.setAttribute('marker-end', 'url(#door-arrow)');
+      doorArrowsGroup.appendChild(line);
+    }});
+  }}
+
+  // Everything that must be re-derived from scratch after any move,
+  // resize, rotate, or delete — never left stale from the initial layout.
+  function refreshDiagram() {{
+    updateFootprint();
+    updateDoorArrows();
+  }}
+
   function onDown(e) {{
     active = e.currentTarget;
     var p = point(e);
@@ -800,19 +1055,18 @@ def render_canvas_html(
     newTop = clamp(newTop, ENV.top, ENV.bottom - active.offsetHeight);
     newLeft = snapToGrid(newLeft);
     newTop = snapToGrid(newTop);
-    newLeft = clamp(newLeft, ENV.left, ENV.right - active.offsetWidth);
-    newTop = clamp(newTop, ENV.top, ENV.bottom - active.offsetHeight);
     active.style.left = newLeft + 'px';
     active.style.top = newTop + 'px';
+    clampPositionOnly(active);
     resolveOverlaps(active);
-    updateFootprint();
+    refreshDiagram();
     e.preventDefault();
   }}
 
   // Drags a corner handle: the opposite corner stays put, the dragged
   // corner's edges snap to the grid and are clamped to the box's own
   // minimum size, then the envelope constraint and collision resolution
-  // apply exactly as they do for a plain move (see resolveOverlaps).
+  // apply exactly as they do for a plain move.
   function doResize(e) {{
     var r = activeResize;
     var p = point(e);
@@ -845,14 +1099,16 @@ def render_canvas_html(
     r.el.style.height = height + 'px';
     clampToEnvelope(r.el);
     resolveOverlaps(r.el);
-    updateFootprint();
+    refreshDiagram();
     e.preventDefault();
   }}
 
-  // Spins a box in fixed 5° steps around its own center. Purely a CSS
-  // transform layered on top of the same axis-aligned box the rest of
-  // this file reasons about — see the module docstring for why rotation
-  // never feeds into collision/footprint/envelope math.
+  // Spins a box in fixed 5° steps around its own center, then treats it
+  // exactly like a move: clamp to the envelope, push/shrink anything it
+  // now overlaps (via its rotation-inflated effective rect), and refresh
+  // the footprint/door arrows — see the module docstring for why rotation
+  // still visibly affects the rooms around it despite being a pure CSS
+  // transform on the box's own true rectangle.
   function doRotate(e) {{
     var p = point(e);
     var rot = activeRotate;
@@ -860,6 +1116,9 @@ def render_canvas_html(
     var snapped = Math.round(angle / 5) * 5;
     rot.el.style.transform = 'rotate(' + snapped + 'deg)';
     rot.el.dataset.rotation = String(snapped);
+    clampToEnvelope(rot.el);
+    resolveOverlaps(rot.el);
+    refreshDiagram();
     e.preventDefault();
   }}
 
@@ -887,16 +1146,30 @@ def render_canvas_html(
     var box = e.currentTarget.closest('.draggable');
     box.dataset.deleted = '1';
     box.classList.add('deleted');
-    updateFootprint();
+    refreshDiagram();
   }}
 
+  // A gesture in progress only asks resolveOverlaps to protect the one
+  // pinned box; every *other* box is free to be shoved by more than one
+  // neighbor across a busy scene, and a single call's fixed pass budget
+  // can settle one relationship at the cost of re-disturbing another it
+  // already fixed earlier in the same call. Once the gesture actually
+  // ends, there's no pinned box left to protect and no more urgency —
+  // so run one more unrestricted pass (pinned=null, every box eligible)
+  // to let the whole arrangement fully settle into mutual consistency,
+  // however many relationships that takes.
   function onUp() {{
     if (active) {{ active.classList.remove('dragging'); }}
     if (activeResize) {{ activeResize.el.classList.remove('dragging'); }}
     if (activeRotate) {{ activeRotate.el.classList.remove('dragging'); }}
+    var gestureEnded = active || activeResize || activeRotate;
     active = null;
     activeResize = null;
     activeRotate = null;
+    if (gestureEnded) {{
+      resolveOverlaps(null);
+      refreshDiagram();
+    }}
   }}
 
   for (var i = 0; i < boxes.length; i++) {{
@@ -943,10 +1216,10 @@ def render_canvas_html(
       boxes[i].dataset.deleted = '0';
       boxes[i].classList.remove('deleted');
     }}
-    updateFootprint();
+    refreshDiagram();
   }});
 
-  updateFootprint();
+  refreshDiagram();
 }})();
 </script>
 </body>
