@@ -15,7 +15,7 @@ sequential stages are planned:
 Goal: turn a plain-language description of a house project into a
 zoning/bubble diagram of its rooms, before any detailed floor plan exists.
 
-**Current scope (this commit):** the first two steps of Phase 1 —
+**Current scope (this commit):** the first three steps of Phase 1 —
 
 1. **Conversational intake.** You describe your project in the chat (site
    size, orientation, which sides face the street vs. neighbors, rooms you
@@ -26,11 +26,18 @@ zoning/bubble diagram of its rooms, before any detailed floor plan exists.
    minimum sizes, hallway width, total area, whether an entry is marked.
    Claude only explains what Python found, in plain language; it never
    computes the numbers itself.
+3. **Zoning diagram.** Once the site and at least one room are described,
+   a color-coded diagram appears below the chat: rooms as proportionally
+   sized rectangles, grouped into 3 categories Claude picks based on your
+   stated priorities (e.g. privacy level), with the entry marked and
+   hallways hatched. Claude only decides the *grouping and adjacency*
+   (which rooms belong together, which should sit near each other); a
+   plain Python packing algorithm (`src/layout.py`) does the actual
+   arithmetic, so it's always geometrically valid — no overlaps, everything
+   fits inside the buildable envelope.
 
-**Not yet built:** the interactive drag-to-arrange canvas, an initial
-adjacency-optimized layout recommendation, and color-coding by priority —
-see Roadmap below. Building the intake + validation loop first (and getting
-it right) was a deliberate choice before adding the canvas.
+**Not yet built:** dragging rooms to rearrange them by hand, with live
+adjacency feedback and a chat-driven revision loop. See Roadmap below.
 
 ### Design principles
 
@@ -73,21 +80,22 @@ pytest
 
 | Path | Purpose |
 |---|---|
-| `app.py` | Streamlit UI — chat loop, sidebar summary of captured state. |
+| `app.py` | Streamlit UI — chat (fixed-height, scrollable) + zoning diagram below it, sidebar summary of captured state. |
 | `src/models.py` | The shared data shapes (`Project`, `Site`, `Room`, ...). |
 | `src/defaults.py` | Room-sizing defaults table (widths/depths per room type). |
 | `src/geometry.py` | Buildable envelope from site + setbacks. |
 | `src/validation.py` | Deterministic constraint checks against the envelope. |
 | `src/extraction.py` | Conversation → structured `Project` (Claude, structured output). |
 | `src/claude_client.py` | Anthropic client + plain-language explanation of issues. |
-| `tests/` | Unit tests for geometry/defaults/validation. |
+| `src/layout_plan.py` | Claude picks room categories + adjacency order (structured output). |
+| `src/layout.py` | Deterministic rectangle packing — no LLM math, unit-tested. |
+| `src/palette.py` | The 3 validated diagram colors (see dataviz notes in the module docstring). |
+| `tests/` | Unit tests for geometry/defaults/validation/layout. |
 
 ## Roadmap
 
-- Claude-recommended initial adjacency-optimized layout, with color-coding
-  based on owner-stated priorities (privacy, function, light, etc.).
-- Interactive canvas: drag room rectangles to rearrange, live-updating
-  adjacencies, entry points and circulation paths highlighted.
+- Interactive canvas: drag room rectangles to rearrange by hand, with
+  live-updating adjacencies.
 - Feedback loop: owner comments in chat → Claude revises the layout.
 - Phase 2 (massing) and Phase 3 (optimization), out of scope for now.
 
