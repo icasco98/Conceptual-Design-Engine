@@ -3,31 +3,72 @@
 It shows Claude's recommended room grouping and layout (src.layout,
 src.layout_plan) — title, color-coded legend, and rationale included — as
 draggable, resizable, rotatable, deletable boxes the owner can rearrange by
-hand to explore a different arrangement. Corridors are draggable exactly
-like rooms (nothing here is a fixed zone); the site outline, the buildable
-envelope (setback) outline, the building footprint, the street marker, and
-door arrows are the only static-position backdrop — everything else
-recomputes live as boxes move (see below).
+hand to explore a different arrangement, plus a live-synced room schedule
+below it. Corridors are draggable exactly like rooms (nothing here is a
+fixed zone); the site outline, the buildable envelope (setback) outline,
+the building footprint, the street marker, and door arrows are the only
+static-position backdrop — everything else recomputes live as boxes move.
+
+**Selection.** A box's resize/rotate/delete handles are hidden until it's
+selected — clicking its body (or its schedule row) selects it and clears
+any other selection; shift-clicking toggles it into/out of a multi-box
+selection instead; clicking empty canvas clears the selection entirely.
+Resize handles only ever show for a lone selection (resizing several boxes
+from one dragged corner is ambiguous); rotate and delete act on the whole
+selection when more than one box is selected — see "Multi-select" below.
 
 Per-box controls, all pure client-side JS (see the generated `<script>`):
 
-- **Drag** the body of a box to move it (`onDown`/`onMove`).
+- **Drag** the body of a box to move it (`onDown`/`onMove`). Dragging
+  also snaps the box to touch a same-facing neighbor it ends up within 1m
+  of, closing the gap instead of leaving a sliver (`findNearestGapDelta`,
+  `GAP_SNAP_PX`) — see "Gap closing" below.
 - **Drag a corner handle** to resize it (`onResizeDown`/`doResize`) —
-  the opposite corner stays put.
+  the opposite corner stays put. Solo-selection only.
 - **Drag the rotate handle** to spin it in fixed 5° steps (`onRotateDown`/
-  `doRotate`). Rotation is a CSS `transform` for rendering, but its
-  *collision footprint* is the rotated shape's axis-aligned bounding box
-  (`effectiveRectOf`) — so rotating a box does push its neighbors out of
-  the way and does grow the building footprint, without needing full
-  rotated-rectangle (SAT) collision geometry.
+  `doRotate`), the same relative amount for every box in the selection at
+  once if more than one is selected ("Multi-select" below). Rotation is a
+  CSS `transform` for rendering, but overlap detection uses the box's true
+  rotated shape (`obbOf`/`obbsSeparated`, oriented-box SAT) — so two
+  rotated rooms can actually be pushed together until their real edges
+  touch, not stopped early by an inflated bounding-box margin — while the
+  *collision-response bookkeeping* (how far to push, whether a shrink is
+  possible) still works off the rotated shape's axis-aligned bounding box
+  (`effectiveRectOf`) for simplicity, and a rotated box is only ever
+  translated, never resized, when it has to give way.
 - **Click the delete handle** to remove a box (`onDeleteDown`) — it's
   hidden (not destroyed) so "Reset to recommended layout" can always bring
-  it back.
+  it back. Deletes the whole selection if more than one box is selected.
 - **The grid checkbox** toggles a faint 0.25m reference grid
   (`#grid-overlay`). Independent of that toggle, every box's position
   always snaps to that same 0.25m grid while dragging or resizing
   (`snapToGrid`, `GRID_PX`) — the grid is a visibility choice, snapping
   isn't.
+- **The room schedule** below the canvas lists every box's current width
+  and depth in meters, editable in place — typing a new value resizes the
+  box on the canvas (`applyScheduleEdit`) exactly as if you'd dragged its
+  corner, growing/shrinking from its center since a table cell has no
+  natural corner to anchor to. It stays live-synced with the canvas in
+  both directions (`renderSchedule`, folded into `refreshDiagram` so it
+  updates on every move/resize/rotate/delete/reset) — clicking a row
+  selects the matching box and vice versa, and in-place DOM updates (not a
+  full rebuild) mean typing in one row's field survives a drag happening
+  elsewhere on the canvas at the same time.
+
+**Multi-select.** Shift-click adds/removes a box from the selection
+instead of replacing it. With more than one box selected, grabbing *any*
+selected box's rotate handle spins the whole selection together — each
+box keeps rotating around its own center, by the same angle delta, not a
+single shared pivot — and clicking *any* selected box's delete handle (or
+a schedule row's) removes the whole selection at once.
+
+**Gap closing.** Beyond plain grid-snapping, dragging a box that ends up
+less than 1m from a same-facing neighbor (their ranges overlap on the
+other axis — this isn't just "nearby diagonally") snaps it the rest of
+the way to touch that neighbor exactly, on each axis independently
+(`findNearestGapDelta`). The idea is to make it easy to eliminate an
+accidental sliver of empty space between zones without having to
+pixel-hunt for the exact touching position.
 
 Three constraints hold at all times while dragging, resizing, or rotating,
 enforced client-side in the generated JS (never round-tripped through
@@ -44,10 +85,10 @@ Python):
    after both of those — a dense enough scene can leave the gentler
    one-box-at-a-time heuristics cycling instead of settling — gets split
    apart unconditionally, half the separation to each side
-   (`forceSeparateAnyRemainingOverlaps`). Running all three every round,
-   not just the first two until they give up, is what makes "no overlaps"
-   an actual invariant rather than a best effort that quietly fails in a
-   crowded corner.
+   (`forceSeparateAnyRemainingOverlaps`). All three read `boxesReallyOverlap`
+   rather than raw bounding-box overlap, so a merely-close (not actually
+   intersecting) pair of rotated boxes is left alone instead of being
+   pushed apart early.
 2. **The setback line is a hard wall.** Every box is kept inside the
    buildable envelope (`data-env-*` on #canvas-container) — an unrotated
    box shrinks toward its own minimum before crossing it; a rotated box
@@ -56,13 +97,17 @@ Python):
 3. **Rooms may shrink, never below their minimum.** Same minimums as the
    initial packer's own compaction (`src/layout.py`) — `data-min-width`/
    `data-min-height`, from `src/defaults.py` for rooms and the fixed code
-   hallway width for corridors.
+   hallway width for corridors. The schedule enforces the same floor on
+   its own inputs.
 
 Two things are recomputed from scratch after every move, resize, rotate,
 or delete (`refreshDiagram`), never left stale from the initial layout:
 
 - **The building footprint outline** — the live union of every current
-  box's *effective* (rotation-aware) rect (`computeFootprintPath`).
+  box's true rotated shape (`computeFootprintPath`, via oriented-box
+  point containment — a rotated room's contribution follows its actual
+  diamond/parallelogram footprint, not an inflated bounding box, even
+  though the traced outline itself stays rectilinear).
 - **The door arrows** — one per shared wall between boxes that are
   actually touching right now, found by re-walking the touching-graph
   breadth-first from the entry (`computeDoorArrowSegments`, the same
@@ -82,8 +127,8 @@ the flicker/reset the owner reported ("switching between the original
 shape and the modified shape"). A page that never sends anything back to
 Python during a drag has nothing to desync — dragging is instant, and a
 "Reset" button (also pure client-side JS) snaps position, size, rotation,
-and deleted-state all back to Claude's recommended layout, stored in each
-box's own data attributes.
+selection, and deleted-state all back to Claude's recommended layout,
+stored in each box's own data attributes.
 """
 
 from __future__ import annotations
@@ -108,6 +153,11 @@ CANVAS_BACKGROUND = "#fbfbf9"
 GRID_M = 0.25
 GRID_PX = GRID_M * PX_PER_METER
 
+# Dragging a box within this distance of a same-facing neighbor snaps it
+# the rest of the way to touch — see "Gap closing" in the module docstring.
+GAP_SNAP_M = 1.0
+GAP_SNAP_PX = GAP_SNAP_M * PX_PER_METER
+
 # How far each door arrow's endpoints sit from the wall it crosses — same
 # value src/layout.py's _perpendicular_arrow uses, in meters.
 DOOR_INSET_M = 0.35
@@ -116,6 +166,7 @@ DOOR_INSET_PX = DOOR_INSET_M * PX_PER_METER
 # Corner-resize handles, a rotate handle (5° increments — see the module
 # docstring for how rotation still affects neighbors despite being a CSS
 # transform), and a delete handle, appended into every room/corridor div.
+# All hidden until the box is selected — see the module docstring.
 # Static markup, no per-room data.
 _HANDLES_HTML = (
     '<span class="resize-handle nw" data-corner="nw"></span>'
@@ -434,6 +485,11 @@ def render_canvas_html(
   .draggable.deleted {{
     display: none;
   }}
+  .draggable.selected {{
+    outline: 2px solid #2a78d6;
+    outline-offset: 2px;
+    z-index: 40;
+  }}
   .corridor {{
     border: 1px dashed #b9b9b3;
     background-image: repeating-linear-gradient(45deg, #dcdcd6 0, #dcdcd6 4px, #f2f2ee 4px, #f2f2ee 10px);
@@ -459,6 +515,13 @@ def render_canvas_html(
     font-size: 10px;
     color: #55554f;
   }}
+  /* Resize/rotate/delete handles are hidden and non-interactive until the
+     box is selected — see the module docstring's Selection section. */
+  .resize-handle, .rotate-handle, .delete-handle {{
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.1s ease;
+  }}
   .resize-handle {{
     position: absolute;
     width: 9px;
@@ -466,11 +529,10 @@ def render_canvas_html(
     background: #ffffff;
     border: 1.5px solid #333333;
     border-radius: 2px;
-    opacity: 0.55;
     z-index: 60;
     touch-action: none;
   }}
-  .draggable:hover .resize-handle {{ opacity: 1; }}
+  .draggable.solo-selected .resize-handle {{ opacity: 0.85; pointer-events: auto; }}
   .resize-handle.nw {{ top: -5px; left: -5px; cursor: nwse-resize; }}
   .resize-handle.ne {{ top: -5px; right: -5px; cursor: nesw-resize; }}
   .resize-handle.sw {{ bottom: -5px; left: -5px; cursor: nesw-resize; }}
@@ -485,7 +547,6 @@ def render_canvas_html(
     border-radius: 50%;
     background: #ffffff;
     border: 1.5px solid #333333;
-    opacity: 0.55;
     z-index: 60;
     display: flex;
     align-items: center;
@@ -495,7 +556,6 @@ def render_canvas_html(
     cursor: grab;
     touch-action: none;
   }}
-  .draggable:hover .rotate-handle {{ opacity: 1; }}
   .delete-handle {{
     position: absolute;
     top: -9px;
@@ -508,13 +568,17 @@ def render_canvas_html(
     font-size: 12px;
     line-height: 16px;
     text-align: center;
-    opacity: 0.55;
     z-index: 61;
     cursor: pointer;
     touch-action: none;
   }}
-  .draggable:hover .delete-handle {{ opacity: 0.9; }}
-  .delete-handle:hover {{ opacity: 1; background: #a5301f; }}
+  .draggable.selected .rotate-handle,
+  .draggable.selected .delete-handle {{
+    opacity: 0.85;
+    pointer-events: auto;
+  }}
+  .delete-handle:hover {{ opacity: 1 !important; background: #a5301f; }}
+  .rotate-handle:hover {{ opacity: 1 !important; }}
   #reset-btn {{
     margin-top: 10px;
     font-family: {FONT_STACK};
@@ -526,6 +590,67 @@ def render_canvas_html(
     cursor: pointer;
   }}
   #reset-btn:hover {{ background: #f2f2f0; }}
+  #schedule-section {{
+    margin-top: 16px;
+    max-width: {width_px}px;
+  }}
+  .schedule-title {{
+    font-size: 14px;
+    font-weight: 700;
+    color: #1a1a1a;
+    margin: 0 0 6px 4px;
+  }}
+  .schedule-hint {{
+    font-size: 11.5px;
+    color: #77776f;
+    margin: 0 0 6px 4px;
+  }}
+  #schedule-scroll {{
+    max-height: 240px;
+    overflow-y: auto;
+    border: 1px solid #e5e5e0;
+    border-radius: 6px;
+  }}
+  #schedule-table {{
+    border-collapse: collapse;
+    font-size: 12.5px;
+    width: 100%;
+  }}
+  #schedule-table th, #schedule-table td {{
+    border-bottom: 1px solid #e5e5e0;
+    padding: 5px 8px;
+    text-align: left;
+  }}
+  #schedule-table thead th {{
+    position: sticky;
+    top: 0;
+    background: #fbfbf9;
+    color: #55554f;
+    font-weight: 600;
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }}
+  #schedule-table tbody tr:hover {{ background: rgba(0,0,0,0.02); }}
+  #schedule-table tr.schedule-row-selected {{ background: rgba(42,120,214,0.10); }}
+  #schedule-table input[type="number"] {{
+    width: 58px;
+    font-size: 12.5px;
+    padding: 2px 4px;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    font-family: {FONT_STACK};
+  }}
+  .schedule-delete {{
+    border: none;
+    background: none;
+    color: #c0392b;
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 4px;
+  }}
+  .schedule-delete:hover {{ color: #a5301f; }}
 </style>
 </head>
 <body>
@@ -544,10 +669,25 @@ def render_canvas_html(
   <button id="reset-btn" type="button">Reset to recommended layout</button>
   <p class="canvas-rationale">{_esc(layout_plan.rationale)}</p>
 
+  <div id="schedule-section">
+    <h3 class="schedule-title">Room Schedule</h3>
+    <p class="schedule-hint">Click a row to select it on the diagram. Edit width/depth here or by dragging a corner above.</p>
+    <div id="schedule-scroll">
+      <table id="schedule-table">
+        <thead>
+          <tr><th>Space</th><th>Width (m)</th><th>Depth (m)</th><th>Rotation</th><th></th></tr>
+        </thead>
+        <tbody id="schedule-body"></tbody>
+      </table>
+    </div>
+  </div>
+
 <script>
 (function() {{
   var GRID_PX = {GRID_PX};
+  var GAP_SNAP_PX = {GAP_SNAP_PX};
   var DOOR_INSET_PX = {DOOR_INSET_PX};
+  var PX_PER_METER = {PX_PER_METER};
   var container = document.getElementById('canvas-container');
   var footprintPath = document.getElementById('footprint-shape');
   var doorArrowsGroup = document.getElementById('door-arrows-group');
@@ -555,6 +695,7 @@ def render_canvas_html(
   var active = null, offsetX = 0, offsetY = 0;
   var activeResize = null;
   var activeRotate = null;
+  var selected = [];
 
   // The buildable envelope in canvas px — the setback line. Every box is
   // kept inside this rectangle; see the module docstring for why this is
@@ -584,12 +725,16 @@ def render_canvas_html(
 
   function rotationOf(el) {{ return parseFloat(el.dataset.rotation || '0'); }}
 
-  // The rect collision/footprint math should actually use: for an
+  // The rect collision/footprint bookkeeping should actually use: for an
   // unrotated box this is identical to rectOf. For a rotated one, it's
   // the axis-aligned bounding box of the rotated shape, centered on the
   // same point — bigger than the box's true footprint by design, which is
   // exactly what makes rotating a room visibly push its neighbors and
   // grow the building footprint outline instead of silently doing nothing.
+  // Whether two boxes actually overlap is decided separately, by
+  // boxesReallyOverlap/obbsSeparated, which use the *true* rotated shape —
+  // this AABB is only used once a real overlap is already established, to
+  // work out how far to push.
   function effectiveRectOf(el) {{
     var r = rectOf(el);
     var deg = rotationOf(el);
@@ -600,6 +745,69 @@ def render_canvas_html(
     var bboxH = r.width * sinA + r.height * cosA;
     var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
     return {{left: cx - bboxW / 2, top: cy - bboxH / 2, width: bboxW, height: bboxH}};
+  }}
+
+  // The box's true rotated shape as an oriented box: center, half-extents,
+  // and its own two unit axis vectors (rotated by its own angle). Used for
+  // exact overlap testing (obbsSeparated, SAT) and for the footprint's
+  // point-containment test — both care about the *actual* rotated shape,
+  // not its inflated AABB.
+  function obbOf(el) {{
+    var r = rectOf(el);
+    var rad = rotationOf(el) * Math.PI / 180;
+    return {{
+      cx: r.left + r.width / 2, cy: r.top + r.height / 2,
+      hw: r.width / 2, hh: r.height / 2,
+      ax: [Math.cos(rad), Math.sin(rad)],
+      ay: [-Math.sin(rad), Math.cos(rad)]
+    }};
+  }}
+
+  function cornersOfObb(obb) {{
+    var local = [[-obb.hw, -obb.hh], [obb.hw, -obb.hh], [obb.hw, obb.hh], [-obb.hw, obb.hh]];
+    return local.map(function(p) {{
+      return [obb.cx + p[0] * obb.ax[0] + p[1] * obb.ay[0], obb.cy + p[0] * obb.ax[1] + p[1] * obb.ay[1]];
+    }});
+  }}
+
+  function pointInObb(px, py, obb) {{
+    var dx = px - obb.cx, dy = py - obb.cy;
+    var lx = dx * obb.ax[0] + dy * obb.ax[1];
+    var ly = dx * obb.ay[0] + dy * obb.ay[1];
+    return Math.abs(lx) <= obb.hw && Math.abs(ly) <= obb.hh;
+  }}
+
+  // True oriented-box vs oriented-box separation test (separating axis
+  // theorem, 4 candidate axes — each box's own local x/y). Returns true
+  // only when a genuine gap exists along at least one axis; false means
+  // the two rotated shapes actually intersect. This is what lets two
+  // rotated rooms be pushed together until their real edges touch,
+  // instead of stopping early the way an AABB-only check would (an AABB
+  // around a rotated square is bigger than the square itself).
+  function obbsSeparated(A, B) {{
+    var dx = B.cx - A.cx, dy = B.cy - A.cy;
+    var axes = [A.ax, A.ay, B.ax, B.ay];
+    for (var i = 0; i < axes.length; i++) {{
+      var L = axes[i];
+      var dist = Math.abs(dx * L[0] + dy * L[1]);
+      var projA = A.hw * Math.abs(A.ax[0] * L[0] + A.ax[1] * L[1]) + A.hh * Math.abs(A.ay[0] * L[0] + A.ay[1] * L[1]);
+      var projB = B.hw * Math.abs(B.ax[0] * L[0] + B.ax[1] * L[1]) + B.hh * Math.abs(B.ay[0] * L[0] + B.ay[1] * L[1]);
+      if (dist > projA + projB + 0.05) return true;
+    }}
+    return false;
+  }}
+
+  // The real overlap test every collision-resolution function uses. `ov`
+  // is the caller's already-computed AABB/effective-rect overlap (cheap,
+  // and still needed for push direction/magnitude) — when neither box is
+  // rotated, AABB and true shape agree exactly, so this is free. When
+  // either is rotated, the AABBs can overlap while the true rotated
+  // shapes don't (two diamonds near each other, say) — SAT decides which
+  // is actually true.
+  function boxesReallyOverlap(a, b, ov) {{
+    if (!ov) return false;
+    if (!rotationOf(a) && !rotationOf(b)) return true;
+    return !obbsSeparated(obbOf(a), obbOf(b));
   }}
 
   function minOf(el) {{
@@ -687,11 +895,13 @@ def render_canvas_html(
 
   // Phase 1 of overlap resolution: every non-pinned box shrinks toward
   // its own minimum size and/or is pushed out of the way of whatever it
-  // overlaps (using each box's *effective* rect, so a rotated neighbor's
-  // larger swept footprint is respected too), cascading through further
-  // overlaps across passes. A rotated box is only ever translated here —
-  // never resized — for the same reason clampToEnvelope treats it
-  // specially. Returns whether anything changed.
+  // *actually* overlaps (boxesReallyOverlap — true rotated shapes, not
+  // just AABBs; using each box's *effective* rect for the push magnitude
+  // once a real overlap is confirmed, so a rotated neighbor's larger
+  // swept footprint is respected), cascading through further overlaps
+  // across passes. A rotated box is only ever translated here — never
+  // resized — for the same reason clampToEnvelope treats it specially.
+  // Returns whether anything changed.
   function shrinkAndPushNonPinned(pinned) {{
     var live = activeBoxes();
     var changedAtAll = false;
@@ -707,7 +917,7 @@ def render_canvas_html(
           var b = live[j];
           var ra = effectiveRectOf(a), rb = effectiveRectOf(b);
           var ov = overlapAmount(ra, rb);
-          if (!ov) continue;
+          if (!boxesReallyOverlap(a, b, ov)) continue;
           any = true;
           if (ov.x < ov.y) {{
             var dir = (ra.left + ra.width / 2) < (rb.left + rb.width / 2) ? -1 : 1;
@@ -768,7 +978,7 @@ def render_canvas_html(
       if (other === pinned) continue;
       var pr = effectiveRectOf(pinned), ro = effectiveRectOf(other);
       var ov = overlapAmount(pr, ro);
-      if (!ov) continue;
+      if (!boxesReallyOverlap(pinned, other, ov)) continue;
       changed = true;
       if (ov.x < ov.y) {{
         var dir = (pr.left + pr.width / 2) < (ro.left + ro.width / 2) ? -1 : 1;
@@ -782,16 +992,16 @@ def render_canvas_html(
     return changed;
   }}
 
-  // Absolute last resort, tried only once phases 1 and 2 give up: split
-  // whatever overlap is still left between BOTH boxes directly, half the
-  // separation to each, along whichever axis needs less movement. In a
-  // scene crowded enough (several rooms squeezed toward the same small
-  // area), the gentler one-box-at-a-time heuristic above can genuinely
-  // fail to converge — each box's individual fix can undo a different
-  // box's fix, cycling instead of settling. Moving both sides of a
-  // conflict at once instead of just one breaks that cycle. This ignores
-  // the pinned exemption on purpose: by the time this runs, "no overlap"
-  // matters more than "the box under the cursor never moves."
+  // Absolute last resort, tried alongside phases 1 and 2 every round:
+  // split whatever overlap is still left between BOTH boxes directly,
+  // half the separation to each, along whichever axis needs less
+  // movement. In a scene crowded enough (several rooms squeezed toward
+  // the same small area), the gentler one-box-at-a-time heuristic above
+  // can genuinely fail to converge — each box's individual fix can undo a
+  // different box's fix, cycling instead of settling. Moving both sides
+  // of a conflict at once instead of just one breaks that cycle. This
+  // ignores the pinned exemption on purpose: by the time this runs, "no
+  // overlap" matters more than "the box under the cursor never moves."
   function forceSeparateAnyRemainingOverlaps() {{
     var live = activeBoxes();
     var changed = false;
@@ -800,7 +1010,7 @@ def render_canvas_html(
         var a = live[i], b = live[j];
         var ra = effectiveRectOf(a), rb = effectiveRectOf(b);
         var ov = overlapAmount(ra, rb);
-        if (!ov) continue;
+        if (!boxesReallyOverlap(a, b, ov)) continue;
         changed = true;
         if (ov.x < ov.y) {{
           // dir=1 means a's center is to the right of b's -- a moves
@@ -840,26 +1050,29 @@ def render_canvas_html(
   }}
 
   // Traces the outline of the union of every current (non-deleted) box's
-  // *effective* rect — rooms + corridors, rotated ones included via their
-  // swept bounding box — the building's own footprint, recomputed from
-  // wherever things actually are right now rather than the initial
-  // layout. Works by rasterizing onto the grid formed by every box edge
-  // (coordinate compression keeps this small — a handful of rooms means a
-  // few dozen cells, not a full-resolution raster) and walking the
-  // boundary between covered/uncovered cells into one or more closed
-  // loops. Each cell contributes only the edges facing an uncovered
-  // neighbor, always in the same rotational direction, so loops close up
-  // on their own without needing any special-casing for T-junctions or
-  // multiple disjoint shapes (evenodd fill handles the rest, including
-  // any hole).
+  // *true rotated shape* — rooms + corridors, via oriented-box point
+  // containment, not an inflated AABB, so a rotated room's contribution
+  // follows its actual footprint. Works by rasterizing onto the grid
+  // formed by every box's corners (coordinate compression keeps this
+  // small — a handful of rooms means a few dozen cells, not a full-
+  // resolution raster) and walking the boundary between covered/uncovered
+  // cells into one or more closed loops. Each cell contributes only the
+  // edges facing an uncovered neighbor, always in the same rotational
+  // direction, so loops close up on their own without needing any
+  // special-casing for T-junctions or multiple disjoint shapes (evenodd
+  // fill handles the rest, including any hole). The traced outline itself
+  // is still rectilinear even for a rotated room (this is a rasterized
+  // rectilinear-boundary trace, not a general polygon union) — its
+  // corners are approximated by a fine staircase rather than a clean
+  // diagonal edge.
   function computeFootprintPath() {{
-    var rects = activeBoxes().map(effectiveRectOf);
-    if (!rects.length) return '';
+    var live = activeBoxes();
+    if (!live.length) return '';
+    var obbs = live.map(obbOf);
 
     var xsSet = {{}}, ysSet = {{}};
-    rects.forEach(function(r) {{
-      xsSet[r.left] = true; xsSet[r.left + r.width] = true;
-      ysSet[r.top] = true; ysSet[r.top + r.height] = true;
+    obbs.forEach(function(obb) {{
+      cornersOfObb(obb).forEach(function(c) {{ xsSet[c[0]] = true; ysSet[c[1]] = true; }});
     }});
     var xs = Object.keys(xsSet).map(Number).sort(function(a, b) {{ return a - b; }});
     var ys = Object.keys(ysSet).map(Number).sort(function(a, b) {{ return a - b; }});
@@ -873,9 +1086,8 @@ def render_canvas_html(
       for (var j = 0; j < ny; j++) {{
         var cy = (ys[j] + ys[j + 1]) / 2;
         var hit = false;
-        for (var k = 0; k < rects.length; k++) {{
-          var r = rects[k];
-          if (cx > r.left && cx < r.left + r.width && cy > r.top && cy < r.top + r.height) {{ hit = true; break; }}
+        for (var k = 0; k < obbs.length; k++) {{
+          if (pointInObb(cx, cy, obbs[k])) {{ hit = true; break; }}
         }}
         covered[i][j] = hit;
       }}
@@ -1026,15 +1238,188 @@ def render_canvas_html(
     }});
   }}
 
+  // --- Selection -------------------------------------------------------
+
+  function updateSelectionClasses() {{
+    for (var i = 0; i < boxes.length; i++) {{
+      boxes[i].classList.remove('selected', 'solo-selected');
+    }}
+    for (var i2 = 0; i2 < selected.length; i2++) {{
+      selected[i2].classList.add('selected');
+      if (selected.length === 1) {{ selected[i2].classList.add('solo-selected'); }}
+    }}
+    renderSchedule();
+  }}
+
+  function selectBox(box, additive) {{
+    if (additive) {{
+      var idx = selected.indexOf(box);
+      if (idx === -1) {{ selected.push(box); }} else {{ selected.splice(idx, 1); }}
+    }} else if (selected.indexOf(box) === -1 || selected.length > 1) {{
+      selected = [box];
+    }}
+    updateSelectionClasses();
+  }}
+
+  // Clicking empty canvas (not a box, not a handle -- those stop
+  // propagation on their own mousedown) clears the selection.
+  container.addEventListener('mousedown', function(e) {{
+    if (e.target === container && selected.length) {{
+      selected = [];
+      updateSelectionClasses();
+    }}
+  }});
+
+  // --- Room schedule -----------------------------------------------------
+  // Live-synced table of every active box's width/depth in meters. Kept
+  // in sync by folding renderSchedule() into refreshDiagram() (called
+  // after every move/resize/rotate/delete/reset), but updates existing
+  // rows' values in place rather than rebuilding the table each time, so
+  // a field the owner is mid-edit in isn't clobbered by something else
+  // moving elsewhere on the canvas.
+
+  var scheduleRows = {{}};
+
+  function boxId(box) {{
+    if (!box.dataset.scheduleId) {{ box.dataset.scheduleId = 'b' + Math.random().toString(36).slice(2); }}
+    return box.dataset.scheduleId;
+  }}
+
+  function deleteBoxes(targets) {{
+    targets.forEach(function(b) {{ b.dataset.deleted = '1'; b.classList.add('deleted'); }});
+    selected = selected.filter(function(b) {{ return targets.indexOf(b) === -1; }});
+    updateSelectionClasses();
+    refreshDiagram();
+  }}
+
+  function applyScheduleEdit(box, axis, meters) {{
+    if (!isFinite(meters) || meters <= 0) {{ renderSchedule(); return; }}
+    var m = minOf(box);
+    var r = rectOf(box);
+    var px = meters * PX_PER_METER;
+    if (axis === 'w') {{
+      px = Math.max(m.w, px);
+      box.style.left = (r.left + (r.width - px) / 2) + 'px';
+      box.style.width = px + 'px';
+    }} else {{
+      px = Math.max(m.h, px);
+      box.style.top = (r.top + (r.height - px) / 2) + 'px';
+      box.style.height = px + 'px';
+    }}
+    clampToEnvelope(box);
+    resolveOverlaps(box);
+    refreshDiagram();
+  }}
+
+  function renderSchedule() {{
+    var tbody = document.getElementById('schedule-body');
+    if (!tbody) return;
+    var live = activeBoxes();
+    var liveIds = {{}};
+    live.forEach(function(box) {{ liveIds[boxId(box)] = true; }});
+
+    Object.keys(scheduleRows).forEach(function(id) {{
+      if (!liveIds[id]) {{ scheduleRows[id].tr.remove(); delete scheduleRows[id]; }}
+    }});
+
+    live.forEach(function(box) {{
+      var id = boxId(box);
+      var row = scheduleRows[id];
+      if (!row) {{
+        var tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td class="schedule-name"></td>' +
+          '<td><input type="number" step="0.05" data-axis="w" /></td>' +
+          '<td><input type="number" step="0.05" data-axis="h" /></td>' +
+          '<td class="schedule-rotation"></td>' +
+          '<td><button type="button" class="schedule-delete" title="Delete">&times;</button></td>';
+        var wInput = tr.querySelector('input[data-axis="w"]');
+        var hInput = tr.querySelector('input[data-axis="h"]');
+        wInput.addEventListener('change', function() {{ applyScheduleEdit(box, 'w', parseFloat(wInput.value)); }});
+        hInput.addEventListener('change', function() {{ applyScheduleEdit(box, 'h', parseFloat(hInput.value)); }});
+        tr.querySelector('.schedule-delete').addEventListener('mousedown', function(ev) {{
+          ev.preventDefault();
+          ev.stopPropagation();
+          var targets = (selected.indexOf(box) !== -1 && selected.length > 1) ? selected.slice() : [box];
+          deleteBoxes(targets);
+        }});
+        tr.addEventListener('click', function(ev) {{
+          if (ev.target.tagName === 'INPUT' || ev.target.tagName === 'BUTTON') return;
+          selectBox(box, ev.shiftKey);
+        }});
+        tbody.appendChild(tr);
+        row = scheduleRows[id] = {{
+          tr: tr, wInput: wInput, hInput: hInput,
+          nameCell: tr.querySelector('.schedule-name'),
+          rotCell: tr.querySelector('.schedule-rotation')
+        }};
+      }}
+      var m = minOf(box), r = rectOf(box);
+      var name = (box.querySelector('.label') || {{}}).textContent || '';
+      if (row.nameCell.textContent !== name) {{ row.nameCell.textContent = name; }}
+      row.wInput.min = (m.w / PX_PER_METER).toFixed(2);
+      row.hInput.min = (m.h / PX_PER_METER).toFixed(2);
+      if (document.activeElement !== row.wInput) {{ row.wInput.value = (r.width / PX_PER_METER).toFixed(2); }}
+      if (document.activeElement !== row.hInput) {{ row.hInput.value = (r.height / PX_PER_METER).toFixed(2); }}
+      row.rotCell.textContent = rotationOf(box) + '°';
+      row.tr.classList.toggle('schedule-row-selected', selected.indexOf(box) !== -1);
+    }});
+  }}
+
+  // --- Gap closing -------------------------------------------------------
+  // If the box being dragged ends up less than GAP_SNAP_PX from a box
+  // it's actually facing (their ranges overlap on the other axis) on
+  // either axis, snap it the rest of the way to touch that neighbor
+  // exactly instead of leaving a sliver of empty space. Independent per
+  // axis, and only ever engages for a genuine, positive, small gap — an
+  // existing 0-gap (already touching) is left alone.
+  function findNearestGapDelta(el, axis) {{
+    var r = rectOf(el);
+    var live = activeBoxes();
+    var bestGap = Infinity, bestDelta = null;
+    for (var i = 0; i < live.length; i++) {{
+      var other = live[i];
+      if (other === el) continue;
+      var o = rectOf(other);
+      if (axis === 'x') {{
+        var yOverlap = Math.min(r.top + r.height, o.top + o.height) - Math.max(r.top, o.top);
+        if (yOverlap <= 0) continue;
+        var gapRight = o.left - (r.left + r.width);
+        if (gapRight > 0.5 && gapRight < GAP_SNAP_PX && gapRight < bestGap) {{ bestGap = gapRight; bestDelta = gapRight; }}
+        var gapLeft = r.left - (o.left + o.width);
+        if (gapLeft > 0.5 && gapLeft < GAP_SNAP_PX && gapLeft < bestGap) {{ bestGap = gapLeft; bestDelta = -gapLeft; }}
+      }} else {{
+        var xOverlap = Math.min(r.left + r.width, o.left + o.width) - Math.max(r.left, o.left);
+        if (xOverlap <= 0) continue;
+        var gapDown = o.top - (r.top + r.height);
+        if (gapDown > 0.5 && gapDown < GAP_SNAP_PX && gapDown < bestGap) {{ bestGap = gapDown; bestDelta = gapDown; }}
+        var gapUp = r.top - (o.top + o.height);
+        if (gapUp > 0.5 && gapUp < GAP_SNAP_PX && gapUp < bestGap) {{ bestGap = gapUp; bestDelta = -gapUp; }}
+      }}
+    }}
+    return bestDelta;
+  }}
+
+  function snapToNearbyNeighbors(el) {{
+    var dx = findNearestGapDelta(el, 'x');
+    if (dx !== null) {{ el.style.left = (parseFloat(el.style.left) + dx) + 'px'; }}
+    var dy = findNearestGapDelta(el, 'y');
+    if (dy !== null) {{ el.style.top = (parseFloat(el.style.top) + dy) + 'px'; }}
+  }}
+
   // Everything that must be re-derived from scratch after any move,
   // resize, rotate, or delete — never left stale from the initial layout.
   function refreshDiagram() {{
     updateFootprint();
     updateDoorArrows();
+    renderSchedule();
   }}
 
   function onDown(e) {{
-    active = e.currentTarget;
+    var box = e.currentTarget;
+    selectBox(box, e.shiftKey);
+
+    active = box;
     var p = point(e);
     var rect = active.getBoundingClientRect();
     offsetX = p.x - rect.left;
@@ -1057,6 +1442,7 @@ def render_canvas_html(
     newTop = snapToGrid(newTop);
     active.style.left = newLeft + 'px';
     active.style.top = newTop + 'px';
+    snapToNearbyNeighbors(active);
     clampPositionOnly(active);
     resolveOverlaps(active);
     refreshDiagram();
@@ -1103,20 +1489,25 @@ def render_canvas_html(
     e.preventDefault();
   }}
 
-  // Spins a box in fixed 5° steps around its own center, then treats it
-  // exactly like a move: clamp to the envelope, push/shrink anything it
-  // now overlaps (via its rotation-inflated effective rect), and refresh
-  // the footprint/door arrows — see the module docstring for why rotation
-  // still visibly affects the rooms around it despite being a pure CSS
-  // transform on the box's own true rectangle.
+  // Spins the whole rotate gesture's target set (just the grabbed box
+  // solo, or the entire multi-selection if it's part of one — see
+  // onRotateDown) by the same angle delta, each box around its own
+  // center, then treats every target exactly like a move: clamp to the
+  // envelope, push/shrink anything it now overlaps (via its rotation-
+  // inflated effective rect, gated by the true-shape SAT check), and
+  // refresh the footprint/door arrows/schedule.
   function doRotate(e) {{
     var p = point(e);
     var rot = activeRotate;
     var angle = Math.atan2(p.y - rot.cy, p.x - rot.cx) * 180 / Math.PI + 90;
-    var snapped = Math.round(angle / 5) * 5;
-    rot.el.style.transform = 'rotate(' + snapped + 'deg)';
-    rot.el.dataset.rotation = String(snapped);
-    clampToEnvelope(rot.el);
+    var delta = Math.round((angle - rot.startAngle) / 5) * 5;
+    for (var i = 0; i < rot.targets.length; i++) {{
+      var el = rot.targets[i];
+      var newRotation = rot.startRotations[i] + delta;
+      el.style.transform = 'rotate(' + newRotation + 'deg)';
+      el.dataset.rotation = String(newRotation);
+      clampToEnvelope(el);
+    }}
     resolveOverlaps(rot.el);
     refreshDiagram();
     e.preventDefault();
@@ -1131,22 +1522,33 @@ def render_canvas_html(
     box.classList.add('dragging');
   }}
 
+  // If the grabbed box is part of a multi-selection, every selected box
+  // rotates together (each around its own center, by the same delta) —
+  // see the module docstring's "Multi-select" section.
   function onRotateDown(e) {{
     e.stopPropagation();
     e.preventDefault();
     var box = e.currentTarget.closest('.draggable');
     var r = box.getBoundingClientRect();
-    activeRotate = {{el: box, cx: r.left + r.width / 2, cy: r.top + r.height / 2}};
-    box.classList.add('dragging');
+    var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    var p = point(e);
+    var startAngle = Math.atan2(p.y - cy, p.x - cx) * 180 / Math.PI + 90;
+    var targets = (selected.indexOf(box) !== -1 && selected.length > 1) ? selected.slice() : [box];
+    activeRotate = {{
+      el: box, cx: cx, cy: cy, startAngle: startAngle,
+      targets: targets, startRotations: targets.map(rotationOf)
+    }};
+    targets.forEach(function(t) {{ t.classList.add('dragging'); }});
   }}
 
+  // Deletes the whole selection if the clicked box is part of a
+  // multi-selection, otherwise just the clicked box.
   function onDeleteDown(e) {{
     e.stopPropagation();
     e.preventDefault();
     var box = e.currentTarget.closest('.draggable');
-    box.dataset.deleted = '1';
-    box.classList.add('deleted');
-    refreshDiagram();
+    var targets = (selected.indexOf(box) !== -1 && selected.length > 1) ? selected.slice() : [box];
+    deleteBoxes(targets);
   }}
 
   // A gesture in progress only asks resolveOverlaps to protect the one
@@ -1161,7 +1563,7 @@ def render_canvas_html(
   function onUp() {{
     if (active) {{ active.classList.remove('dragging'); }}
     if (activeResize) {{ activeResize.el.classList.remove('dragging'); }}
-    if (activeRotate) {{ activeRotate.el.classList.remove('dragging'); }}
+    if (activeRotate) {{ activeRotate.targets.forEach(function(t) {{ t.classList.remove('dragging'); }}); }}
     var gestureEnded = active || activeResize || activeRotate;
     active = null;
     activeResize = null;
@@ -1216,6 +1618,8 @@ def render_canvas_html(
       boxes[i].dataset.deleted = '0';
       boxes[i].classList.remove('deleted');
     }}
+    selected = [];
+    updateSelectionClasses();
     refreshDiagram();
   }});
 

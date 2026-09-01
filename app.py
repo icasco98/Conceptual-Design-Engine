@@ -180,8 +180,9 @@ def render_interactive_canvas(
     # Python, so there's no round trip for the two states to fall out of
     # sync over — see the module docstring in src/interactive_canvas.py.
     # Extra headroom above the canvas's own pixel size for the title,
-    # legend, reset button, and rationale caption rendered alongside it.
-    components.html(html_doc, height=height_px + 220, scrolling=False)
+    # legend, reset button, rationale caption, and the room schedule
+    # (title + hint + a capped, internally-scrolling table) below it.
+    components.html(html_doc, height=height_px + 220 + 310, scrolling=False)
 
 
 def render_chat(history: list[dict]) -> str | None:

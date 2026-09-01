@@ -175,11 +175,28 @@ def test_rotation_inflates_the_effective_rect_used_for_collision_and_footprint()
     html, _ = _render(rooms)
 
     # Rotating a box does push its neighbors and does grow the footprint --
-    # both resolveOverlaps and computeFootprintPath read the rotated
-    # bounding box (effectiveRectOf), not the box's plain unrotated rect.
+    # resolveOverlaps reads the rotated bounding box (effectiveRectOf) for
+    # push magnitude, and computeFootprintPath reads the box's true
+    # rotated shape (obbOf/pointInObb) for its coverage test.
     assert "function effectiveRectOf" in html
-    assert "activeBoxes().map(effectiveRectOf)" in html
     assert "effectiveRectOf(a), rb = effectiveRectOf(b)" in html
+    assert "function obbOf" in html
+    assert "function pointInObb" in html
+    assert "pointInObb(cx, cy, obbs[k])" in html
+
+
+def test_rotated_boxes_can_actually_touch_not_just_get_close():
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    # AABB-only overlap detection would stop two rotated rooms well short
+    # of actually touching (a rotated square's bounding box is bigger than
+    # the square). boxesReallyOverlap gates every collision-resolution
+    # function on the true oriented-box SAT test instead, so rotated rooms
+    # can be pushed together until their real edges meet.
+    assert "function obbsSeparated" in html
+    assert "function boxesReallyOverlap" in html
+    assert html.count("boxesReallyOverlap(") >= 4  # 3 definitions/call-sites minimum + its own body
 
 
 def test_setback_envelope_bounds_and_room_minimums_are_exposed_to_js():
@@ -279,7 +296,65 @@ def test_rotate_handle_present_and_snaps_in_5_degree_steps():
     total_boxes = len(result.rooms) + len(result.corridors)
     assert html.count('class="rotate-handle"') == total_boxes
     assert "function doRotate" in html
-    assert "Math.round(angle / 5) * 5" in html
+    # Delta-based (not absolute-angle) snapping: rotation changes by a
+    # 5-degree-snapped amount relative to where the gesture started, so a
+    # box that already had rotation keeps it as a baseline instead of
+    # jumping to match the cursor's raw angle.
+    assert "Math.round((angle - rot.startAngle) / 5) * 5" in html
+    assert "rot.startRotations[i] + delta" in html
+
+
+def test_multi_select_rotates_and_deletes_the_whole_selection_together():
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    assert "function selectBox" in html
+    assert "selectBox(box, e.shiftKey)" in html
+    assert "selected.length > 1" in html
+    assert "targets.map(rotationOf)" in html  # group rotate: each box keeps its own starting rotation
+    assert "function deleteBoxes" in html
+
+
+def test_handles_hidden_until_selected():
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    # Hidden and non-interactive by default; only a `.selected` (rotate/
+    # delete) or `.solo-selected` (resize too) box reveals them -- no more
+    # always-on hover reveal.
+    assert ".resize-handle, .rotate-handle, .delete-handle {" in html
+    assert "opacity: 0;" in html
+    assert "pointer-events: none;" in html
+    assert ".draggable.solo-selected .resize-handle" in html
+    assert ".draggable.selected .rotate-handle" in html
+    assert "function updateSelectionClasses" in html
+    assert ":hover .resize-handle" not in html
+    assert ":hover .rotate-handle" not in html
+
+
+def test_room_schedule_lists_editable_dimensions_and_stays_synced():
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, result = _render(rooms)
+
+    assert 'id="schedule-table"' in html
+    assert 'id="schedule-body"' in html
+    assert "Width (m)" in html and "Depth (m)" in html
+    assert "function renderSchedule" in html
+    assert "function applyScheduleEdit" in html
+    # Folded into refreshDiagram so it never goes stale after a move/
+    # resize/rotate/delete/reset -- same wiring the footprint/door arrows use.
+    assert "renderSchedule();" in html
+    assert "updateFootprint();" in html.split("function refreshDiagram")[1][:200]
+
+
+def test_gap_closing_snaps_boxes_within_1m_to_touch():
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    assert "GAP_SNAP_PX = 26.0" in html  # 1.0m at PX_PER_METER=26.0
+    assert "function findNearestGapDelta" in html
+    assert "function snapToNearbyNeighbors" in html
+    assert "snapToNearbyNeighbors(active)" in html
 
 
 def test_delete_handle_present_and_hides_rather_than_removes():

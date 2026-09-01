@@ -42,39 +42,69 @@ zoning/bubble diagram of its rooms, before any detailed floor plan exists.
    "inside the building" from "buildable but unused site."
 4. **Interactive canvas — the diagram itself.** The recommendation above
    is shown as a single interactive canvas (`src/interactive_canvas.py`):
-   title, color legend, and rationale, with every room *and* hallway as a
-   draggable box (nothing here is a fixed zone) so you can explore a
-   different arrangement by hand. Each box also has:
+   title, color legend, rationale, and a live room schedule below it, with
+   every room *and* hallway as a draggable box (nothing here is a fixed
+   zone) so you can explore a different arrangement by hand.
+
+   **Selection.** A box's handles are hidden until you select it —
+   clicking its body (or its row in the schedule) selects it and clears
+   any other selection; shift-clicking adds/removes it from a multi-box
+   selection instead; clicking empty canvas clears the selection. Once
+   selected, each box has:
    - **Corner handles to resize it** — drag any corner and the opposite
-     one stays put.
-   - **A rotate handle**, spinning the box in fixed 5° steps.
+     one stays put. Only shown for a single (not multi-) selection, since
+     resizing several boxes from one dragged corner is ambiguous.
+   - **A rotate handle**, spinning the box in fixed 5° steps. With more
+     than one box selected, grabbing *any* selected box's rotate handle
+     spins the whole selection together (each box around its own center,
+     by the same angle) — see Multi-select below.
    - **A delete handle** (hides the box — not a fixed decision, since
-     "Reset to recommended layout" always brings it back).
+     "Reset to recommended layout" always brings it back). Deletes the
+     whole selection at once if more than one box is selected.
    - **A 0.25m grid** you can show or hide with a checkbox in the header;
      independent of that, every drag or resize always snaps position to
-     that same grid, whether or not it's visible.
+     that same grid, whether or not it's visible. Dragging a box within 1m
+     of a same-facing neighbor also snaps it the rest of the way to touch
+     exactly, so it's easy to close an accidental sliver of empty space
+     between zones instead of pixel-hunting for the exact touching spot.
 
-   Door arrows — one per shared wall on the recommended circulation path,
-   drawn with an arrowhead — show where each room connects to the one
-   next to it.
+   **Room schedule.** Below the canvas, a table lists every box's current
+   width, depth, and rotation in meters/degrees. Width and depth are
+   editable in place — typing a new value resizes the box on the canvas
+   (growing/shrinking from its center, since a table cell has no natural
+   corner to anchor to) exactly as if you'd dragged its corner. It's
+   kept live-synced with the canvas in both directions, and clicking a row
+   selects the matching box (and vice versa).
 
-   Colors are locked, but as you drag or resize, three things stay
-   continuously true instead of just at the start:
-   - **No overlaps.** Moving or resizing a box pushes any other box it
-     would overlap out of the way, cascading if needed.
+   Door arrows — one per shared wall on the current circulation path,
+   drawn with an arrowhead, re-walked from whichever boxes are actually
+   touching right now — show where each room connects to the one next to
+   it, and are always exactly perpendicular to the wall they cross by
+   construction.
+
+   Colors are locked, but as you drag, resize, or rotate, three things
+   stay continuously true instead of just at the start:
+   - **No overlaps, including rotated ones.** Moving, resizing, or
+     rotating a box pushes any other box it would *actually* overlap out
+     of the way, cascading if needed. Two rotated rooms are checked
+     against their true rotated shapes (not an inflated bounding box), so
+     you can push them together until their real edges actually touch —
+     not stopped early by a margin that isn't really there.
    - **The setback line is a hard wall.** The buildable envelope is drawn
-     as a dashed line, and no box — dragged, resized, or pushed — can ever
-     cross it.
+     as a dashed line, and no box — dragged, resized, rotated, or pushed —
+     can ever cross it.
    - **Rooms may shrink, never below their minimum.** A pushed box shrinks
      toward its own type minimum first (never below it — `src/defaults.py`
      for rooms, the fixed code hallway width for corridors) before it's
      displaced any further, the same idea as the initial layout's own
-     footprint compaction, just live. A manual corner-resize is clamped to
-     that same minimum directly.
+     footprint compaction, just live. A manual corner-resize (on the
+     canvas or in the schedule) is clamped to that same minimum directly.
 
-   The building footprint outline updates after every move, resize, or
-   delete, too — it's the union of whatever boxes are currently on the
-   canvas and not deleted, not a fixed shape from the initial layout.
+   The building footprint outline updates after every move, resize,
+   rotate, or delete, too — it's the union of whatever boxes are currently
+   on the canvas and not deleted, following each box's true rotated shape
+   rather than an inflated bounding box, not a fixed shape from the
+   initial layout.
 
    It's a self-contained HTML/CSS/JS widget (`streamlit.components.v1.html`),
    not a third-party Streamlit component: dragging happens entirely in the
@@ -84,18 +114,20 @@ zoning/bubble diagram of its rooms, before any detailed floor plan exists.
    (or reloading the page) resets it back to Claude's recommended layout,
    since Python was never told about any of it in the first place. A
    "Reset to recommended layout" button (also pure JS) restores position,
-   size, rotation, and any deleted spaces on demand.
+   size, rotation, selection, and any deleted spaces on demand.
 
-   Rotation is deliberately cosmetic — a CSS transform layered on top of
-   the same axis-aligned box the collision/footprint/envelope math already
-   reasons about, not fed back into any of it. Full rotated-rectangle
-   geometry is a much bigger feature than a conceptual zoning tool needs;
-   this gives you an orientation cue without it.
-
-Door arrows update live too — they're re-walked from whichever boxes are
-actually touching right now, not fixed to the initial recommendation, and
-every arrow is guaranteed strictly perpendicular to the wall it crosses
-(never a diagonal line to a room's center) by construction.
+   Rotation is a CSS transform for *rendering*, but overlap detection uses
+   each box's true rotated shape (oriented-box collision, via the
+   separating-axis theorem) rather than treating rotation as purely
+   cosmetic — that's what lets two rotated rooms actually touch. The
+   collision-response bookkeeping (how far to push, whether a shrink is
+   possible) still works off the rotated shape's axis-aligned bounding
+   box for simplicity, and a rotated box is only ever translated, never
+   resized, when it has to give way, so a CSS rotation is never distorted.
+   Full rotated-rectangle geometry throughout (e.g. a footprint outline
+   with clean diagonal edges instead of a fine staircase around a rotated
+   room) is a bigger feature than this tool needs; this covers the part
+   that matters for exploring adjacency.
 
 **Not yet built:** a chat-driven revision loop where the arrangement you
 dragged becomes the starting point for Claude's next suggestion. See
@@ -129,10 +161,10 @@ Roadmap below.
   packer — they're enforced the whole time you're dragging or resizing, in
   the browser, with no server round trip (see step 4 above).
 - **Editing tools stay decision-preserving.** Delete hides a box rather
-  than destroying it, and rotation is purely cosmetic (never fed into
-  collision/footprint/envelope math) — so nothing you do in the canvas can
-  put the geometry in a state "Reset to recommended layout" can't cleanly
-  undo.
+  than destroying it, and a rotated box is only ever translated (never
+  resized) when it has to give way to a neighbor — so nothing you do in
+  the canvas can put the geometry in a state "Reset to recommended
+  layout" can't cleanly undo.
 
 ## Setup
 
@@ -169,7 +201,7 @@ pytest
 | `src/claude_client.py` | Anthropic client + plain-language explanation of issues. |
 | `src/layout_plan.py` | Claude picks room categories + adjacency order (structured output). |
 | `src/layout.py` | Deterministic rectangle packing, footprint compaction, building footprint outline, and circulation graph — no LLM math, unit-tested. |
-| `src/interactive_canvas.py` | Renders the interactive zoning diagram (title, legend, live door arrows, a 0.25m snap grid, draggable/resizable/rotatable/deletable rooms and hallways, live footprint outline, setback-constrained collision resolution with shrink-toward-minimum) as self-contained HTML/CSS/JS, unit-tested. |
+| `src/interactive_canvas.py` | Renders the interactive zoning diagram (title, legend, live door arrows, a 0.25m snap grid, selection-gated draggable/resizable/rotatable/deletable rooms and hallways with multi-select group rotate/delete, a live-synced editable room schedule, gap-closing snap, true rotated-shape collision, live footprint outline, setback-constrained collision resolution with shrink-toward-minimum) as self-contained HTML/CSS/JS, unit-tested. |
 | `src/palette.py` | The 3 validated diagram colors (see dataviz notes in the module docstring). |
 | `tests/` | Unit tests for geometry/defaults/validation/layout/interactive canvas. |
 
