@@ -1137,6 +1137,15 @@ def render_canvas_html(
     var first = biteVictim(a, b);
     var second = first === a ? b : a;
     if (canAbsorbBite(first, second)) return first;
+    // Never fall back onto circulation. biteVictim already prefers the room
+    // over the corridor, but falling through to the corridor when the room
+    // couldn't absorb handed the hallway over anyway -- a rotated room ate
+    // one down to 0.21m of clear width against a 1.2m code minimum, and the
+    // guards waved it through because they only ask whether SOME minimum
+    // rectangle survives somewhere, which a 17m corridor always has either
+    // side of the bite. If the room can't give way, the pair gets pushed
+    // apart instead.
+    if (second.classList.contains('corridor')) return null;
     if (canAbsorbBite(second, first)) return second;
     return null;
   }}
@@ -1437,27 +1446,6 @@ def render_canvas_html(
     return ring.length >= 3 ? ring : null;
   }}
 
-  // Same subtraction, but never refusing. Where subtractPolys declines a
-  // cut that would split a shape or hole it, this takes the largest piece
-  // that survives. Used only as the last step of drawing: whatever the
-  // collision rules decided, a room must never be DRAWN sitting on top of
-  // another one, and a room shown a fragment smaller than it really is at
-  // least tells the truth about the space it can still use.
-  function subtractLargestPiece(subject, clipper) {{
-    var out;
-    try {{ out = polygonClipping.difference(polyToGeom(subject), polyToGeom(clipper)); }}
-    catch (err) {{ return null; }}
-    if (!out || !out.length) return null;
-    var best = null, bestArea = 0;
-    for (var i = 0; i < out.length; i++) {{
-      var ring = ringToPoly(out[i][0]);
-      if (ring.length < 3) continue;
-      var area = polyArea(ring);
-      if (area > bestArea) {{ bestArea = area; best = ring; }}
-    }}
-    return best;
-  }}
-
   function unionPolys(polys) {{
     if (!polys.length) return [];
     var geoms = polys.map(polyToGeom);
@@ -1637,7 +1625,18 @@ def render_canvas_html(
     var min = minOf(victim);
     if (left < min.w * min.h - 1e-6) return false;
 
-    var bite = bboxOf(pageToLocalPoly(polyOfBox(biter), fr));
+    // Measure the strips against the part of the biter that actually lands
+    // ON this room, not the biter's whole bounding box. A 17m corridor
+    // rotated into a room's frame has a bounding box covering the entire
+    // room, so every strip measured zero and the room was judged unable to
+    // give up even a corner -- which refused the rotation outright.
+    var clipperLocal = pageToLocalPoly(polyOfBox(biter), fr);
+    var overlapRegion = null;
+    try {{
+      var hit = polygonClipping.intersection(polyToGeom(base), polyToGeom(clipperLocal));
+      if (hit && hit.length && hit[0].length) overlapRegion = ringToPoly(hit[0][0]);
+    }} catch (err) {{ overlapRegion = null; }}
+    var bite = bboxOf(overlapRegion || clipperLocal);
     var strips = largestFreeStrip(rect, bite);
     for (var i = 0; i < strips.length; i++) {{
       if (strips[i].w >= min.w - 1e-6 && strips[i].h >= min.h - 1e-6) return true;
@@ -1688,19 +1687,17 @@ def render_canvas_html(
     for (var i = 0; i < live.length; i++) {{
       var o = live[i];
       if (o === el) continue;
-      if (rotationOf(o)) {{
-        rotated.push(o);
-        biters.push(o);
-        continue;
-      }}
-      // A square neighbour bites only where it genuinely overlaps and this
-      // box is the one chosen to give way -- rooms merely sitting side by
-      // side must never start eating each other.
+      // A rotated neighbour is what the gap fill reaches toward, wherever
+      // it is. Whether it may BITE goes through exactly the same test as a
+      // square one: it used to bypass the victim rule and the absorb guards
+      // completely, which is how a rotated room came to eat a corridor down
+      // to 0.21m and to slice rooms in two.
+      if (rotationOf(o)) rotated.push(o);
       if (boxesTrulyIntersect(el, o) && chooseBiteVictim(el, o) === el) {{
         biters.push(o);
       }}
     }}
-    if (!biters.length) return poly;
+    if (!biters.length && !rotated.length) return poly;
 
     // Carve before filling. canAbsorbBite vetted each cut against the plain
     // RECTANGLE, so that is the shape the cut is guaranteed to work on;
@@ -1709,7 +1706,7 @@ def render_canvas_html(
     // very neighbour collision had stood down for.
     for (var b = 0; b < biters.length; b++) {{
       var clip = pageToLocalPoly(polyOfBox(biters[b]), fr);
-      var firstCut = subtractPolys(poly, [clip]) || subtractLargestPiece(poly, clip);
+      var firstCut = subtractPolys(poly, [clip]);
       if (firstCut) poly = firstCut;
     }}
 
@@ -1738,7 +1735,7 @@ def render_canvas_html(
     // four rooms leaning on it then drew none of the cuts at all.
     for (var c = 0; c < biters.length; c++) {{
       var clip2 = pageToLocalPoly(polyOfBox(biters[c]), fr);
-      var cut = subtractPolys(poly, [clip2]) || subtractLargestPiece(poly, clip2);
+      var cut = subtractPolys(poly, [clip2]);
       if (cut) poly = cut;
     }}
     return poly;
@@ -1810,20 +1807,45 @@ def render_canvas_html(
     // two rooms either side of one slot can't both grow into it.
     for (var i = 0; i < live.length; i++) {{
       var el = live[i];
-      var settled = displayPolys.slice();
-      for (var j = i + 1; j < live.length; j++) settled.push(polyOfBox(live[j]));
+      // Indexed to line up with `live`, entry for entry. It used to be
+      // built by copying the shapes settled so far and then PUSHING the
+      // remaining boxes' rectangles, which left every index after the
+      // current box shifted by one -- so a room checking whether its gap
+      // fill would take occupied space compared itself against the wrong
+      // neighbour, and grew straight into a room it had never looked at.
+      var settled = new Array(live.length);
+      for (var j = 0; j < live.length; j++) {{
+        settled[j] = (j < i) ? displayPolys[j] : polyOfBox(live[j]);
+      }}
       var localPoly = morphedPolygonFor(el, live, settled);
-      // Last line of defence. Whatever the rules upstream decided, two
-      // rooms must never be DRAWN on top of each other: anything still
-      // overlapping a shape already settled this pass gets that overlap
-      // taken out of it here.
+      // Tidy-up pass against the shapes already settled -- but a strictly
+      // conservative one. It may only take away the overlap itself: if the
+      // cut would remove more than that, or split the room, or hole it, the
+      // room is left alone and the overlap is drawn.
+      //
+      // An earlier version kept "the largest piece" whenever a cut split a
+      // shape, which quietly deleted whatever else was left -- a bedroom
+      // could lose 63% of itself to a room that wasn't even touching it,
+      // and the missing part showed on the diagram as a white wedge. A
+      // visible overlap is a far smaller lie than a room that is no longer
+      // there.
       var fr = frameOf(el);
       var pagePoly = localToPagePoly(localPoly, fr);
       for (var s2 = 0; s2 < displayPolys.length; s2++) {{
-        if (intersectionArea(pagePoly, displayPolys[s2]) <= 1) continue;
-        var trimmed = subtractPolys(pagePoly, [displayPolys[s2]])
-                   || subtractLargestPiece(pagePoly, displayPolys[s2]);
-        if (trimmed && trimmed.length >= 3) pagePoly = trimmed;
+        // Only give way where this box is the one chosen to give way. The
+        // sweep used to cut whichever room happened to come later in the
+        // list, so when a room that SHOULD have carved failed to, its
+        // neighbour was cut instead -- a bedroom losing 60% of itself to
+        // pay for someone else's overlap, and the missing part showing on
+        // the diagram as a white wedge.
+        if (chooseBiteVictim(el, live[s2]) !== el) continue;
+        var overlap = intersectionArea(pagePoly, displayPolys[s2]);
+        if (overlap <= 1) continue;
+        var trimmed = subtractPolys(pagePoly, [displayPolys[s2]]);
+        if (!trimmed || trimmed.length < 3) continue;
+        var removed = polyArea(pagePoly) - polyArea(trimmed);
+        if (removed > overlap + 1) continue;   // took more than the overlap
+        pagePoly = trimmed;
       }}
       localPoly = pageToLocalPoly(pagePoly, fr);
       displayPolys.push(pagePoly);
@@ -1836,7 +1858,24 @@ def render_canvas_html(
     window.__debug = {{
       victim: biteVictim, absorb: canAbsorbBite, intersect: boxesTrulyIntersect,
       pinned: function() {{ return pinnedBox; }}, slack: slackOf,
-      morph: function(el) {{ return morphedPolygonFor(el, activeBoxes(), null); }}
+      morph: function(el) {{ return morphedPolygonFor(el, activeBoxes(), null); }},
+      biters: function(el) {{
+        var live = activeBoxes(), out = [];
+        for (var i = 0; i < live.length; i++) {{
+          var o = live[i];
+          if (o === el) continue;
+          var lbl = o.querySelector('.label');
+          var nm = lbl ? lbl.textContent : '?';
+          if (boxesTrulyIntersect(el, o)) {{
+            out.push(nm + ' intersects, victim=' +
+              (chooseBiteVictim(el, o) === el ? 'THIS' :
+               (chooseBiteVictim(el, o) ? 'other' : 'none')));
+          }} else if (rotationOf(o)) {{
+            out.push(nm + ' rotated, no intersect');
+          }}
+        }}
+        return out;
+      }}
     }};
     window.__names = live.map(function(el) {{
       var l = el.querySelector('.label');

@@ -634,3 +634,54 @@ def test_displacement_is_recomputed_from_where_the_drag_started():
     # arrangement is the baseline for the next drag.
     assert "takeGestureSnapshot();" in html
     assert "gestureSnapshot = null;" in html
+
+
+def test_a_room_is_never_cut_by_more_than_the_overlap():
+    """No room may lose area to nothing. A cut that would split a room or
+    hole it is refused outright rather than "keeping the largest piece" --
+    that quietly deleted the rest, and the missing part showed on the
+    diagram as a white wedge."""
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    assert "function subtractLargestPiece" not in html
+    # The tidy-up sweep may only take the overlap itself, and only from the
+    # room that was chosen to give way.
+    assert "if (chooseBiteVictim(el, live[s2]) !== el) continue;" in html
+    assert "if (removed > overlap + 1) continue;" in html
+
+
+def test_the_settled_shapes_array_lines_up_with_the_boxes():
+    """Off by one here and a room checks its gap fill against the wrong
+    neighbour, then grows straight into a room it never looked at."""
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    assert "var settled = new Array(live.length);" in html
+    assert "settled[j] = (j < i) ? displayPolys[j] : polyOfBox(live[j]);" in html
+
+
+def test_circulation_is_never_carved_by_anything():
+    """A hallway narrower than the code minimum stops being a hallway. The
+    guards only ask whether SOME minimum rectangle survives, which a 17m
+    corridor always has either side of a bite -- so a rotated room ate one
+    down to 0.21m of clear width and nothing objected."""
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    # Preferred victim is the room, and there is no falling back onto the
+    # corridor when the room cannot give way -- the pair is pushed instead.
+    assert "if (aCorridor !== bCorridor) return aCorridor ? b : a;" in html
+    assert "if (second.classList.contains('corridor')) return null;" in html
+
+
+def test_the_minimum_rectangle_test_measures_the_actual_overlap():
+    """Measured against the biter's whole bounding box instead, a long
+    corridor rotated into a room's frame covers the entire room, every
+    strip measures zero, and the room is judged unable to give up even a
+    corner -- which refused rotation outright."""
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    assert "var bite = bboxOf(overlapRegion || clipperLocal);" in html
+    assert "polygonClipping.intersection(polyToGeom(base), polyToGeom(clipperLocal))" in html
