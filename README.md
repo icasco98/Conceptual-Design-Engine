@@ -76,17 +76,35 @@ with yours and never sent to Claude as context.
      exactly, so it's easy to close an accidental sliver of empty space
      between zones instead of pixel-hunting for the exact touching spot.
 
-   **Shapes and the footprint.** A room's model is always a rectangle plus
-   a rotation — that's what the schedule reports and what resize edits —
-   but what it *draws* can be a polygon. Put a room next to a rotated one
-   and it grows a wedge that reaches over and stops flush against the
-   rotated room's slanted wall, so the triangular slot between them
-   becomes circulation instead of dead space. The wedge is clipped against
-   the neighbour's own wall line, so it meets that wall exactly and can
-   never cross it, and it's abandoned if it would swallow a third room.
+   **Rotating a room reshapes its neighbours instead of moving them.** A
+   room's model is always a rectangle plus a rotation — that's what the
+   schedule's width and depth edit — but what it *draws* can be a polygon.
+   Turn a room and it's allowed to bite into the ones beside it: each
+   neighbour gives up just the overlapping sliver and draws itself as an
+   L-shape against the slanted wall, while its position and size stay
+   exactly as they were. Rooms also reach into the triangular voids a
+   rotation opens, so those become floor rather than slots you can't walk
+   through.
+
+   A bite only goes ahead if the room keeps its minimum area *and* still
+   holds its minimum rectangle — area alone would let an L-shape keep its
+   number as a dogleg nothing fits in — and never if the cut would split a
+   room in two, which is what stops a hallway ever being severed. Where a
+   bite isn't allowed, the rotation is refused rather than the neighbour
+   displaced; nothing on the canvas moves because you turned something.
+   Un-rotate and every neighbour comes back whole, since the carving is
+   recomputed live and never written into the rooms themselves.
+
+   The schedule carries a live **area** column read from the shape actually
+   drawn, marked when a room has been reshaped — an L-shaped room has no
+   single width, so area is what you check it against.
+
    The building outline is a true union of those shapes, so it follows a
-   rotated room's diagonal walls instead of approximating them with a
-   staircase.
+   rotated room's diagonal walls exactly. All the boolean geometry —
+   carving, gap fill, the outline — is done by the vendored
+   [polygon-clipping](https://github.com/mfogel/polygon-clipping) library
+   (MIT, `src/vendor/`), inlined into the page so the diagram stays
+   self-contained and works offline.
 
    **Room schedule.** In the column left of the canvas, a table lists
    every box's current width, depth, and rotation in meters/degrees. It
@@ -214,6 +232,7 @@ pytest
 
 | Path | Purpose |
 |---|---|
+| `src/vendor/` | Vendored third-party code — polygon-clipping (MIT) for boolean polygon geometry, inlined into the diagram rather than loaded from a CDN. |
 | `src/sample_project.py` | The worked example the app opens on — a complete, validating project plus the layout plan Claude would have returned for it, so the first paint needs no API call. |
 | `app.py` | Streamlit UI — chat (fixed-height, scrollable) + interactive zoning diagram below it (schedule panel left of the drawing), sidebar summary of captured site/setback/envelope/priority state. |
 | `src/models.py` | The shared data shapes (`Project`, `Site`, `Room`, ...). |

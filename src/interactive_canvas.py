@@ -44,33 +44,45 @@ Per-box controls, all pure client-side JS (see the generated `<script>`):
   always snaps to that same 0.25m grid while dragging or resizing
   (`snapToGrid`, `GRID_PX`) — the grid is a visibility choice, snapping
   isn't.
-**Shape morphing.** A box's *logical* shape is always a plain rectangle
-plus a rotation — that is what the schedule reports, what resize edits,
-and what collision tests. Its *display* shape, painted on a `.fill` child,
-may be a polygon: an unrotated box beside a rotated one grows a wedge
-(`morphedPolygonFor`) that reaches across and stops flush against the
-rotated box's slanted wall, turning the triangular slot of dead space
-between them into floor you can circulate through. Growing is safe
-because the neighbor is convex — every point of it lies on the far side
-of the line through any one of its own edges, so clipping the grown
-rectangle against that line (`clipToHalfPlane`) meets the wall exactly and
-can never cross it. A wedge is abandoned if it would swallow a third box
-(`growthHitsAnotherBox`), and boxes are shaped in order against the shapes
-already settled, so two rooms either side of one slot cannot both claim
-it.
+**Rotation bites, it does not shove.** A rotated box is allowed to overlap
+a square neighbor, and the neighbor gives up exactly the overlapping
+sliver — it draws itself carved (an L-shape against the slanted wall)
+while its rectangle, position and schedule entry stay put. The collision
+gate (`boxesReallyOverlap`) reports such a pair as *not* overlapping,
+which is what keeps every push, shrink and cascade off them. A bite is
+only allowed when the victim keeps its minimum area AND still holds its
+minimum rectangle (`canAbsorbBite`) — area alone isn't enough, since an
+L-shape can keep its area as a dogleg nothing fits in — and when the cut
+leaves one piece with no hole in it, which is also what stops circulation
+from ever being severed. Where a bite is refused, the *rotation* is
+refused (`rotationIsAllowed`), never the neighbor's position: pushes are
+one-way, so one awkward angle part-way through a drag used to shove the
+hallway across the plot with nothing to put it back, scattering a whole
+plan for a turn the owner didn't even settle on.
 
-**Footprint.** `computeFootprintPath` unions the display polygons for
-real: every polygon edge is split where another polygon crosses it *or
-merely touches it* (T-junctions — `projectionT`), and a piece survives
-only if the space just outside it is empty. Probing outward rather than
-testing the edge itself is what makes shared walls vanish — two flush
-rooms each own that wall, but each one's probe lands inside the other.
-Surviving pieces are welded at near-identical endpoints
-(`weldEndpoints`) and stitched into closed loops; a walk that fails to
-return to its start is left open rather than closed with `Z`, so the
-outline never invents a wall across open floor. The result follows a
-rotated room's actual diagonal walls instead of approximating them with
-a staircase.
+**Shape morphing.** A box's *logical* shape is always a plain rectangle
+plus a rotation — that is what the schedule's width/depth edit, what
+resize changes, and what collision tests. Its *display* shape, painted on
+a `.fill` child, may be a polygon, for the carve above and for gap fill:
+a square neighbor reaches into the triangular void a rotation opens (up to
+`MORPH_REACH_PX`) and stops against the rotated box's wall. A fill is
+abandoned if it would take space another box is using
+(`growthHitsAnotherBox`, measured as real intersection area), and boxes
+are shaped in order against the shapes already settled, so two rooms
+either side of one slot cannot both claim it. Everything is recomputed
+from the rectangles each frame and never written back, so un-rotating
+restores every neighbor whole.
+
+**Boolean geometry.** Carving, gap fill and the footprint outline all go
+through the vendored polygon-clipping library (`src/vendor/`, MIT),
+inlined into the page so the document stays self-contained with no CDN
+dependency. Two hand-rolled generations of this preceded it — a
+rectilinear rasterizer, then an edge-splitting union with outward probing
+and endpoint welding — and both are where this canvas's outline bugs came
+from. An earlier carve clipped against the infinite *line* through the
+rotated box's nearest wall rather than its actual footprint, which cut
+clean across a neighbor however small the real overlap was, and turned
+bathrooms into triangles.
 
 - **The room schedule** in the column left of the canvas lists every
   box's current width and depth in meters, editable in place — typing a
@@ -162,6 +174,8 @@ stored in each box's own data attributes.
 from __future__ import annotations
 
 import html as html_module
+from functools import lru_cache
+from pathlib import Path
 from typing import Dict, List, Tuple
 
 from src.geometry import BuildableEnvelope
@@ -181,8 +195,8 @@ CANVAS_BACKGROUND = "#fbfbf9"
 # room name plus the width/depth inputs, the rotation readout and the
 # delete button. It shrinks toward the minimum on a narrow viewport rather
 # than pushing the diagram out of the component's fixed height.
-SCHEDULE_WIDTH_PX = 340
-SCHEDULE_MIN_WIDTH_PX = 250
+SCHEDULE_WIDTH_PX = 372
+SCHEDULE_MIN_WIDTH_PX = 280
 # Gap between the schedule panel and the diagram (matches #canvas-layout).
 SCHEDULE_GAP_PX = 18
 
@@ -191,6 +205,16 @@ SCHEDULE_GAP_PX = 18
 # Beyond this the gap is real dead space, not a sliver worth absorbing.
 MORPH_REACH_M = 2.0
 MORPH_REACH_PX = MORPH_REACH_M * PX_PER_METER
+
+# The most of itself a room may give up to a rotated neighbor biting into
+# it before the bite stops counting as "minor" and collision pushes the
+# pair apart instead. This is a backstop, not the real guard -- the real
+# guards are that the room keeps its minimum area AND still holds its
+# minimum rectangle. A tighter fraction reads well for a square room but
+# punishes a long thin one: a shallow bite across a 17m hallway is over a
+# third of its area while barely touching it, and refusing that puts the
+# hallway back to being shoved across the plot.
+BITE_MAX_FRACTION = 0.45
 # Vertical space the component needs on top of the canvas itself: title +
 # legend row above it, and the reset button + rationale below. app.py uses
 # this to size the Streamlit component — the schedule no longer adds any
@@ -225,6 +249,17 @@ _HANDLES_HTML = (
     '<span class="rotate-handle" title="Rotate (5° steps)">&#8635;</span>'
     '<span class="delete-handle" title="Delete">&times;</span>'
 )
+
+
+@lru_cache(maxsize=1)
+def _polygon_clipping_js() -> str:
+    """The vendored polygon-clipping library (src/vendor/, MIT), inlined
+    into the page rather than pulled from a CDN so the diagram stays a
+    self-contained document that works offline. It provides the boolean
+    polygon operations the canvas needs: subtracting a rotated room from
+    the neighbor it bites into, and unioning every room into the building
+    footprint outline."""
+    return (Path(__file__).parent / "vendor" / "polygon-clipping.umd.min.js").read_text()
 
 
 def canvas_size_px(site: Site) -> Tuple[int, int]:
@@ -743,8 +778,12 @@ def render_canvas_html(
   }}
   #schedule-table tbody tr:hover {{ background: rgba(0,0,0,0.02); }}
   #schedule-table tr.schedule-row-selected {{ background: rgba(42,120,214,0.10); }}
+  /* Carved rooms report a live area that no longer matches width x depth,
+     so mark it rather than let it read as an arithmetic error. */
+  #schedule-table td.schedule-area {{ font-variant-numeric: tabular-nums; }}
+  #schedule-table td.area-morphed {{ color: #1b6b4a; font-weight: 600; }}
   #schedule-table input[type="number"] {{
-    width: 54px;
+    width: 48px;
     font-size: 12.5px;
     padding: 2px 4px;
     border: 1px solid #ccc;
@@ -778,7 +817,7 @@ def render_canvas_html(
       <div id="schedule-scroll">
         <table id="schedule-table">
           <thead>
-            <tr><th>Space</th><th>Width (m)</th><th>Depth (m)</th><th>Rotation</th><th></th></tr>
+            <tr><th>Space</th><th>Width (m)</th><th>Depth (m)</th><th>Area (m&sup2;)</th><th>Rot.</th><th></th></tr>
           </thead>
           <tbody id="schedule-body"></tbody>
         </table>
@@ -796,13 +835,16 @@ def render_canvas_html(
     </div>
   </div>
 
+<script>{_polygon_clipping_js()}</script>
 <script>
 (function() {{
+  var polygonClipping = window.polygonClipping;
   var GRID_PX = {GRID_PX};
   var GAP_SNAP_PX = {GAP_SNAP_PX};
   var DOOR_INSET_PX = {DOOR_INSET_PX};
   var PX_PER_METER = {PX_PER_METER};
   var MORPH_REACH_PX = {MORPH_REACH_PX};
+  var BITE_MAX_FRACTION = {BITE_MAX_FRACTION};
   var container = document.getElementById('canvas-container');
   var footprintPath = document.getElementById('footprint-shape');
   var doorArrowsGroup = document.getElementById('door-arrows-group');
@@ -919,10 +961,29 @@ def render_canvas_html(
   // either is rotated, the AABBs can overlap while the true rotated
   // shapes don't (two diamonds near each other, say) — SAT decides which
   // is actually true.
+  function boxesTrulyIntersect(a, b) {{
+    if (!rotationOf(a) && !rotationOf(b)) {{
+      return rectsOverlap(effectiveRectOf(a), effectiveRectOf(b));
+    }}
+    return !obbsSeparated(obbOf(a), obbOf(b));
+  }}
+
+  function rectsOverlap(a, b) {{
+    return a.left < b.left + b.width && b.left < a.left + a.width &&
+           a.top < b.top + b.height && b.top < a.top + a.height;
+  }}
+
   function boxesReallyOverlap(a, b, ov) {{
     if (!ov) return false;
-    if (!rotationOf(a) && !rotationOf(b)) return true;
-    return !obbsSeparated(obbOf(a), obbOf(b));
+    if (!boxesTrulyIntersect(a, b)) return false;
+    // A rotated room is allowed to bite into a square neighbor rather than
+    // shove it away, PROVIDED the neighbor can give up the overlapping
+    // sliver and still be a usable room (canAbsorbBite). Reporting the pair
+    // as not-overlapping is what keeps every push, shrink and cascade off
+    // them -- the neighbor simply draws itself carved instead. Rotation
+    // stays a local edit this way, rather than scattering the whole plan.
+    if (canAbsorbBite(a, b) || canAbsorbBite(b, a)) return false;
+    return true;
   }}
 
   function minOf(el) {{
@@ -1164,21 +1225,83 @@ def render_canvas_html(
     }}
   }}
 
+  // ---- Boolean geometry -------------------------------------------------
+  //
+  // All of it goes through the vendored polygon-clipping library. Rings are
+  // plain [x, y] arrays; the library takes/returns GeoJSON-ish nesting:
+  // a Polygon is [outerRing, ...holes] and a MultiPolygon is [Polygon, ...].
+  // Its rings are explicitly closed (last point repeats the first), which
+  // the ringToPoly helper strips back off.
+  function polyToGeom(poly) {{ return [poly.map(function(p) {{ return [p[0], p[1]]; }})]; }}
+
+  function ringToPoly(ring) {{
+    var out = ring.map(function(p) {{ return [p[0], p[1]]; }});
+    if (out.length > 1) {{
+      var a = out[0], b = out[out.length - 1];
+      if (Math.abs(a[0] - b[0]) < 1e-9 && Math.abs(a[1] - b[1]) < 1e-9) out.pop();
+    }}
+    return out;
+  }}
+
+  function polyArea(poly) {{
+    var a = 0;
+    for (var i = 0, j = poly.length - 1; i < poly.length; j = i++) {{
+      a += (poly[j][0] * poly[i][1]) - (poly[i][0] * poly[j][1]);
+    }}
+    return Math.abs(a) / 2;
+  }}
+
+  // Subtract `clippers` from `subject`. Returns null when the result is
+  // anything a single CSS clip-path polygon can't draw -- more than one
+  // piece, or a piece with a hole in it. Callers treat null as "this cut
+  // isn't allowed", which is also what keeps a room from being sliced in
+  // two or turned into a doughnut.
+  function subtractPolys(subject, clippers) {{
+    if (!clippers.length) return subject;
+    var args = [polyToGeom(subject)].concat(clippers.map(polyToGeom));
+    var out;
+    try {{ out = polygonClipping.difference.apply(polygonClipping, args); }}
+    catch (err) {{ return null; }}
+    if (!out || out.length !== 1) return null;
+    if (out[0].length !== 1) return null;
+    var ring = ringToPoly(out[0][0]);
+    return ring.length >= 3 ? ring : null;
+  }}
+
+  function unionPolys(polys) {{
+    if (!polys.length) return [];
+    var geoms = polys.map(polyToGeom);
+    try {{
+      return polygonClipping.union.apply(polygonClipping, geoms);
+    }} catch (err) {{
+      return geoms;
+    }}
+  }}
+
   // ---- Display shapes ---------------------------------------------------
   //
-  // A box's LOGICAL shape is always a plain rectangle (plus a rotation):
-  // that's what the schedule reports, what resize edits, and what the
-  // collision code tests. Its DISPLAY shape, painted on the .fill child,
-  // may be a polygon. An unrotated box standing next to a rotated one grows
-  // a wedge that reaches across and stops flush against the rotated box's
-  // slanted wall, so the triangular slot of dead space between them becomes
-  // floor you can actually circulate through instead of a gap.
+  // A box's LOGICAL shape is always a rectangle plus a rotation: that's what
+  // the schedule's width/depth edit, what resize changes, and what the
+  // packer produced. Its DISPLAY shape, painted on the .fill child, may be
+  // a polygon, for two reasons -- both of them things a rotated room does to
+  // the square rooms around it:
   //
-  // Growing is safe because the neighbor is convex: every point of it lies
-  // on the far side of the line through any one of its own edges, so
-  // clipping the grown rectangle against that edge's line can meet the wall
-  // exactly and can never cross it. The growth is abandoned if it would
-  // swallow a third box.
+  //   CARVE. A rotated room is allowed to bite into a neighbor rather than
+  //   shoving it away (see canAbsorbBite). The neighbor gives up exactly the
+  //   overlapping sliver and keeps the rest, so it reads as an L-shaped room
+  //   against a slanted wall. Subtracting the rotated room's real footprint
+  //   is the whole point: an earlier version clipped against the infinite
+  //   LINE through the rotated room's nearest wall, which cut clean across
+  //   the neighbor however small the actual overlap was, and turned
+  //   bathrooms into triangles.
+  //
+  //   GAP FILL. Rotating also opens triangular voids. A square neighbor
+  //   reaches into that void (up to MORPH_REACH_PX) and stops against the
+  //   rotated room's wall, so the space becomes floor instead of a slot you
+  //   can't walk through.
+  //
+  // Both are recomputed from the rectangles on every frame and never written
+  // back into them, so un-rotating a room restores its neighbors whole.
   var displayPolys = [];
 
   function polyOfBox(el) {{ return cornersOfObb(obbOf(el)); }}
@@ -1197,48 +1320,87 @@ def render_canvas_html(
     return inside;
   }}
 
-  function distToSegment(px, py, a, b) {{
-    var dx = b[0] - a[0], dy = b[1] - a[1];
-    var len2 = dx * dx + dy * dy;
-    var t = len2 ? ((px - a[0]) * dx + (py - a[1]) * dy) / len2 : 0;
-    t = Math.max(0, Math.min(1, t));
-    var qx = a[0] + dx * t, qy = a[1] + dy * t;
-    return Math.sqrt((px - qx) * (px - qx) + (py - qy) * (py - qy));
-  }}
-
-  function nearestEdgeOf(poly, px, py) {{
-    var best = null;
+  function bboxOf(poly) {{
+    var b = {{minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity}};
     for (var i = 0; i < poly.length; i++) {{
-      var a = poly[i], b = poly[(i + 1) % poly.length];
-      var d = distToSegment(px, py, a, b);
-      if (!best || d < best.dist) best = {{a: a, b: b, dist: d}};
+      b.minX = Math.min(b.minX, poly[i][0]); b.maxX = Math.max(b.maxX, poly[i][0]);
+      b.minY = Math.min(b.minY, poly[i][1]); b.maxY = Math.max(b.maxY, poly[i][1]);
     }}
-    return best;
+    return b;
   }}
 
-  // Sutherland-Hodgman against a single line: keeps the part of `poly` on
-  // the same side of line a-b as the reference point.
-  function clipToHalfPlane(poly, a, b, keepX, keepY) {{
-    var nx = -(b[1] - a[1]), ny = (b[0] - a[0]);
-    var sign = (nx * (keepX - a[0]) + ny * (keepY - a[1])) >= 0 ? 1 : -1;
-    function side(p) {{ return sign * (nx * (p[0] - a[0]) + ny * (p[1] - a[1])); }}
+  // The largest axis-aligned rectangle still guaranteed to fit in `rect`
+  // once `bite` has been taken out of it. Measured as the best of the four
+  // full-height/full-width strips left either side of the bite, which is a
+  // LOWER bound -- it can undercount an L-shape's true best rectangle, never
+  // overcount it. Erring that way means a carve is occasionally refused that
+  // would have been fine, and never allowed when it wouldn't.
+  function largestFreeStrip(rect, bite) {{
+    var r = {{x0: rect.left, y0: rect.top, x1: rect.left + rect.width, y1: rect.top + rect.height}};
+    var strips = [
+      {{w: Math.max(0, bite.minX - r.x0), h: rect.height}},
+      {{w: Math.max(0, r.x1 - bite.maxX), h: rect.height}},
+      {{w: rect.width, h: Math.max(0, bite.minY - r.y0)}},
+      {{w: rect.width, h: Math.max(0, r.y1 - bite.maxY)}}
+    ];
+    return strips;
+  }}
+
+  // Can `victim` give up the part of it `biter` overlaps, instead of being
+  // shoved out of the way? Three things all have to hold, and this same
+  // computation is what actually draws the carved shape later.
+  //
+  //   1. The bite is minor: no more than BITE_MAX_FRACTION of the room.
+  //      This is also what stops a rotated room being dragged clear inside
+  //      a big one, which would need a hole in it to draw.
+  //   2. What's left is at least the room's minimum AREA.
+  //   3. What's left still holds the room's minimum RECTANGLE. Area alone
+  //      isn't enough -- an L-shape can keep its area as a dogleg too narrow
+  //      for anything to fit in.
+  //
+  // Corridors are carved on the same terms as rooms. A hallway can lose a
+  // corner and still be a hallway; what it can't survive is being cut in
+  // two, and subtractPolys already refuses any cut that splits a shape --
+  // so circulation can never be severed by a bite. Its minimum on both axes
+  // is the code hallway width, so the minimum-rectangle test below keeps
+  // the remaining strip at full width.
+  function canAbsorbBite(victim, biter) {{
+    if (rotationOf(victim)) return false;
+    if (!rotationOf(biter)) return false;
+
+    var rect = rectOf(victim);
+    var base = rectPolyOf(rect);
+    var cut = subtractPolys(base, [polyOfBox(biter)]);
+    if (!cut) return false;
+
+    var full = rect.width * rect.height;
+    var left = polyArea(cut);
+    if (full <= 0) return false;
+    if ((full - left) / full > BITE_MAX_FRACTION) return false;
+
+    var min = minOf(victim);
+    if (left < min.w * min.h - 1e-6) return false;
+
+    var bite = bboxOf(polyOfBox(biter));
+    var strips = largestFreeStrip(rect, bite);
+    for (var i = 0; i < strips.length; i++) {{
+      if (strips[i].w >= min.w - 1e-6 && strips[i].h >= min.h - 1e-6) return true;
+    }}
+    return false;
+  }}
+
+  // Every rotated box currently biting into `el`, i.e. overlapping it by an
+  // amount `el` is able to give up.
+  function bitersOf(el, live) {{
     var out = [];
-    for (var i = 0; i < poly.length; i++) {{
-      var cur = poly[i], prv = poly[(i + poly.length - 1) % poly.length];
-      var dc = side(cur), dp = side(prv);
-      if (dc >= 0) {{
-        if (dp < 0) out.push(lerpAt(prv, cur, dp, dc));
-        out.push(cur);
-      }} else if (dp >= 0) {{
-        out.push(lerpAt(prv, cur, dp, dc));
-      }}
+    for (var i = 0; i < live.length; i++) {{
+      var o = live[i];
+      if (o === el || !rotationOf(o)) continue;
+      if (!rectsOverlap(effectiveRectOf(el), effectiveRectOf(o))) continue;
+      if (!boxesTrulyIntersect(el, o)) continue;
+      if (canAbsorbBite(el, o)) out.push(o);
     }}
     return out;
-  }}
-
-  function lerpAt(p, q, dp, dq) {{
-    var t = dp / (dp - dq);
-    return [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t];
   }}
 
   // Grow `r` on the one side facing (ocx, ocy) by `reach` px.
@@ -1257,63 +1419,110 @@ def render_canvas_html(
   function morphedPolygonFor(el, live, settled) {{
     var r = rectOf(el);
     if (rotationOf(el)) return polyOfBox(el);
-    var poly = rectPolyOf(r);
-    var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
 
+    var poly = rectPolyOf(r);
+    var rotated = [];
     for (var i = 0; i < live.length; i++) {{
       var o = live[i];
-      if (o === el || !rotationOf(o)) continue;
-      var oPoly = polyOfBox(o);
-      var oObb = obbOf(o);
-      var edge = nearestEdgeOf(oPoly, cx, cy);
-      if (!edge || edge.dist > MORPH_REACH_PX + Math.max(r.width, r.height) / 2) continue;
-
-      var grown = rectPolyOf(grownRectToward(r, oObb.cx, oObb.cy, MORPH_REACH_PX));
-      var cut = clipToHalfPlane(grown, edge.a, edge.b, cx, cy);
-      if (cut.length < 3) continue;
-      // Stay inside the setback line, and never grow over another box.
-      cut = clipToHalfPlane(cut, [ENV.left, ENV.top], [ENV.left, ENV.bottom], cx, cy);
-      cut = clipToHalfPlane(cut, [ENV.right, ENV.top], [ENV.right, ENV.bottom], cx, cy);
-      cut = clipToHalfPlane(cut, [ENV.left, ENV.top], [ENV.right, ENV.top], cx, cy);
-      cut = clipToHalfPlane(cut, [ENV.left, ENV.bottom], [ENV.right, ENV.bottom], cx, cy);
-      if (cut.length < 3) continue;
-      if (growthHitsAnotherBox(cut, poly, el, o, live, settled)) continue;
-      poly = cut;
+      if (o !== el && rotationOf(o)) rotated.push(o);
     }}
-    return poly;
+    if (!rotated.length) return poly;
+
+    // Gap fill first, so the reach is measured from the room's real
+    // rectangle; the carve below then trims whatever the rotated rooms
+    // actually occupy, out of the grown shape and the original alike.
+    for (var g = 0; g < rotated.length; g++) {{
+      var o2 = rotated[g], obb = obbOf(o2);
+      var oPoly = polyOfBox(o2);
+      if (distanceBetweenPolys(poly, oPoly) > MORPH_REACH_PX) continue;
+      var grown = rectPolyOf(grownRectToward(r, obb.cx, obb.cy, MORPH_REACH_PX));
+      var merged = unionPolys([poly, grown]);
+      if (!merged || merged.length !== 1 || merged[0].length !== 1) continue;
+      var candidate = ringToPoly(merged[0][0]);
+      candidate = clipPolyToEnvelope(candidate);
+      if (!candidate || candidate.length < 3) continue;
+      if (growthHitsAnotherBox(candidate, poly, el, o2, live, settled)) continue;
+      poly = candidate;
+    }}
+
+    // Whatever the gap fill grew, the rotated rooms' own footprints come
+    // back out of it -- the fill reaches toward them, so it always needs
+    // trimming. Falling back to the GROWN shape when a cut isn't drawable
+    // would leave a room visibly overlapping the rotated one, so the
+    // fallbacks step down to the plain rectangle instead: it can only fail
+    // to carve in exactly the cases canAbsorbBite also refuses, and there
+    // collision has kept the pair apart, so the rectangle is safe to draw.
+    var clippers = rotated.map(polyOfBox);
+    var carved = subtractPolys(poly, clippers);
+    if (carved) return carved;
+    var base = rectPolyOf(r);
+    carved = subtractPolys(base, clippers);
+    return carved || base;
   }}
 
-  // The wedge may only take space nothing else is using: reject it if any
-  // other box has a corner (or its center) inside the grown area but
-  // outside where this box already was.
+  function clipPolyToEnvelope(poly) {{
+    var box = [[ENV.left, ENV.top], [ENV.right, ENV.top], [ENV.right, ENV.bottom], [ENV.left, ENV.bottom]];
+    var out;
+    try {{ out = polygonClipping.intersection(polyToGeom(poly), polyToGeom(box)); }}
+    catch (err) {{ return poly; }}
+    if (!out || out.length !== 1 || out[0].length !== 1) return null;
+    return ringToPoly(out[0][0]);
+  }}
+
+  function distanceBetweenPolys(a, b) {{
+    var best = Infinity;
+    for (var i = 0; i < a.length; i++) {{
+      for (var j = 0; j < b.length; j++) {{
+        var d = distToSegment(a[i][0], a[i][1], b[j], b[(j + 1) % b.length]);
+        if (d < best) best = d;
+      }}
+    }}
+    return best;
+  }}
+
+  function distToSegment(px, py, a, b) {{
+    var dx = b[0] - a[0], dy = b[1] - a[1];
+    var len2 = dx * dx + dy * dy;
+    var t = len2 ? ((px - a[0]) * dx + (py - a[1]) * dy) / len2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    var qx = a[0] + dx * t, qy = a[1] + dy * t;
+    return Math.sqrt((px - qx) * (px - qx) + (py - qy) * (py - qy));
+  }}
+
+  // A gap fill may only take space nothing else is using. Measured as real
+  // intersection area against each other box's settled shape -- testing
+  // whether the other box's corners land inside the fill (the old way)
+  // misses the common case where two shapes cross without either one's
+  // vertices falling in the other.
   function growthHitsAnotherBox(grownPoly, basePoly, el, neighbor, live, settled) {{
     for (var i = 0; i < live.length; i++) {{
       var other = live[i];
       if (other === el || other === neighbor) continue;
-      // `settled` holds each other box's shape as it will actually be drawn
-      // -- already-grown for the ones shaped before this one -- so a wedge
-      // can never be granted space another wedge has taken.
-      var pts = (settled && settled[i]) ? settled[i].slice() : polyOfBox(other);
-      var obb = obbOf(other);
-      pts.push([obb.cx, obb.cy]);
-      for (var k = 0; k < pts.length; k++) {{
-        if (pointInPoly(pts[k][0], pts[k][1], grownPoly) && !pointInPoly(pts[k][0], pts[k][1], basePoly)) {{
-          return true;
-        }}
-      }}
+      var shape = (settled && settled[i]) ? settled[i] : polyOfBox(other);
+      if (intersectionArea(grownPoly, shape) > intersectionArea(basePoly, shape) + 1) return true;
     }}
     return false;
   }}
 
-  // Paints each box's display polygon onto its .fill child and caches the
-  // polygons for the footprint. Rotated boxes need nothing: their .fill
-  // covers the box and the box's own CSS transform turns it.
+  function intersectionArea(a, b) {{
+    var out;
+    try {{ out = polygonClipping.intersection(polyToGeom(a), polyToGeom(b)); }}
+    catch (err) {{ return 0; }}
+    var total = 0;
+    (out || []).forEach(function(poly) {{
+      poly.forEach(function(ring, idx) {{
+        var area = polyArea(ringToPoly(ring));
+        total += idx === 0 ? area : -area;
+      }});
+    }});
+    return total;
+  }}
+
   function applyDisplayShapes() {{
     var live = activeBoxes();
     displayPolys = [];
-    // Boxes are shaped in order, and each one is checked against the shapes
-    // already settled this pass -- otherwise two rooms either side of the
-    // same slot would both grow into it and end up overlapping each other.
+    // Shaped in order, each against the shapes already settled this pass, so
+    // two rooms either side of one slot can't both grow into it.
     for (var i = 0; i < live.length; i++) {{
       var el = live[i];
       var settled = displayPolys.slice();
@@ -1322,8 +1531,10 @@ def render_canvas_html(
       displayPolys.push(poly);
       paintFill(el, poly);
     }}
-    // Handy for tests/debugging: the exact shapes the outline was built from.
     window.__polys = displayPolys;
+    // Exposed for the test suite (and for debugging a layout by hand):
+    // which rooms a rotated box is currently allowed to bite into.
+    window.__canAbsorbBite = canAbsorbBite;
     window.__names = live.map(function(el) {{
       var l = el.querySelector('.label');
       return l ? l.textContent : '?';
@@ -1334,8 +1545,7 @@ def render_canvas_html(
     var fill = el.querySelector('.fill');
     if (!fill) return;
     var r = rectOf(el);
-    var plain = rotationOf(el) || samePolygon(poly, rectPolyOf(r));
-    if (plain) {{
+    if (rotationOf(el) || samePolygon(poly, rectPolyOf(r))) {{
       fill.style.left = '0px';
       fill.style.top = '0px';
       fill.style.width = '100%';
@@ -1344,17 +1554,13 @@ def render_canvas_html(
       el.classList.remove('morphed');
       return;
     }}
-    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (var i = 0; i < poly.length; i++) {{
-      minX = Math.min(minX, poly[i][0]); maxX = Math.max(maxX, poly[i][0]);
-      minY = Math.min(minY, poly[i][1]); maxY = Math.max(maxY, poly[i][1]);
-    }}
-    fill.style.left = (minX - r.left) + 'px';
-    fill.style.top = (minY - r.top) + 'px';
-    fill.style.width = (maxX - minX) + 'px';
-    fill.style.height = (maxY - minY) + 'px';
+    var b = bboxOf(poly);
+    fill.style.left = (b.minX - r.left) + 'px';
+    fill.style.top = (b.minY - r.top) + 'px';
+    fill.style.width = (b.maxX - b.minX) + 'px';
+    fill.style.height = (b.maxY - b.minY) + 'px';
     fill.style.clipPath = 'polygon(' + poly.map(function(pt) {{
-      return (pt[0] - minX).toFixed(2) + 'px ' + (pt[1] - minY).toFixed(2) + 'px';
+      return (pt[0] - b.minX).toFixed(2) + 'px ' + (pt[1] - b.minY).toFixed(2) + 'px';
     }}).join(', ') + ')';
     el.classList.add('morphed');
   }}
@@ -1369,174 +1575,25 @@ def render_canvas_html(
 
   // ---- Footprint --------------------------------------------------------
   //
-  // Traces the outline of the union of every current (non-deleted) box's
-  // DISPLAY polygon — rooms, corridors, and any wedge a box grew toward a
-  // rotated neighbor. This is a true polygon union, not a rasterized
-  // rectilinear trace: each polygon edge is split wherever another polygon
-  // crosses it, and a piece survives only if the space just outside it is
-  // empty. So a rotated room contributes its actual diagonal walls and the
-  // outline hugs them, instead of approximating them with a staircase.
-  //
-  // Probing just OUTSIDE an edge rather than testing the edge itself is
-  // what makes shared walls disappear: two rooms flush against each other
-  // each own that wall, but each one's outward probe lands inside the
-  // other, so neither draws it.
-  function snapPt(x, y) {{ return [Math.round(x * 10) / 10, Math.round(y * 10) / 10]; }}
-
-  // Collapses endpoints lying within `tol` of each other onto a single
-  // shared point, in place. Buckets are `tol` wide and each point checks
-  // its own bucket and the eight around it, so a match is never missed for
-  // sitting just the wrong side of a bucket line.
-  function weldEndpoints(segs, tol) {{
-    var buckets = {{}};
-    function repFor(pt) {{
-      var bx = Math.floor(pt[0] / tol), by = Math.floor(pt[1] / tol);
-      for (var dx = -1; dx <= 1; dx++) {{
-        for (var dy = -1; dy <= 1; dy++) {{
-          var cell = buckets[(bx + dx) + ':' + (by + dy)];
-          if (!cell) continue;
-          for (var i = 0; i < cell.length; i++) {{
-            var r = cell[i];
-            if (Math.abs(r[0] - pt[0]) <= tol && Math.abs(r[1] - pt[1]) <= tol) return r;
-          }}
-        }}
-      }}
-      var k = bx + ':' + by;
-      buckets[k] = buckets[k] || [];
-      buckets[k].push(pt);
-      return pt;
-    }}
-    for (var i = 0; i < segs.length; i++) {{
-      segs[i][0] = repFor(segs[i][0]);
-      segs[i][1] = repFor(segs[i][1]);
-    }}
-  }}
-
-  function segCrossT(a, b, c, d) {{
-    var rx = b[0] - a[0], ry = b[1] - a[1];
-    var sx = d[0] - c[0], sy = d[1] - c[1];
-    var den = rx * sy - ry * sx;
-    if (Math.abs(den) < 1e-12) return null;
-    var t = ((c[0] - a[0]) * sy - (c[1] - a[1]) * sx) / den;
-    var u = ((c[0] - a[0]) * ry - (c[1] - a[1]) * rx) / den;
-    if (u < -1e-9 || u > 1 + 1e-9) return null;
-    return t;
-  }}
-
-  // Where point p sits along segment a-b, but only if it actually lies on
-  // it (within TOUCH_PX). Null otherwise.
-  function projectionT(a, b, p) {{
-    var dx = b[0] - a[0], dy = b[1] - a[1];
-    var len2 = dx * dx + dy * dy;
-    if (len2 < 1e-12) return null;
-    var t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2;
-    if (t <= 0 || t >= 1) return null;
-    var qx = a[0] + dx * t, qy = a[1] + dy * t;
-    var d = Math.sqrt((p[0] - qx) * (p[0] - qx) + (p[1] - qy) * (p[1] - qy));
-    return d <= 0.25 ? t : null;
-  }}
-
+  // The union of every box's DISPLAY polygon -- rooms, corridors, carves and
+  // gap fills alike -- so the outline follows a rotated room's real diagonal
+  // walls. This used to be ~180 lines of hand-rolled edge splitting, outward
+  // probing, endpoint welding and loop stitching, which is where this
+  // project's outline bugs kept coming from; polygon-clipping does it in one
+  // call and handles the degenerate cases properly.
   function computeFootprintPath() {{
     var polys = displayPolys.length ? displayPolys : activeBoxes().map(polyOfBox);
     if (!polys.length) return '';
-
-    var PROBE_PX = 0.4;
-    var segs = [];
-    for (var i = 0; i < polys.length; i++) {{
-      var poly = polys[i];
-      for (var e = 0; e < poly.length; e++) {{
-        var a = poly[e], b = poly[(e + 1) % poly.length];
-        var dx = b[0] - a[0], dy = b[1] - a[1];
-        var len = Math.sqrt(dx * dx + dy * dy);
-        if (len < 1e-6) continue;
-
-        var ts = [0, 1];
-        for (var j = 0; j < polys.length; j++) {{
-          if (j === i) continue;
-          var q = polys[j];
-          for (var f = 0; f < q.length; f++) {{
-            var t = segCrossT(a, b, q[f], q[(f + 1) % q.length]);
-            if (t !== null && t > 1e-9 && t < 1 - 1e-9) ts.push(t);
-            // Also split where another polygon's CORNER merely touches this
-            // edge without crossing it. Those T-junctions are what a
-            // rectangle butting against the middle of a longer wall makes,
-            // and leaving them unsplit strands the walk at a vertex the
-            // other polygon never names -- which used to close a loop with
-            // a phantom line straight across open floor.
-            var vt = projectionT(a, b, q[f]);
-            if (vt !== null && vt > 1e-9 && vt < 1 - 1e-9) ts.push(vt);
-          }}
-        }}
-        ts.sort(function(u, v) {{ return u - v; }});
-
-        for (var k = 0; k + 1 < ts.length; k++) {{
-          var t0 = ts[k], t1 = ts[k + 1];
-          if (t1 - t0 < 1e-6) continue;
-          var mt = (t0 + t1) / 2;
-          var mx = a[0] + dx * mt, my = a[1] + dy * mt;
-          var nx = dy / len, ny = -dx / len;
-          if (pointInPoly(mx + nx * PROBE_PX, my + ny * PROBE_PX, poly)) {{ nx = -nx; ny = -ny; }}
-          var px = mx + nx * PROBE_PX, py = my + ny * PROBE_PX;
-          var covered = false;
-          for (var j2 = 0; j2 < polys.length; j2++) {{
-            if (j2 === i) continue;
-            if (pointInPoly(px, py, polys[j2])) {{ covered = true; break; }}
-          }}
-          if (!covered) {{
-            // Quantized on the way in so two polygons that computed the
-            // same junction independently agree on it exactly, and the
-            // stitcher's endpoint keys always match.
-            var p0 = snapPt(a[0] + dx * t0, a[1] + dy * t0);
-            var p1 = snapPt(a[0] + dx * t1, a[1] + dy * t1);
-            if (p0[0] !== p1[0] || p0[1] !== p1[1]) segs.push([p0, p1]);
-          }}
-        }}
-      }}
-    }}
-    if (!segs.length) return '';
-
-    // Where a slanted wall meets a square one, the two polygons compute the
-    // junction independently and can land a fraction of a pixel apart. Weld
-    // those near-identical endpoints onto one shared point FIRST, so the
-    // walk below can match them exactly -- rounding to a grid instead would
-    // just move the problem to wherever a pair straddles a bucket edge.
-    weldEndpoints(segs, 0.75);
-    function key(p) {{ return p[0] + ',' + p[1]; }}
-    var adj = {{}};
-    segs.forEach(function(seg, idx) {{
-      [key(seg[0]), key(seg[1])].forEach(function(k) {{
-        adj[k] = adj[k] || [];
-        adj[k].push(idx);
-      }});
-    }});
-
-    var used = new Array(segs.length).fill(false);
+    var merged = unionPolys(polys);
     var d = '';
-    for (var s0 = 0; s0 < segs.length; s0++) {{
-      if (used[s0]) continue;
-      used[s0] = true;
-      var startPt = segs[s0][0], cur = segs[s0][1];
-      var loop = [startPt, cur];
-      var guard = 0;
-      while (key(cur) !== key(startPt) && guard++ < segs.length + 5) {{
-        var cands = adj[key(cur)] || [];
-        var nxt = -1;
-        for (var c = 0; c < cands.length; c++) {{
-          if (!used[cands[c]]) {{ nxt = cands[c]; break; }}
-        }}
-        if (nxt === -1) break;
-        used[nxt] = true;
-        var seg2 = segs[nxt];
-        cur = (key(seg2[0]) === key(cur)) ? seg2[1] : seg2[0];
-        loop.push(cur);
-      }}
-      if (loop.length > 2) {{
-        var closed = key(cur) === key(startPt);
-        d += 'M ' + loop.map(function(pt) {{ return pt[0].toFixed(1) + ',' + pt[1].toFixed(1); }}).join(' L ');
-        // Only a walk that actually got back to where it started may be
-        // closed. Anything else is an open chain, and drawing Z on it would
-        // invent a wall across whatever the chain failed to get around.
-        d += closed ? ' Z ' : ' ';
+    for (var i = 0; i < merged.length; i++) {{
+      var rings = merged[i];
+      for (var j = 0; j < rings.length; j++) {{
+        var ring = ringToPoly(rings[j]);
+        if (ring.length < 3) continue;
+        d += 'M ' + ring.map(function(pt) {{
+          return pt[0].toFixed(1) + ',' + pt[1].toFixed(1);
+        }}).join(' L ') + ' Z ';
       }}
     }}
     return d;
@@ -1731,6 +1788,7 @@ def render_canvas_html(
           '<td class="schedule-name"></td>' +
           '<td><input type="number" step="0.05" data-axis="w" /></td>' +
           '<td><input type="number" step="0.05" data-axis="h" /></td>' +
+          '<td class="schedule-area"></td>' +
           '<td class="schedule-rotation"></td>' +
           '<td><button type="button" class="schedule-delete" title="Delete">&times;</button></td>';
         var wInput = tr.querySelector('input[data-axis="w"]');
@@ -1751,6 +1809,7 @@ def render_canvas_html(
         row = scheduleRows[id] = {{
           tr: tr, wInput: wInput, hInput: hInput,
           nameCell: tr.querySelector('.schedule-name'),
+          areaCell: tr.querySelector('.schedule-area'),
           rotCell: tr.querySelector('.schedule-rotation')
         }};
       }}
@@ -1761,6 +1820,18 @@ def render_canvas_html(
       row.hInput.min = (m.h / PX_PER_METER).toFixed(2);
       if (document.activeElement !== row.wInput) {{ row.wInput.value = (r.width / PX_PER_METER).toFixed(2); }}
       if (document.activeElement !== row.hInput) {{ row.hInput.value = (r.height / PX_PER_METER).toFixed(2); }}
+      // Area comes from the DISPLAY polygon, so a room carved by a rotated
+      // neighbor reports what it actually has left. Width/depth stay the
+      // underlying rectangle -- they're what the inputs edit, and an
+      // L-shaped room has no single width to report.
+      var idx = live.indexOf(box);
+      var shape = displayPolys[idx];
+      var areaM2 = shape ? polyArea(shape) / (PX_PER_METER * PX_PER_METER)
+                         : (r.width * r.height) / (PX_PER_METER * PX_PER_METER);
+      var carved = box.classList.contains('morphed');
+      row.areaCell.textContent = areaM2.toFixed(1);
+      row.areaCell.title = carved ? 'Shaped around a rotated neighbour' : '';
+      row.areaCell.classList.toggle('area-morphed', carved);
       row.rotCell.textContent = rotationOf(box) + '°';
       row.tr.classList.toggle('schedule-row-selected', selected.indexOf(box) !== -1);
     }});
@@ -1897,11 +1968,41 @@ def render_canvas_html(
   // envelope, push/shrink anything it now overlaps (via its rotation-
   // inflated effective rect, gated by the true-shape SAT check), and
   // refresh the footprint/door arrows/schedule.
+  // Rotation never displaces anything. Every room a turning box runs into
+  // either absorbs the bite (canAbsorbBite -- it gives up the overlapping
+  // sliver and draws itself carved) or the turn is refused and the box
+  // stays at the last angle that worked.
+  //
+  // Pushing on rotation was the old behaviour and it was the wrong trade:
+  // pushes are one-way, so a single awkward angle part-way through a drag
+  // would shove the hallway across the plot and nothing put it back, even
+  // once the angle you settled on was perfectly absorbable. One turn could
+  // scatter an entire plan. Refusing the turn is recoverable -- keep
+  // dragging and it picks up again the moment the angle works.
+  function rotationIsAllowed(targets) {{
+    var live = activeBoxes();
+    for (var i = 0; i < targets.length; i++) {{
+      var el = targets[i];
+      for (var j = 0; j < live.length; j++) {{
+        var other = live[j];
+        if (other === el || targets.indexOf(other) !== -1) continue;
+        if (!rectsOverlap(effectiveRectOf(el), effectiveRectOf(other))) continue;
+        if (!boxesTrulyIntersect(el, other)) continue;
+        if (!canAbsorbBite(other, el) && !canAbsorbBite(el, other)) return false;
+      }}
+    }}
+    return true;
+  }}
+
   function doRotate(e) {{
     var p = point(e);
     var rot = activeRotate;
     var angle = Math.atan2(p.y - rot.cy, p.x - rot.cx) * 180 / Math.PI + 90;
     var delta = Math.round((angle - rot.startAngle) / 5) * 5;
+
+    var previous = rot.targets.map(function(el) {{
+      return {{rotation: el.dataset.rotation || '0', left: el.style.left, top: el.style.top}};
+    }});
     for (var i = 0; i < rot.targets.length; i++) {{
       var el = rot.targets[i];
       var newRotation = rot.startRotations[i] + delta;
@@ -1909,7 +2010,16 @@ def render_canvas_html(
       el.dataset.rotation = String(newRotation);
       clampToEnvelope(el);
     }}
-    resolveOverlaps(rot.el);
+
+    if (!rotationIsAllowed(rot.targets)) {{
+      for (var k = 0; k < rot.targets.length; k++) {{
+        var back = rot.targets[k], prev = previous[k];
+        back.dataset.rotation = prev.rotation;
+        back.style.transform = 'rotate(' + prev.rotation + 'deg)';
+        back.style.left = prev.left;
+        back.style.top = prev.top;
+      }}
+    }}
     refreshDiagram();
     e.preventDefault();
   }}

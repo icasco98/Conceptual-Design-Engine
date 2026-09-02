@@ -1,5 +1,11 @@
 from src.geometry import compute_buildable_envelope
-from src.interactive_canvas import SCHEDULE_MIN_WIDTH_PX, canvas_size_px, render_canvas_html
+from src.interactive_canvas import (
+    BITE_MAX_FRACTION,
+    SCHEDULE_MIN_WIDTH_PX,
+    _polygon_clipping_js,
+    canvas_size_px,
+    render_canvas_html,
+)
 from src.layout import pack_rooms
 from src.layout_plan import CategoryLabels, LayoutPlan
 from src.models import Project, Room, Setbacks, Site, SiteEdge
@@ -408,31 +414,75 @@ def test_canvas_size_matches_site_proportions():
     assert 700 < height_px < 900
 
 
-def test_footprint_is_a_true_polygon_union_not_a_rectilinear_raster():
-    """A rotated room's diagonal walls must reach the outline as diagonals.
-    The old rasterizer traced only axis-aligned cell boundaries, so a
-    rotated room came out as a staircase that visibly missed its corners."""
+def test_footprint_union_uses_the_vendored_boolean_library():
+    """Boolean polygon geometry is the library's job now. Two hand-rolled
+    generations of it -- a rectilinear rasterizer, then an edge-splitting
+    union -- are where this project's outline bugs came from."""
     rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
     html, _ = _render(rooms)
 
+    assert "polygonClipping.union.apply" in html
     assert "function computeFootprintPath" in html
-    assert "function segCrossT" in html          # split at real crossings
-    assert "function projectionT" in html        # ...and at T-junctions
-    assert "function weldEndpoints" in html      # so loops can close
-    assert "function pointInPoly" in html
-    # The rasterizer's coordinate-compression grid is gone for good.
+    # Neither hand-rolled generation survives.
     assert "covered[i][j]" not in html
     assert "isCovered(" not in html
-    # An unclosed walk stays open instead of being closed across open floor.
-    assert "closed ? ' Z ' : ' '" in html
+    assert "function weldEndpoints" not in html
+    assert "function segCrossT" not in html
+    assert "function clipToHalfPlane" not in html
 
 
-def test_boxes_morph_around_a_rotated_neighbor_but_keep_a_rectangular_model():
+def test_library_is_inlined_not_fetched_from_a_cdn():
+    """The diagram promises to be a self-contained document -- a CDN script
+    tag would make it fail offline, and the app is often run locally."""
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    assert "polygonClipping" in html
+    assert "cdn." not in html
+    assert "<script src=" not in html
+    assert len(html) > len(_polygon_clipping_js())
+
+
+def test_a_rotated_room_bites_its_neighbor_instead_of_shoving_it():
+    """The point of the carve: rotation stays a local edit. A rotated room
+    takes the overlap and the neighbor gives it up, rather than the whole
+    plan scattering to make room."""
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    assert "function canAbsorbBite" in html
+    # The collision gate reports an absorbable overlap as no overlap, which
+    # is what keeps every push, shrink and cascade off the pair.
+    assert "if (canAbsorbBite(a, b) || canAbsorbBite(b, a)) return false;" in html
+    # Rotation refuses rather than displaces -- pushes are one-way, so one
+    # awkward angle mid-drag used to permanently scatter the layout.
+    assert "function rotationIsAllowed" in html
+    assert "resolveOverlaps(rot.el)" not in html
+
+
+def test_a_bite_is_refused_unless_the_room_stays_usable():
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    # Minimum AREA is not a sufficient guard on its own: an L-shape can keep
+    # its area as a dogleg nothing fits in, so the remaining shape must also
+    # still hold the room's minimum RECTANGLE.
+    assert "left < min.w * min.h" in html
+    assert "function largestFreeStrip" in html
+    assert f"BITE_MAX_FRACTION = {BITE_MAX_FRACTION}" in html
+    # A cut that splits a room in two or punches a hole in it is refused --
+    # that is also what stops circulation ever being severed.
+    assert "if (!out || out.length !== 1) return null;" in html
+    assert "if (out[0].length !== 1) return null;" in html
+
+
+def test_carving_is_derived_never_written_back_to_the_rectangles():
+    """Un-rotate and the neighbours must come back whole, so the carve has
+    to be recomputed each frame from the rectangles, never stored."""
     rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
     html, _ = _render(rooms)
 
     assert "function morphedPolygonFor" in html
-    assert "function clipToHalfPlane" in html
     assert "function growthHitsAnotherBox" in html
     assert "function applyDisplayShapes" in html
     # Painting moved to the .fill child so the box itself stays a plain
@@ -453,3 +503,17 @@ def test_box_sizes_come_from_the_inline_style_not_rounded_offsets():
 
     assert "el.style.width ? parseFloat(el.style.width) : el.offsetWidth" in html
     assert "el.style.height ? parseFloat(el.style.height) : el.offsetHeight" in html
+
+
+def test_schedule_reports_the_area_a_carved_room_actually_has_left():
+    """Width x depth stops being the whole story once a room is carved --
+    an L-shape has no single width -- so the schedule carries a live area
+    read from the drawn shape."""
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    assert "Area (m&sup2;)" in html
+    assert "schedule-area" in html
+    assert "polyArea(shape)" in html
+    # ...while the editable width/depth still drive the underlying rectangle.
+    assert "function applyScheduleEdit" in html
