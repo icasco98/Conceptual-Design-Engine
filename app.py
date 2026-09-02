@@ -24,9 +24,9 @@ from src.claude_client import explain_issues
 from src.extraction import extract_project
 from src.geometry import BuildableEnvelope, IncompleteSiteError, compute_buildable_envelope
 from src.interactive_canvas import CANVAS_CHROME_HEIGHT_PX, canvas_size_px, render_canvas_html
-from src.layout import pack_rooms
 from src.layout_plan import LayoutPlan, plan_layout
 from src.models import Project
+from src.planner import CIRCULATION_TARGET_HIGH, CIRCULATION_TARGET_LOW, best_layout
 from src.sample_project import sample_layout_plan, sample_project
 from src.validation import Issue, validate_room_program
 
@@ -205,14 +205,19 @@ def render_interactive_canvas(
         st.info("Working out a room grouping — say a bit more and it'll appear here.")
         return
 
-    result = pack_rooms(project, envelope, layout_plan.placement_order)
+    # Not the first arrangement the packer produces -- several are packed,
+    # their corridors thinned to what access actually needs, and the best
+    # scoring one drawn (src/planner.py).
+    chosen = best_layout(project, envelope, layout_plan)
+    result = chosen.result
 
-    # The packer guarantees the geometry is valid -- no overlaps, everything
-    # inside the envelope -- but says nothing about whether the plan can be
-    # walked through, which is a different question and the one an architect
-    # asks first. Surfaced here rather than left silent: a route from the
-    # street to a bedroom through the garage is a real fault, and until now
-    # the tool drew it without comment.
+    st.caption(
+        f"{chosen.notes}. Circulation is scored against the "
+        f"{int(CIRCULATION_TARGET_LOW * 100)}–{int(CIRCULATION_TARGET_HIGH * 100)}% "
+        "of floor area a house normally spends on it — corridors are kept only where a "
+        "room depends on one to be reachable."
+    )
+
     access_problems = access_problems_for(result)
     if access_problems:
         st.warning(

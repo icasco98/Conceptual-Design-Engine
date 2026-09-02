@@ -42,8 +42,25 @@ with yours and never sent to Claude as context.
    Bedroom 2 is through the Garage". The packer's own guarantee is purely
    geometric, so this used to go unsaid.
 3. **Layout recommendation.** Once the site and at least one room are
-   described, plain Python packs the room program into an actual
-   non-overlapping arrangement (`src/layout.py`): rooms grouped into 3
+   described, plain Python packs several candidate arrangements and draws
+   the best one (`src/planner.py`) rather than accepting the first the
+   packer produces. Candidates are scored on rules written down in code,
+   not in a prompt: **access is a hard constraint** (a plan where the only
+   way to a bedroom is through the garage is not a cheaper plan, it's a
+   wrong one), circulation is scored against the 8–12% of floor area a
+   house normally spends on it, private rooms should sit deeper than public
+   ones, and a compact footprint beats a sprawling one.
+
+   **Corridors are earned, not automatic.** Every gap starts with one, then
+   each is removed if access survives without it — so a corridor keeps its
+   floor area only where a room depends on it to be reachable. Conversely a
+   plan that packs into a single row, which used to get no circulation at
+   all, has one built for it. And because a corridor between two rows only
+   touches those two rows, a plan with several of them gets a spine down
+   one side linking them into one network — without it, a row of bedrooms
+   between two corridors cut off everything beyond.
+
+   Underneath, the packer (`src/layout.py`): rooms grouped into 3
    categories Claude picks based on your stated priorities (e.g. privacy
    level), the entry marked, corridors generated automatically between room
    clusters, and a circulation graph showing how to get from the entry to
@@ -247,6 +264,7 @@ pytest
 
 | Path | Purpose |
 |---|---|
+| `src/planner.py` | Picks the layout: packs several candidate orderings, thins each one's corridors down to what access actually needs, scores them on access/circulation/privacy/compactness, and returns the best. The architectural judgement lives here, in code that can be read and tested. |
 | `src/access.py` | How each room type behaves in circulation — its zone, whether you may walk *through* it, whether it meets the street — and the check that walks a packed layout from the entry and reports rooms that can't be reached without passing through a bedroom, bathroom or garage. |
 | `src/vendor/` | Vendored third-party code — polygon-clipping (MIT) for boolean polygon geometry, inlined into the diagram rather than loaded from a CDN. |
 | `src/sample_project.py` | The worked example the app opens on — a complete, validating project plus the layout plan Claude would have returned for it, so the first paint needs no API call. |

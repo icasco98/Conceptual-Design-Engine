@@ -1,4 +1,13 @@
-"""Deterministic room packing into the buildable envelope — no LLM math.
+"""Deterministic room packing.
+
+Geometry only: this module has no opinion about whether the plan it packs
+is any good. `src/planner.py` packs several candidates through here and
+picks between them; `src/access.py` decides whether one can be walked
+through. What lives here is the arithmetic -- rows, corridors, footprint --
+and two rules that make circulation possible at all: rooms in a row line up
+with the edge their corridor is on (top-aligning everything left shallower
+rooms touching nothing), and a plan with more than one corridor gets a
+spine down the side joining them into a single network. into the buildable envelope — no LLM math.
 
 Claude's job (src/layout_plan.py) is limited to grouping rooms into color
 categories and suggesting a placement order that expresses adjacency
@@ -191,13 +200,15 @@ def _layout_from_rows(
     rows: List[List[tuple[Room, str, float, float, float, float]]],
     corridor_width: float,
     max_shrink: float,
+    corridor_gaps: Optional[List[bool]] = None,
 ) -> Tuple[
     List[tuple[Room, str, float, float, float, float, float, float]],
     List[Tuple[float, float, float, float]],
     float,
     List[Tuple[float, float, float]],
 ]:
-    """Place rows top-to-bottom with a corridor strip between each pair,
+    """Place rows top-to-bottom, with a corridor strip in the gaps
+    `corridor_gaps` asks for (default: every gap, one per pair of rows).
     spanning x=0 to whichever of the two neighboring rows is wider (enough
     to touch every room in both, no wider). A row's height is set by its
     deepest room; that room (or rooms, on a tie) gets trimmed toward its
@@ -205,7 +216,13 @@ def _layout_from_rows(
     shallower row is a smaller footprint — shorter rooms in the same row
     already fit within that height and keep their nominal depth. Returns
     (placed rooms with x/y, corridor rects, total height used, bands —
-    (width, y_start, y_end) per row/corridor, for the footprint outline)."""
+    (width, y_start, y_end) per row/corridor, for the footprint outline).
+
+    A gap set to False puts the two rows directly against each other, which
+    is how src.planner buys back the floor area an unnecessary hallway was
+    costing: it starts with every gap corridored and drops the ones the
+    access check says nothing needs. A corridor is only worth its area if a
+    room depends on it to be reachable."""
     placed = []
     corridors: List[Tuple[float, float, float, float]] = []
     bands: List[Tuple[float, float, float]] = []
@@ -215,15 +232,50 @@ def _layout_from_rows(
         nominal_height = max((d for _, _, _, d, _, _ in row), default=0.0)
         floors_at_max = [min_d for _, _, _, d, _, min_d in row if abs(d - nominal_height) < 1e-9]
         row_height = max(max(floors_at_max), nominal_height - max_shrink) if floors_at_max else nominal_height
+        # Which side of the band the corridor is on decides which edge the
+        # rooms line up with. A row is only as deep as its deepest room, so
+        # top-aligning everything left every shallower room hanging off the
+        # far edge, touching nothing -- a 3.3m office in a 5m row stopped
+        # 1.7m short of a corridor running right past it, and the access
+        # check then reported it reachable only through its neighbours.
+        # Aligning to the corridor's edge is what actually makes "every room
+        # is served by circulation" true rather than accidental.
+        corridor_above = i > 0 and (corridor_gaps is None or (i - 1 < len(corridor_gaps) and corridor_gaps[i - 1]))
+        corridor_below = (
+            corridor_gaps[i] if (corridor_gaps is not None and i < len(corridor_gaps))
+            else (corridor_gaps is None and i < len(rows) - 1)
+        )
+        align_to_bottom = corridor_below and not corridor_above
+
         x = 0.0
         for room, base_name, w, d, min_w, min_d in row:
             d_final = row_height if abs(d - nominal_height) < 1e-9 else d
-            placed.append((room, base_name, x, y, w, d_final, min_w, min_d))
+            offset = (row_height - d_final) if align_to_bottom else 0.0
+            if room.is_entry:
+                # The entry is the one room that has to reach both ways: the
+                # street on one side and the circulation on the other. A
+                # foyer running the full depth of its row does exactly that,
+                # and keeps the front door on the street edge -- bottom-
+                # aligning it with everything else pushed it metres inside
+                # the building.
+                d_final = row_height
+                offset = 0.0
+            placed.append((room, base_name, x, y + offset, w, d_final, min_w, min_d))
             x += w
         bands.append((row_widths[i], y, y + row_height))
         y += row_height
-        if i < len(rows) - 1:
-            corridor_span = max(row_widths[i], row_widths[i + 1])
+        # Index i is the gap BELOW row i. The last one is past the final
+        # row rather than between two, which is the only way a plan that
+        # packs into a single row can have a corridor at all -- without it
+        # such a plan has no gaps, so no circulation, and every room is
+        # reachable only through its neighbours.
+        is_trailing = i == len(rows) - 1
+        wants_corridor = (
+            corridor_gaps[i] if (corridor_gaps is not None and i < len(corridor_gaps))
+            else (corridor_gaps is None and not is_trailing)
+        )
+        if wants_corridor:
+            corridor_span = row_widths[i] if is_trailing else max(row_widths[i], row_widths[i + 1])
             corridors.append((0.0, y, corridor_span, corridor_width))
             bands.append((corridor_span, y, y + corridor_width))
             y += corridor_width
@@ -247,10 +299,36 @@ def _footprint_polygon(bands: List[Tuple[float, float, float]]) -> List[Point]:
     return points
 
 
+def _corridor_count(rows: int, corridor_gaps: Optional[List[bool]]) -> int:
+    """How many corridors this row count and gap selection will produce.
+
+    With no selection given the default stands: a corridor in each gap
+    BETWEEN rows and none past the last one, so two rows means one corridor.
+    A caller that passes a selection also gets the trailing slot, index
+    `rows - 1`, which is the only way a single-row plan can have a corridor.
+    """
+    if corridor_gaps is None:
+        return max(0, rows - 1)
+    return sum(1 for i in range(rows) if i < len(corridor_gaps) and corridor_gaps[i])
+
+
+def row_count(project: Project, envelope: BuildableEnvelope,
+              placement_order: Optional[List[str]] = None) -> int:
+    """How many rows this ordering packs into -- so a caller can size the
+    corridor-gap list without packing the whole layout first."""
+    ordered = _expand_and_order(project.rooms, placement_order or [])
+    footprints = [
+        (room, base_name, *resolve_footprint(room.room_type, room.explicit_width_m, room.explicit_depth_m))
+        for room, base_name in ordered
+    ]
+    return len(_form_rows(footprints, envelope.width_m, MAX_SHRINK_M))
+
+
 def pack_rooms(
     project: Project,
     envelope: BuildableEnvelope,
     placement_order: Optional[List[str]] = None,
+    corridor_gaps: Optional[List[bool]] = None,
 ) -> LayoutResult:
     ordered = _expand_and_order(project.rooms, placement_order or [])
     footprints = [
@@ -260,8 +338,34 @@ def pack_rooms(
 
     corridor_width = project.hallway_width_m
 
-    rows = _form_rows(footprints, envelope.width_m, MAX_SHRINK_M)
-    placed, corridors, _, bands = _layout_from_rows(rows, corridor_width, MAX_SHRINK_M)
+    # A corridor between two rows only ever touches those two rows. With
+    # three or more rows that leaves the corridors as separate strips, and
+    # if the rooms between them are ones you can't walk through -- bedrooms,
+    # bathrooms -- everything past the first corridor is cut off. The plan
+    # needs a spine down one side linking them into one network, so the
+    # width is reserved for it up front and the rows are packed narrower.
+    rows_wide = _form_rows(footprints, envelope.width_m, MAX_SHRINK_M)
+    needs_spine = _corridor_count(len(rows_wide), corridor_gaps) >= 2
+
+    if needs_spine:
+        usable_width = max(corridor_width, envelope.width_m - corridor_width)
+        rows = _form_rows(footprints, usable_width, MAX_SHRINK_M)
+        placed, corridors, total_height, bands = _layout_from_rows(
+            rows, corridor_width, MAX_SHRINK_M, corridor_gaps
+        )
+        placed = [(r, b, x + corridor_width, y, w, d, mw, md)
+                  for r, b, x, y, w, d, mw, md in placed]
+        corridors = [(cx + corridor_width, cy, cw, cd) for cx, cy, cw, cd in corridors]
+        if len(corridors) >= 2:
+            spine_top = min(cy for _, cy, _, _ in corridors)
+            spine_bottom = max(cy + cd for _, cy, _, cd in corridors)
+            # Runs the full height between the outermost corridors, so every
+            # one of them meets it along its left edge.
+            corridors.append((0.0, spine_top, corridor_width, spine_bottom - spine_top))
+            bands = [(w + corridor_width, y0, y1) for w, y0, y1 in bands]
+    else:
+        rows = rows_wide
+        placed, corridors, _, bands = _layout_from_rows(rows, corridor_width, MAX_SHRINK_M, corridor_gaps)
     # If it still doesn't fit after compaction, that's left as-is rather
     # than forced smaller — no room ever goes below its real minimum, and
     # src.validation's area-exceeds-envelope check already tells the owner
