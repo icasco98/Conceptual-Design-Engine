@@ -19,6 +19,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 from dotenv import load_dotenv
 
+from src.access import access_problems_for
 from src.claude_client import explain_issues
 from src.extraction import extract_project
 from src.geometry import BuildableEnvelope, IncompleteSiteError, compute_buildable_envelope
@@ -205,6 +206,22 @@ def render_interactive_canvas(
         return
 
     result = pack_rooms(project, envelope, layout_plan.placement_order)
+
+    # The packer guarantees the geometry is valid -- no overlaps, everything
+    # inside the envelope -- but says nothing about whether the plan can be
+    # walked through, which is a different question and the one an architect
+    # asks first. Surfaced here rather than left silent: a route from the
+    # street to a bedroom through the garage is a real fault, and until now
+    # the tool drew it without comment.
+    access_problems = access_problems_for(result)
+    if access_problems:
+        st.warning(
+            "**Circulation problems in this layout** — "
+            + " ".join(p.message for p in access_problems[:4])
+            + (f" (+{len(access_problems) - 4} more)" if len(access_problems) > 4 else "")
+            + "  \nDrag the rooms to open a route, or describe the change you want in the chat."
+        )
+
     assignments = {a.room_name: a.category for a in layout_plan.assignments}
     html_doc = render_canvas_html(project, envelope, result, assignments, layout_plan)
     _, height_px = canvas_size_px(project.site)

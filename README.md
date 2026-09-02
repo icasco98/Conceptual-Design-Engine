@@ -33,6 +33,14 @@ with yours and never sent to Claude as context.
    minimum sizes, hallway width, total area, whether an entry is marked.
    Claude only explains what Python found, in plain language; it never
    computes the numbers itself.
+
+   Separately, `src/access.py` asks the question an architect asks first:
+   can you actually walk through this plan? It knows which rooms you may
+   pass *through* (a hall, a living room) and which are destinations you
+   never route through (a bedroom, a bathroom, a garage), walks the layout
+   out from the entry, and names anything it can't serve — "the only way to
+   Bedroom 2 is through the Garage". The packer's own guarantee is purely
+   geometric, so this used to go unsaid.
 3. **Layout recommendation.** Once the site and at least one room are
    described, plain Python packs the room program into an actual
    non-overlapping arrangement (`src/layout.py`): rooms grouped into 3
@@ -239,6 +247,7 @@ pytest
 
 | Path | Purpose |
 |---|---|
+| `src/access.py` | How each room type behaves in circulation — its zone, whether you may walk *through* it, whether it meets the street — and the check that walks a packed layout from the entry and reports rooms that can't be reached without passing through a bedroom, bathroom or garage. |
 | `src/vendor/` | Vendored third-party code — polygon-clipping (MIT) for boolean polygon geometry, inlined into the diagram rather than loaded from a CDN. |
 | `src/sample_project.py` | The worked example the app opens on — a complete, validating project plus the layout plan Claude would have returned for it, so the first paint needs no API call. |
 | `app.py` | Streamlit UI — chat (fixed-height, scrollable) + interactive zoning diagram below it (schedule panel left of the drawing), sidebar summary of captured site/setback/envelope/priority state. |
