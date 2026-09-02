@@ -116,6 +116,14 @@ with yours and never sent to Claude as context.
    Hallways work the other way round: drag a room onto one and the *room*
    bends around it. Circulation never gives way and never gets shoved.
 
+   Rooms only ever give space up — they never reach beyond their own
+   rectangle to take any. An earlier version had a room next to a rotated
+   neighbour grow into the triangular void the rotation opened, to turn the
+   gap into floor. It was removed for being unpredictable: you couldn't
+   tell which room would grow, how far, or when, and rooms swelled and
+   shrank as unrelated boxes moved nearby. A room is its rectangle, minus
+   whatever is carved out of it.
+
    A rotated room moves freely — no grid snapping, no gap snapping, since
    both work on the unrotated rectangle, which isn't where a turned room
    is. Two rotated rooms can be pushed together until their real edges meet.

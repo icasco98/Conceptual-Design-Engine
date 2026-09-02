@@ -107,18 +107,23 @@ one-way, so one awkward angle part-way through a drag used to shove the
 hallway across the plot with nothing to put it back, scattering a whole
 plan for a turn the owner didn't even settle on.
 
-**Shape morphing.** A box's *logical* shape is always a plain rectangle
-plus a rotation — that is what the schedule's width/depth edit, what
-resize changes, and what collision tests. Its *display* shape, painted on
-a `.fill` child, may be a polygon, for the carve above and for gap fill:
-a square neighbor reaches into the triangular void a rotation opens (up to
-`MORPH_REACH_PX`) and stops against the rotated box's wall. A fill is
-abandoned if it would take space another box is using
-(`growthHitsAnotherBox`, measured as real intersection area), and boxes
-are shaped in order against the shapes already settled, so two rooms
-either side of one slot cannot both claim it. Everything is recomputed
-from the rectangles each frame and never written back, so un-rotating
-restores every neighbor whole.
+**Shape morphing, one direction only.** A box's *logical* shape is always
+a plain rectangle plus a rotation — that is what the schedule's width and
+depth edit, what resize changes, and what collision tests. Its *display*
+shape, painted on a `.fill` child, may be a polygon, but only ever a
+SMALLER one: a room gives space up, and never reaches beyond its own
+rectangle to take any.
+
+It used to reach. A room beside a rotated neighbor grew up to 2m into the
+triangular void the rotation opened, to turn the gap into floor rather
+than a slot nothing could use. It was not predictable: you could not tell
+which room would grow, how far, or when, since rooms swelled and shrank as
+unrelated boxes moved nearby — and an off-by-one in the bookkeeping once
+let one bedroom grow 4867px2 into another. Removed. A room is its
+rectangle, minus whatever is carved out of it, and nothing else.
+
+Everything is recomputed from the rectangles each frame and never written
+back, so un-rotating a room restores its neighbors whole.
 
 **No invisible boxes.** Two boxes are separated by the smallest push that
 clears their TRUE rotated shapes (`obbPenetration`, the minimum
@@ -273,11 +278,6 @@ SCHEDULE_MIN_WIDTH_PX = 280
 # Gap between the schedule panel and the diagram (matches #canvas-layout).
 SCHEDULE_GAP_PX = 18
 
-# How far an unrotated box may grow its display shape to reach a rotated
-# neighbor's slanted wall — see "Shape morphing" in the module docstring.
-# Beyond this the gap is real dead space, not a sliver worth absorbing.
-MORPH_REACH_M = 2.0
-MORPH_REACH_PX = MORPH_REACH_M * PX_PER_METER
 
 # The most of itself a room may give up to a rotated neighbor biting into
 # it before the bite stops counting as "minor" and collision pushes the
@@ -916,7 +916,6 @@ def render_canvas_html(
   var GAP_SNAP_PX = {GAP_SNAP_PX};
   var DOOR_INSET_PX = {DOOR_INSET_PX};
   var PX_PER_METER = {PX_PER_METER};
-  var MORPH_REACH_PX = {MORPH_REACH_PX};
   var BITE_MAX_FRACTION = {BITE_MAX_FRACTION};
   var container = document.getElementById('canvas-container');
   var footprintPath = document.getElementById('footprint-shape');
@@ -1278,32 +1277,28 @@ def render_canvas_html(
       if (o === el) continue;
       if (!boxesTrulyIntersect(el, o)) continue;
       if (biteVictim(el, o) !== el) continue;      // the other one gives way
-      candidates.push(o);
+
+      candidates.push({{el: o, clipper: pageToLocalPoly(polyOfBox(o), fr)}});
     }}
     if (!candidates.length) return {{poly: base, taking: [], refused: []}};
 
     // Deepest cut first, so that when the room cannot take them all it is
     // the biggest intrusion that gets refused and pushed away instead.
     candidates.sort(function(a, b) {{
-      return overlapAreaWith(el, b, fr, base) - overlapAreaWith(el, a, fr, base);
+      return intersectionArea(base, b.clipper) - intersectionArea(base, a.clipper);
     }});
 
     var poly = base, taking = [], refused = [];
     for (var c = 0; c < candidates.length; c++) {{
-      var clipper = pageToLocalPoly(polyOfBox(candidates[c]), fr);
-      var cut = subtractPolys(poly, [clipper]);
+      var cut = subtractPolys(poly, [candidates[c].clipper]);
       if (cut && shapeStillUsable(el, cut)) {{
         poly = cut;
-        taking.push(candidates[c]);
+        taking.push(candidates[c].el);
       }} else {{
-        refused.push(candidates[c]);
+        refused.push(candidates[c].el);
       }}
     }}
     return {{poly: poly, taking: taking, refused: refused}};
-  }}
-
-  function overlapAreaWith(el, other, fr, base) {{
-    return intersectionArea(base, pageToLocalPoly(polyOfBox(other), fr));
   }}
 
   // Is what's left of `el` still a room? Minimum area, and still able to
@@ -1468,12 +1463,10 @@ def render_canvas_html(
   //   the neighbor however small the actual overlap was, and turned
   //   bathrooms into triangles.
   //
-  //   GAP FILL. Rotating also opens triangular voids. A square neighbor
-  //   reaches into that void (up to MORPH_REACH_PX) and stops against the
-  //   rotated room's wall, so the space becomes floor instead of a slot you
-  //   can't walk through.
-  //
-  // Both are recomputed from the rectangles on every frame and never written
+  // Carving is the ONLY way a display shape differs from its rectangle: a
+  // room gives space up, never takes any. Rooms used to grow into the voids
+  // a rotation opens, which nobody could predict -- see the module
+  // docstring. Recomputed from the rectangles every frame and never written
   // back into them, so un-rotating a room restores its neighbors whole.
   var displayPolys = [];
 
@@ -1653,101 +1646,20 @@ def render_canvas_html(
     return out;
   }}
 
-  // Grow `r` on the one side facing (ocx, ocy) by `reach` px.
-  function grownRectToward(r, ocx, ocy, reach) {{
-    var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-    var dx = ocx - cx, dy = ocy - cy;
-    var g = {{left: r.left, top: r.top, width: r.width, height: r.height}};
-    if (Math.abs(dx) > Math.abs(dy)) {{
-      if (dx > 0) {{ g.width += reach; }} else {{ g.left -= reach; g.width += reach; }}
-    }} else {{
-      if (dy > 0) {{ g.height += reach; }} else {{ g.top -= reach; g.height += reach; }}
-    }}
-    return g;
-  }}
-
-  // Returns the box's display polygon IN ITS OWN FRAME (see frameOf).
+  // The box's display polygon IN ITS OWN FRAME (see frameOf).
   //
-  // The carve itself comes straight from carvePlanFor, so what gets drawn is
-  // exactly what the movement rules decided -- the two used to be computed
-  // separately and could disagree, which left rooms overlapping on screen.
-  // On top of that carve, a box beside a ROTATED neighbour also reaches into
-  // the triangular void the rotation opened, so the gap becomes floor rather
-  // than a slot nothing can use.
-  function morphedPolygonFor(el, live, settled) {{
-    var r = rectOf(el);
-    var fr = frameOf(el);
-    var plan = carvePlanFor(el, live);
-    var poly = plan.poly;
-
-    if (fr.rotated) return poly;   // gap fill would stretch it along its own tilt
-
-    for (var i = 0; i < live.length; i++) {{
-      var o = live[i];
-      if (o === el || !rotationOf(o)) continue;
-      var oPoly = polyOfBox(o);
-      if (distanceBetweenPolys(poly, oPoly) > MORPH_REACH_PX) continue;
-      var obb = obbOf(o);
-      var grown = rectPolyOf(grownRectToward(r, obb.cx, obb.cy, MORPH_REACH_PX));
-      var merged = unionPolys([poly, grown]);
-      if (!merged || merged.length !== 1 || merged[0].length !== 1) continue;
-      var candidate = clipPolyToEnvelope(ringToPoly(merged[0][0]));
-      if (!candidate || candidate.length < 3) continue;
-      if (growthHitsAnotherBox(candidate, poly, el, o, live, settled)) continue;
-      poly = candidate;
-    }}
-
-    // Whatever the fill grew, take the carve back out of it -- the fill
-    // reaches toward exactly the boxes being carved around.
-    for (var c = 0; c < plan.taking.length; c++) {{
-      var cut = subtractPolys(poly, [pageToLocalPoly(polyOfBox(plan.taking[c]), fr)]);
-      if (cut) poly = cut;
-    }}
-    return poly;
-  }}
-
-  function clipPolyToEnvelope(poly) {{
-    var box = [[ENV.left, ENV.top], [ENV.right, ENV.top], [ENV.right, ENV.bottom], [ENV.left, ENV.bottom]];
-    var out;
-    try {{ out = polygonClipping.intersection(polyToGeom(poly), polyToGeom(box)); }}
-    catch (err) {{ return poly; }}
-    if (!out || out.length !== 1 || out[0].length !== 1) return null;
-    return ringToPoly(out[0][0]);
-  }}
-
-  function distanceBetweenPolys(a, b) {{
-    var best = Infinity;
-    for (var i = 0; i < a.length; i++) {{
-      for (var j = 0; j < b.length; j++) {{
-        var d = distToSegment(a[i][0], a[i][1], b[j], b[(j + 1) % b.length]);
-        if (d < best) best = d;
-      }}
-    }}
-    return best;
-  }}
-
-  function distToSegment(px, py, a, b) {{
-    var dx = b[0] - a[0], dy = b[1] - a[1];
-    var len2 = dx * dx + dy * dy;
-    var t = len2 ? ((px - a[0]) * dx + (py - a[1]) * dy) / len2 : 0;
-    t = Math.max(0, Math.min(1, t));
-    var qx = a[0] + dx * t, qy = a[1] + dy * t;
-    return Math.sqrt((px - qx) * (px - qx) + (py - qy) * (py - qy));
-  }}
-
-  // A gap fill may only take space nothing else is using. Measured as real
-  // intersection area against each other box's settled shape -- testing
-  // whether the other box's corners land inside the fill (the old way)
-  // misses the common case where two shapes cross without either one's
-  // vertices falling in the other.
-  function growthHitsAnotherBox(grownPoly, basePoly, el, neighbor, live, settled) {{
-    for (var i = 0; i < live.length; i++) {{
-      var other = live[i];
-      if (other === el || other === neighbor) continue;
-      var shape = (settled && settled[i]) ? settled[i] : polyOfBox(other);
-      if (intersectionArea(grownPoly, shape) > intersectionArea(basePoly, shape) + 1) return true;
-    }}
-    return false;
+  // It comes straight from carvePlanFor, so what gets drawn is exactly what
+  // the movement rules decided. A room only ever gives space up; it never
+  // reaches beyond its own rectangle to take any.
+  //
+  // It used to: a room beside a rotated neighbour grew up to 2m into the
+  // triangular void the rotation opened, to turn the gap into floor. In
+  // practice you could not tell which room would grow, how far, or when --
+  // rooms swelled and shrank as unrelated things moved nearby, and a bug in
+  // it once let one bedroom grow 4867px2 into another. Predictable beats
+  // clever: a room is its rectangle, minus whatever is carved out of it.
+  function morphedPolygonFor(el, live) {{
+    return carvePlanFor(el, live).poly;
   }}
 
   function intersectionArea(a, b) {{
@@ -1767,22 +1679,11 @@ def render_canvas_html(
   function applyDisplayShapes() {{
     clearAbsorbMemo();
     var live = activeBoxes();
+
     displayPolys = [];
-    // Shaped in order, each against the shapes already settled this pass, so
-    // two rooms either side of one slot can't both grow into it.
     for (var i = 0; i < live.length; i++) {{
       var el = live[i];
-      // Indexed to line up with `live`, entry for entry. It used to be
-      // built by copying the shapes settled so far and then PUSHING the
-      // remaining boxes' rectangles, which left every index after the
-      // current box shifted by one -- so a room checking whether its gap
-      // fill would take occupied space compared itself against the wrong
-      // neighbour, and grew straight into a room it had never looked at.
-      var settled = new Array(live.length);
-      for (var j = 0; j < live.length; j++) {{
-        settled[j] = (j < i) ? displayPolys[j] : polyOfBox(live[j]);
-      }}
-      var localPoly = morphedPolygonFor(el, live, settled);
+      var localPoly = morphedPolygonFor(el, live);
       // Tidy-up pass against the shapes already settled -- but a strictly
       // conservative one. It may only take away the overlap itself: if the
       // cut would remove more than that, or split the room, or hole it, the

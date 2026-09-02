@@ -490,8 +490,8 @@ def test_carving_is_derived_never_written_back_to_the_rectangles():
     html, _ = _render(rooms)
 
     assert "function morphedPolygonFor" in html
-    assert "function growthHitsAnotherBox" in html
     assert "function applyDisplayShapes" in html
+    assert "function carvePlanFor" in html
     # Painting moved to the .fill child so the box itself stays a plain
     # rectangle for the schedule, resize and collision.
     assert '<span class="fill"' in html
@@ -648,14 +648,23 @@ def test_a_room_is_never_cut_by_more_than_the_overlap():
     assert "if (removed > overlap + 1) continue;" in html
 
 
-def test_the_settled_shapes_array_lines_up_with_the_boxes():
-    """Off by one here and a room checks its gap fill against the wrong
-    neighbour, then grows straight into a room it never looked at."""
+def test_a_room_never_grows_beyond_its_own_rectangle():
+    """Rooms give space up; they never take any. A room beside a rotated
+    neighbour used to grow up to 2m into the void the rotation opened, and
+    nobody could predict which room would grow, how far, or when -- rooms
+    swelled and shrank as unrelated boxes moved nearby."""
     rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
     html, _ = _render(rooms)
 
-    assert "var settled = new Array(live.length);" in html
-    assert "settled[j] = (j < i) ? displayPolys[j] : polyOfBox(live[j]);" in html
+    # The display shape is the carve and nothing else.
+    assert "return carvePlanFor(el, live).poly;" in html
+    # Every part of the growth machinery is gone.
+    assert "MORPH_REACH" not in html
+    assert "function grownRectToward" not in html
+    assert "function growthHitsAnotherBox" not in html
+    assert "function distanceBetweenPolys" not in html
+    assert "function clipPolyToEnvelope" not in html
+
 
 
 def test_circulation_is_never_carved_by_anything():
@@ -693,7 +702,7 @@ def test_carve_first_protect_the_minimum_push_only_as_a_last_resort():
     assert "function carvePlanFor" in html
     # Cumulative: three cuts can each look harmless alone and gut a room
     # together, so the test runs against the accumulating shape.
-    assert "var cut = subtractPolys(poly, [clipper]);" in html
+    assert "var cut = subtractPolys(poly, [candidates[c].clipper]);" in html
     assert "if (cut && shapeStillUsable(el, cut))" in html
     # Minimum area AND minimum rectangle; the SHAPE is deliberately unjudged.
     assert "function shapeStillUsable" in html
