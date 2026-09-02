@@ -157,23 +157,20 @@ def test_door_arrows_are_always_axis_aligned_perpendicular_to_the_shared_wall():
     assert "[mx, my + fromSignY * DOOR_INSET_PX], [mx, my - fromSignY * DOOR_INSET_PX]" in html
 
 
-def test_pinned_box_is_pushed_clear_as_a_last_resort_never_left_overlapping():
+def test_the_dragged_room_is_never_moved_by_the_resolver():
+    """The box under the cursor goes exactly where you put it. The old model
+    shoved it whenever a neighbour could not give way, so the room fought
+    the cursor -- measured at 8px of push-back on every frame."""
     rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
     html, _ = _render(rooms)
 
-    # The overlap invariant's real guarantee: if a neighbor has already
-    # shrunk to its own minimum and hit the envelope wall with nowhere
-    # left to go, the box under the owner's cursor gets nudged (position
-    # only) to clear it too, instead of visibly overlapping.
-    assert "function pushPinnedClearOfOverlaps" in html
-    assert "function shrinkAndPushNonPinned" in html
-    assert "pushPinnedClearOfOverlaps(pinned)" in html
-    # Even the gentler shrink-then-push heuristic can fail to converge in
-    # a crowded scene (several boxes pushed toward the same small area) --
-    # this unconditional both-sides separator is what actually guarantees
-    # zero overlap in every scene, not just the common ones.
-    assert "function forceSeparateAnyRemainingOverlaps" in html
-    assert "forceSeparateAnyRemainingOverlaps()" in html
+    assert "function resolveOverlaps" in html
+    assert "if (mover === pinned) continue;" in html
+    # The three-stage shrink/push/separate resolver is gone for good.
+    assert "function shrinkAndPushNonPinned" not in html
+    assert "function pushPinnedClearOfOverlaps" not in html
+    assert "function forceSeparateAnyRemainingOverlaps" not in html
+
 
 
 def test_rotation_inflates_the_effective_rect_used_for_collision_and_footprint():
@@ -185,7 +182,6 @@ def test_rotation_inflates_the_effective_rect_used_for_collision_and_footprint()
     # push magnitude, and the footprint union builds each box's polygon
     # from its true rotated corners (obbOf/cornersOfObb), never the AABB.
     assert "function effectiveRectOf" in html
-    assert "effectiveRectOf(a), rb = effectiveRectOf(b)" in html
     assert "function obbOf" in html
     assert "function cornersOfObb" in html
     assert "function polyOfBox" in html
@@ -202,8 +198,10 @@ def test_rotated_boxes_can_actually_touch_not_just_get_close():
     # function on the true oriented-box SAT test instead, so rotated rooms
     # can be pushed together until their real edges meet.
     assert "function obbsSeparated" in html
-    assert "function boxesReallyOverlap" in html
-    assert html.count("boxesReallyOverlap(") >= 4  # 3 definitions/call-sites minimum + its own body
+    # Every question about whether two boxes are really touching goes
+    # through the true rotated shapes, never the bounding boxes.
+    assert "function boxesTrulyIntersect" in html
+    assert html.count("boxesTrulyIntersect(") >= 4
 
 
 def test_setback_envelope_bounds_and_room_minimums_are_exposed_to_js():
@@ -536,9 +534,8 @@ def test_rotated_boxes_are_separated_by_their_real_shapes_not_bounding_boxes():
     html, _ = _render(rooms)
 
     assert "function obbPenetration" in html
-    assert "function eitherRotated" in html
-    # Both separators take the true-shape path before the AABB one.
-    assert html.count("obbPenetration(obbOf(a), obbOf(b))") >= 2
+    # The one place anything is moved uses the true penetration depth.
+    assert "obbPenetration(obbOf(mover), obbOf(against))" in html
 
 
 def test_carving_works_in_each_boxs_own_frame_so_rotated_rooms_carve_too():
@@ -610,8 +607,8 @@ def test_nothing_resizes_a_room_except_its_owner():
     rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
     html, _ = _render(rooms)
 
-    # The resolver translates; it no longer computes a smaller width/height.
-    resolver = html.split("function shrinkAndPushNonPinned")[1].split("function pushPinnedClearOfOverlaps")[0]
+    # The resolver translates; it never computes a width or a height.
+    resolver = html.split("function resolveOverlaps")[1].split("// ---- Boolean geometry")[0]
     assert "style.width" not in resolver
     assert "style.height" not in resolver
     # The envelope clamp stops a box at the line instead of squashing it.
@@ -685,3 +682,47 @@ def test_the_minimum_rectangle_test_measures_the_actual_overlap():
 
     assert "var bite = bboxOf(overlapRegion || clipperLocal);" in html
     assert "polygonClipping.intersection(polyToGeom(base), polyToGeom(clipperLocal))" in html
+
+
+def test_carve_first_protect_the_minimum_push_only_as_a_last_resort():
+    """The three movement rules, in order. One function decides both what to
+    draw and whether anything must move, so the two cannot disagree."""
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    assert "function carvePlanFor" in html
+    # Cumulative: three cuts can each look harmless alone and gut a room
+    # together, so the test runs against the accumulating shape.
+    assert "var cut = subtractPolys(poly, [clipper]);" in html
+    assert "if (cut && shapeStillUsable(el, cut))" in html
+    # Minimum area AND minimum rectangle; the SHAPE is deliberately unjudged.
+    assert "function shapeStillUsable" in html
+    assert "polyArea(poly) < m.w * m.h" in html
+    # Pushing is the last resort, one room, one step, never a cascade.
+    assert "if (movedAlready.indexOf(mover) !== -1) continue;" in html
+
+
+def test_circulation_neither_gives_way_nor_gets_shoved():
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    # A room dragged onto a hallway bends around it...
+    assert "if (aCorridor !== bCorridor) return aCorridor ? b : a;" in html
+    # ...and if it cannot, the hallway still is not the thing that moves.
+    assert "if (mover.classList.contains('corridor')) continue;" in html
+
+
+def test_a_rotated_room_moves_freely():
+    """Grid and gap snapping both work on the unrotated rectangle, which is
+    not where a turned room is -- they fought the cursor rather than helping
+    it, so a rotated room is exempt from both."""
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    assert "var freeMoving = !!rotationOf(active);" in html
+    assert "if (!freeMoving) snapToNearbyNeighbors(active);" in html
+    # The grab point is measured from the box's own position, not its
+    # bounding rectangle, which for a rotated box made it jump on pickup.
+    assert "offsetX = (p.x - cRect0.left) - r0.left;" in html
+    # And the envelope clamp uses the true footprint, not the unrotated width.
+    assert "ENV.right - eff.width + padLeft" in html

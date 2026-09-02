@@ -101,24 +101,28 @@ with yours and never sent to Claude as context.
      exactly, so it's easy to close an accidental sliver of empty space
      between zones instead of pixel-hunting for the exact touching spot.
 
-   **Moving a room never damages anything you didn't touch.** Nothing but
-   your own resize handle and the schedule's size fields changes a room's
-   size — collision used to shrink whatever it pushed, and a room pressed
-   against the setback line got squashed against it. And displacement
-   undoes itself: drag a room across the plan and back and every room it
-   shoved on the way comes back with you, because what gets displaced is
-   recomputed each frame from where the layout was when you picked the room
-   up, not accumulated. Before, one careless drag could scatter a layout
-   with no way back but Reset.
+   **Moving a room: carve first, protect the minimum, push last.** The room
+   you pick up goes exactly where you put it — nothing pushes it back. What
+   it overlaps gives up that space and draws itself around it, so rooms
+   start as plain rectangles and become whatever the layout makes them: an
+   L, a wedge, a notched shape. No room is ever carved below its minimum
+   area or below the minimum rectangle it has to hold, and that's checked
+   against every cut a room is taking at once — three cuts can each look
+   harmless alone and gut a room together. Only where a room can't give the
+   space up does anything move, and then it's the other room, one step,
+   once — never a cascade. A room with nowhere to go is left overlapping
+   rather than scattering the plan.
 
-   **Push two rooms together and one becomes an L.** Rooms give way by
-   reshaping rather than shrinking or sliding off, and it isn't something
-   only a rotated room can do — this is how you make an L-shaped room
-   directly. The room being dragged is the one that bites; the stationary
-   one gives way, and with neither being dragged it's whichever has more
-   area to spare over its own minimum. Circulation is exempt: a hallway
-   never gives way to a room drifting into it. Where neither room can give
-   up the overlap and stay usable, they're pushed apart as before.
+   Hallways work the other way round: drag a room onto one and the *room*
+   bends around it. Circulation never gives way and never gets shoved.
+
+   A rotated room moves freely — no grid snapping, no gap snapping, since
+   both work on the unrotated rectangle, which isn't where a turned room
+   is. Two rotated rooms can be pushed together until their real edges meet.
+
+   Nothing changes a room's size except your own resize handle and the
+   schedule's fields. And displacement undoes itself: drag across the plan
+   and back and every room comes with you.
 
    **Rotating a room reshapes its neighbours instead of moving them.** A
    room's model is always a rectangle plus a rotation — that's what the

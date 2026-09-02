@@ -44,45 +44,52 @@ Per-box controls, all pure client-side JS (see the generated `<script>`):
   always snaps to that same 0.25m grid while dragging or resizing
   (`snapToGrid`, `GRID_PX`) — the grid is a visibility choice, snapping
   isn't.
-**Any box bites; the other gives way.** Two overlapping boxes are not
-pushed apart if one of them can give up the overlap instead — it draws
-itself carved (an L-shape) while its rectangle, position and schedule entry
-stay put. This is not something only a rotated box can do: push two square
-rooms together and one draws itself as an L, which is how an L-shaped room
-gets made directly rather than by rotating something into it.
+**Three rules, in order, and nothing else.**
 
-Which one gives way is decided in one place (`chooseBiteVictim`) that the
-collision gate, the rotation check and the shape pass all ask, so the room
-that gets vetted is always the room that gets carved — approving one
-direction and drawing the other left rooms visibly overlapping. Circulation
-never gives way to a room: a corridor is long and thin, so by raw spare
-area it looked like the roomiest thing on the canvas and lost to everything
-that drifted into it. Otherwise the box under the cursor bites (pushing the
-room you are deliberately moving is not what you asked for), and with
-neither pinned the one with more area to spare over its own minimum gives
-way. Where neither can absorb the cut, the pair is pushed apart as before.
+*Carve first.* The box you are dragging keeps exactly the position your
+cursor gives it and takes the space it needs; whatever it overlaps gives up
+that space and draws itself around it. Rooms start as plain rectangles and
+become whatever the layout makes them — an L, a wedge, a notched polygon.
+Their shape is deliberately unjudged.
 
-**Nothing resizes a room but its owner.** A room's size is set by its
-resize handle and the schedule's fields, and by nothing else. Collision
-used to shrink whatever it pushed toward the type minimum, and the envelope
-clamp squashed whatever reached the setback line — so dragging the garage
-into the kitchen silently cost the kitchen metres, with nothing on screen
-saying so. Both now translate instead.
+*Protect the minimum.* No room is carved below its minimum area or below the
+minimum rectangle it must be able to hold. Tested against the sum of every
+cut a room is taking at once (`carvePlanFor`), not one at a time: three cuts
+can each look harmless alone and gut the room together. When a room cannot
+take them all, the deepest intrusion is the one refused.
 
-**Displacement undoes itself.** Every gesture snapshots where the other
-boxes were (`takeGestureSnapshot`) and each frame restores them before
-resolving, so what gets displaced is a pure function of where the dragged
-box is *now*: drag across the plan and back and everything comes with you.
-Pushes used to be one-way and cumulative, so a room shoved aside stayed
-shoved long after the thing that shoved it had gone, and one careless drag
-could scatter a layout with no way back but Reset.
+*Push as a last resort.* Only where a room cannot give the space up does
+anything move — and then it is the other room, one step, once. Never the box
+under the cursor, and never a cascade: a room with nowhere to go is left
+overlapping rather than starting a chain reaction. The old resolver did the
+opposite, shoving the pinned box whenever a neighbour could not give way, so
+the room fought the cursor at about 8px a frame.
 
-**A room is never drawn on top of another.** Whatever the rules above
-decide, the shape pass takes a final sweep: anything still overlapping a
-shape already settled has that overlap subtracted from it, keeping the
-largest piece if the cut would otherwise be refused
-(`subtractLargestPiece`). The drawing is not allowed to lie about which
-space a room actually has.
+Corridors run the other way round. Circulation is the one space whose whole
+job is to stay open, so a room dragged onto a hallway bends around it rather
+than eating it — and if it cannot, the hallway still is not what moves.
+
+`carvePlanFor` answers both of the canvas's questions at once — what to draw
+and whether anything must move — which is what keeps them agreeing. Computing
+them apart is how the code came to approve one room's cut and draw another's.
+
+**A rotated box moves freely.** Grid snapping and gap snapping both work on
+the unrotated rectangle, which is not where a turned room is: snapping its
+origin to a 0.25m grid moves no visible edge onto the grid, and the gap snap
+measures between rectangles the rooms are no longer sitting in. Both fought
+the cursor, so a rotated box is exempt from both and lands exactly where you
+put it. Its grab point is measured from its own position rather than its
+bounding rectangle (which made it jump on pickup), and the envelope clamp
+uses its true footprint rather than its unrotated width.
+
+**Nothing resizes a room but its owner.** A room's size is set by its resize
+handle and the schedule's fields, and by nothing else. Collision used to
+shrink whatever it pushed, and the envelope clamp squashed whatever reached
+the setback line.
+
+**Displacement undoes itself.** Every gesture snapshots where the other boxes
+were (`takeGestureSnapshot`) and each frame restores them before resolving,
+so what gets displaced is a pure function of where the dragged box is *now*.
 
 **Rotation bites, it does not shove.** A rotated box is allowed to overlap
 a square neighbor, and the neighbor gives up exactly the overlapping
@@ -1231,93 +1238,111 @@ def render_canvas_html(
   // across passes. A rotated box is only ever translated here — never
   // resized — for the same reason clampToEnvelope treats it specially.
   // Returns whether anything changed.
-  function shrinkAndPushNonPinned(pinned) {{
-    var live = activeBoxes();
-    var changedAtAll = false;
-    for (var pass = 0; pass < 6; pass++) {{
-      var any = false;
-      for (var i = 0; i < live.length; i++) {{
-        var a = live[i];
-        if (a === pinned) continue;
-        for (var j = 0; j < live.length; j++) {{
-          if (i === j) continue;
-          var b = live[j];
-          var ra = effectiveRectOf(a), rb = effectiveRectOf(b);
-          var ov = overlapAmount(ra, rb);
-          if (!boxesReallyOverlap(a, b, ov)) continue;
-          any = true;
-          if (eitherRotated(a, b)) {{
-            // Rotated boxes are only ever translated, never resized, and by
-            // the true penetration depth rather than the bounding boxes'.
-            var mtvA = obbPenetration(obbOf(a), obbOf(b));
-            if (mtvA) {{
-              a.style.left = (parseFloat(a.style.left) + mtvA.x) + 'px';
-              a.style.top = (parseFloat(a.style.top) + mtvA.y) + 'px';
-              clampToEnvelope(a);
-              continue;
-            }}
-          }}
-          // Translate only. A room's SIZE is the owner's decision -- made by
-          // dragging its corner or typing in the schedule -- and nothing
-          // else may quietly change it. This used to shrink whatever it
-          // pushed, down toward the type minimum: drag the garage into the
-          // kitchen and the kitchen silently got smaller, with nothing on
-          // screen saying so and no way to get the metres back.
-          if (ov.x < ov.y) {{
-            var dir = (ra.left + ra.width / 2) < (rb.left + rb.width / 2) ? -1 : 1;
-            a.style.left = (parseFloat(a.style.left) + dir * ov.x) + 'px';
-          }} else {{
-            var dirY = (ra.top + ra.height / 2) < (rb.top + rb.height / 2) ? -1 : 1;
-            a.style.top = (parseFloat(a.style.top) + dirY * ov.y) + 'px';
-          }}
-          clampPositionOnly(a);
-        }}
-      }}
-      if (any) {{ changedAtAll = true; }}
-      if (!any) break;
-    }}
-    return changedAtAll;
-  }}
+  // ---- What happens when two boxes overlap ------------------------------
+  //
+  // Three rules, in this order, and nothing else:
+  //
+  //   CARVE FIRST. The box you are dragging keeps exactly the position your
+  //   cursor gives it, and takes the space it needs; whatever it overlaps
+  //   gives up that space and draws itself around it. Rooms start as plain
+  //   rectangles and become whatever the layout makes them.
+  //
+  //   PROTECT THE MINIMUM. No room is ever carved below its minimum area, or
+  //   below the minimum rectangle it has to be able to hold. Tested against
+  //   the sum of every cut a room is taking at once, not one at a time: three
+  //   cuts can each look harmless on their own and gut the room together.
+  //
+  //   PUSH AS A LAST RESORT. Only where a room cannot give the space up does
+  //   anything move -- and then it is the other room, one step, once. Never
+  //   the box under your cursor, and never a cascade: a room with nowhere to
+  //   go is left overlapping rather than starting a chain reaction through
+  //   the plan.
+  //
+  // Corridors run the other way round. Circulation is the one space whose
+  // whole job is to stay open, so a room dragged onto a hallway bends around
+  // it instead of eating it -- you still place the room wherever you like
+  // (see biteVictim, which prefers the room over the corridor).
 
-  // Phase 2, the overlap invariant's real guarantee: after phase 1, check
-  // whether the pinned box — never touched by phase 1 — still overlaps
-  // anything. It can, if a neighbor was already at its own minimum size
-  // and the envelope wall and genuinely had nowhere left to go. Rather
-  // than accept that as a visible glitch, nudge the pinned box itself
-  // (position only, its size is never touched) just enough to clear it.
-  function pushPinnedClearOfOverlaps(pinned) {{
-    if (!pinned) return false;
-    var live = activeBoxes();
-    var changed = false;
-    for (var k = 0; k < live.length; k++) {{
-      var other = live[k];
-      if (other === pinned) continue;
-      var pr = effectiveRectOf(pinned), ro = effectiveRectOf(other);
-      var ov = overlapAmount(pr, ro);
-      if (!boxesReallyOverlap(pinned, other, ov)) continue;
-      changed = true;
-      if (ov.x < ov.y) {{
-        var dir = (pr.left + pr.width / 2) < (ro.left + ro.width / 2) ? -1 : 1;
-        pinned.style.left = (parseFloat(pinned.style.left) + dir * ov.x) + 'px';
+  // Everything `el` is currently giving way to, and the shape that leaves it.
+  //
+  // The single source of truth for both questions the canvas asks: what to
+  // draw, and whether anything has to move. Returning them together is what
+  // keeps them agreeing -- computing them apart is how the code came to
+  // approve one room's cut and draw a different one.
+  function carvePlanFor(el, live) {{
+    var fr = frameOf(el);
+    var base = rectPolyOf(rectOf(el));
+    var candidates = [];
+    for (var i = 0; i < live.length; i++) {{
+      var o = live[i];
+      if (o === el) continue;
+      if (!boxesTrulyIntersect(el, o)) continue;
+      if (biteVictim(el, o) !== el) continue;      // the other one gives way
+      candidates.push(o);
+    }}
+    if (!candidates.length) return {{poly: base, taking: [], refused: []}};
+
+    // Deepest cut first, so that when the room cannot take them all it is
+    // the biggest intrusion that gets refused and pushed away instead.
+    candidates.sort(function(a, b) {{
+      return overlapAreaWith(el, b, fr, base) - overlapAreaWith(el, a, fr, base);
+    }});
+
+    var poly = base, taking = [], refused = [];
+    for (var c = 0; c < candidates.length; c++) {{
+      var clipper = pageToLocalPoly(polyOfBox(candidates[c]), fr);
+      var cut = subtractPolys(poly, [clipper]);
+      if (cut && shapeStillUsable(el, cut)) {{
+        poly = cut;
+        taking.push(candidates[c]);
       }} else {{
-        var dirY = (pr.top + pr.height / 2) < (ro.top + ro.height / 2) ? -1 : 1;
-        pinned.style.top = (parseFloat(pinned.style.top) + dirY * ov.y) + 'px';
+        refused.push(candidates[c]);
       }}
-      clampPositionOnly(pinned);
     }}
-    return changed;
+    return {{poly: poly, taking: taking, refused: refused}};
   }}
 
-  // Absolute last resort, tried alongside phases 1 and 2 every round:
-  // split whatever overlap is still left between BOTH boxes directly,
-  // half the separation to each, along whichever axis needs less
-  // movement. In a scene crowded enough (several rooms squeezed toward
-  // the same small area), the gentler one-box-at-a-time heuristic above
-  // can genuinely fail to converge — each box's individual fix can undo a
-  // different box's fix, cycling instead of settling. Moving both sides
-  // of a conflict at once instead of just one breaks that cycle. This
-  // ignores the pinned exemption on purpose: by the time this runs, "no
-  // overlap" matters more than "the box under the cursor never moves."
+  function overlapAreaWith(el, other, fr, base) {{
+    return intersectionArea(base, pageToLocalPoly(polyOfBox(other), fr));
+  }}
+
+  // Is what's left of `el` still a room? Minimum area, and still able to
+  // hold its own minimum rectangle -- area alone would pass a dogleg too
+  // narrow for anything to stand in. Its SHAPE is deliberately unjudged:
+  // an L, a wedge or a notched polygon are all legitimate outcomes.
+  function shapeStillUsable(el, poly) {{
+    var m = minOf(el);
+    if (polyArea(poly) < m.w * m.h - 1e-6) return false;
+    var box = bboxOf(poly);
+    var rect = {{left: box.minX, top: box.minY,
+                width: box.maxX - box.minX, height: box.maxY - box.minY}};
+    if (rect.width < m.w - 1e-6 || rect.height < m.h - 1e-6) return false;
+    // The cut region, measured on this shape, is what the free strips are
+    // taken either side of.
+    var cutBox = bboxOfCutAgainst(rect, poly);
+    var strips = largestFreeStrip(rect, cutBox);
+    for (var i = 0; i < strips.length; i++) {{
+      if (strips[i].w >= m.w - 1e-6 && strips[i].h >= m.h - 1e-6) return true;
+    }}
+    return false;
+  }}
+
+  // Where the material is missing from `poly` relative to its own bounding
+  // rectangle -- i.e. what was bitten out of it.
+  function bboxOfCutAgainst(rect, poly) {{
+    var full = rectPolyOf(rect);
+    var missing;
+    try {{
+      var out = polygonClipping.difference(polyToGeom(full), polyToGeom(poly));
+      missing = (out && out.length && out[0].length) ? ringToPoly(out[0][0]) : null;
+    }} catch (err) {{ missing = null; }}
+    return missing ? bboxOf(missing) : {{minX: rect.left, minY: rect.top,
+                                        maxX: rect.left, maxY: rect.top}};
+  }}
+
+  // Broad phase for the resolver: is anything touching at all? Most of a
+  // drag is through open space, and there this answers in n^2/2 number
+  // comparisons instead of a carve plan per box.
   function anyBoxesOverlap() {{
     var live = activeBoxes();
     var rects = new Array(live.length);
@@ -1329,77 +1354,47 @@ def render_canvas_html(
         if (ra.left + OVERLAP_EPS_PX < rb.left + rb.width &&
             rb.left + OVERLAP_EPS_PX < ra.left + ra.width &&
             ra.top + OVERLAP_EPS_PX < rb.top + rb.height &&
-            rb.top + OVERLAP_EPS_PX < ra.top + ra.height) {{
-          if (boxesReallyOverlap(live[a], live[b], overlapAmount(ra, rb))) return true;
-        }}
+            rb.top + OVERLAP_EPS_PX < ra.top + ra.height &&
+            boxesTrulyIntersect(live[a], live[b])) return true;
       }}
     }}
     return false;
   }}
 
-  function forceSeparateAnyRemainingOverlaps() {{
-    var live = activeBoxes();
-    var changed = false;
-    for (var i = 0; i < live.length; i++) {{
-      for (var j = i + 1; j < live.length; j++) {{
-        var a = live[i], b = live[j];
-        var ra = effectiveRectOf(a), rb = effectiveRectOf(b);
-        var ov = overlapAmount(ra, rb);
-        if (!boxesReallyOverlap(a, b, ov)) continue;
-        changed = true;
-        if (eitherRotated(a, b)) {{
-          var mtv = obbPenetration(obbOf(a), obbOf(b));
-          if (mtv) {{
-            a.style.left = (parseFloat(a.style.left) + mtv.x / 2) + 'px';
-            a.style.top = (parseFloat(a.style.top) + mtv.y / 2) + 'px';
-            b.style.left = (parseFloat(b.style.left) - mtv.x / 2) + 'px';
-            b.style.top = (parseFloat(b.style.top) - mtv.y / 2) + 'px';
-            clampToEnvelope(a);
-            clampToEnvelope(b);
-            continue;
-          }}
-        }}
-        if (ov.x < ov.y) {{
-          // dir=1 means a's center is to the right of b's -- a moves
-          // further right (+= ) to separate, b moves further left (-= ).
-          var dir = (ra.left + ra.width / 2) < (rb.left + rb.width / 2) ? -1 : 1;
-          a.style.left = (parseFloat(a.style.left) + dir * ov.x / 2) + 'px';
-          b.style.left = (parseFloat(b.style.left) - dir * ov.x / 2) + 'px';
-        }} else {{
-          var dirY = (ra.top + ra.height / 2) < (rb.top + rb.height / 2) ? -1 : 1;
-          a.style.top = (parseFloat(a.style.top) + dirY * ov.y / 2) + 'px';
-          b.style.top = (parseFloat(b.style.top) - dirY * ov.y / 2) + 'px';
-        }}
-        clampToEnvelope(a);
-        clampToEnvelope(b);
-      }}
-    }}
-    return changed;
-  }}
-
-  // The full overlap-resolution pass: every round runs all three
-  // strategies together — phase 1 (push/shrink everything else), phase 2
-  // (nudge the pinned box itself as a last resort), and the unconditional
-  // both-sides separator — rather than exhausting phases 1-2 first and
-  // only falling back to the separator once. In a dense, heavily-crowded
-  // scene (several rooms all pushed toward the same small area) fixing
-  // one pair can reopen another; running every strategy every round, over
-  // a generous budget, gives the whole arrangement many chances to reach
-  // mutual consistency instead of just one. This is what makes "no
-  // overlaps" an invariant rather than a best effort.
+  // Only where nobody can give the space up does anything move: the other
+  // room, one step, once. The dragged box is never touched, and a push is
+  // never allowed to trigger another one.
   function resolveOverlaps(pinned) {{
     clearAbsorbMemo();
     pinnedBox = pinned;
-    // Broad phase: one cheap sweep over the bounding boxes before any of the
-    // real work. Most of a drag is through open space, and there the answer
-    // is "nothing is touching" for the price of n^2/2 number comparisons
-    // instead of up to 48 passes of shrink/push/separate.
+    // Broad phase: most of a drag is through open space, and there the
+    // answer is "nothing is touching" for the price of n^2/2 comparisons.
     if (!anyBoxesOverlap()) return;
-    for (var outer = 0; outer < 8; outer++) {{
-      var changed1 = shrinkAndPushNonPinned(pinned);
-      var changed2 = pushPinnedClearOfOverlaps(pinned);
-      var changed3 = forceSeparateAnyRemainingOverlaps();
-      if (!changed1 && !changed2 && !changed3) break;
+
+    var live = activeBoxes();
+    var movedAlready = [];
+    for (var i = 0; i < live.length; i++) {{
+      var plan = carvePlanFor(live[i], live);
+      for (var r = 0; r < plan.refused.length; r++) {{
+        var stuck = live[i], other = plan.refused[r];
+        // `stuck` cannot give the space up. Move whichever of the pair is
+        // not under the cursor.
+        var mover = (stuck === pinned) ? other : stuck;
+        if (mover === pinned) continue;                  // never the dragged box
+        // Circulation never moves either. If the room you are dragging
+        // cannot bend around a hallway, the overlap is left standing rather
+        // than the hallway being shoved out of the plan -- a corridor that
+        // wanders is worse than one drawn under a room.
+        if (mover.classList.contains('corridor')) continue;
+        if (movedAlready.indexOf(mover) !== -1) continue; // one step, once
+        var against = (mover === stuck) ? other : stuck;
+        var mtv = obbPenetration(obbOf(mover), obbOf(against));
+        if (!mtv) continue;
+        mover.style.left = (parseFloat(mover.style.left) + mtv.x) + 'px';
+        mover.style.top = (parseFloat(mover.style.top) + mtv.y) + 'px';
+        clampPositionOnly(mover);
+        movedAlready.push(mover);
+      }}
     }}
   }}
 
@@ -1672,70 +1667,40 @@ def render_canvas_html(
   }}
 
   // Returns the box's display polygon IN ITS OWN FRAME (see frameOf).
-  // Returns the box's display polygon IN ITS OWN FRAME (see frameOf).
+  //
+  // The carve itself comes straight from carvePlanFor, so what gets drawn is
+  // exactly what the movement rules decided -- the two used to be computed
+  // separately and could disagree, which left rooms overlapping on screen.
+  // On top of that carve, a box beside a ROTATED neighbour also reaches into
+  // the triangular void the rotation opened, so the gap becomes floor rather
+  // than a slot nothing can use.
   function morphedPolygonFor(el, live, settled) {{
     var r = rectOf(el);
     var fr = frameOf(el);
-    var poly = rectPolyOf(r);
+    var plan = carvePlanFor(el, live);
+    var poly = plan.poly;
 
-    // Two different lists. `rotated` is what the gap fill reaches toward --
-    // only a turned room opens the triangular voids that fill exists to
-    // close. `biters` is everything this box is currently giving way to,
-    // which also includes square rooms pushed into it: that is what draws
-    // an L-shaped room without anything being rotated at all.
-    var rotated = [], biters = [];
+    if (fr.rotated) return poly;   // gap fill would stretch it along its own tilt
+
     for (var i = 0; i < live.length; i++) {{
       var o = live[i];
-      if (o === el) continue;
-      // A rotated neighbour is what the gap fill reaches toward, wherever
-      // it is. Whether it may BITE goes through exactly the same test as a
-      // square one: it used to bypass the victim rule and the absorb guards
-      // completely, which is how a rotated room came to eat a corridor down
-      // to 0.21m and to slice rooms in two.
-      if (rotationOf(o)) rotated.push(o);
-      if (boxesTrulyIntersect(el, o) && chooseBiteVictim(el, o) === el) {{
-        biters.push(o);
-      }}
-    }}
-    if (!biters.length && !rotated.length) return poly;
-
-    // Carve before filling. canAbsorbBite vetted each cut against the plain
-    // RECTANGLE, so that is the shape the cut is guaranteed to work on;
-    // applying it to a gap-filled shape instead could split it, the cut
-    // would be dropped, and the room would be left drawn overlapping the
-    // very neighbour collision had stood down for.
-    for (var b = 0; b < biters.length; b++) {{
-      var clip = pageToLocalPoly(polyOfBox(biters[b]), fr);
-      var firstCut = subtractPolys(poly, [clip]);
-      if (firstCut) poly = firstCut;
-    }}
-
-    // Then the gap fill, measured from where the room now is. Square boxes
-    // only: a rotated room reaching sideways into a void would grow along
-    // its own tilted axis, which reads as the room stretching rather than
-    // the gap closing.
-    for (var g = 0; g < rotated.length && !fr.rotated; g++) {{
-      var o2 = rotated[g], obb = obbOf(o2);
-      var oPoly = polyOfBox(o2);
+      if (o === el || !rotationOf(o)) continue;
+      var oPoly = polyOfBox(o);
       if (distanceBetweenPolys(poly, oPoly) > MORPH_REACH_PX) continue;
+      var obb = obbOf(o);
       var grown = rectPolyOf(grownRectToward(r, obb.cx, obb.cy, MORPH_REACH_PX));
       var merged = unionPolys([poly, grown]);
       if (!merged || merged.length !== 1 || merged[0].length !== 1) continue;
-      var candidate = ringToPoly(merged[0][0]);
-      candidate = clipPolyToEnvelope(candidate);
+      var candidate = clipPolyToEnvelope(ringToPoly(merged[0][0]));
       if (!candidate || candidate.length < 3) continue;
-      if (growthHitsAnotherBox(candidate, poly, el, o2, live, settled)) continue;
+      if (growthHitsAnotherBox(candidate, poly, el, o, live, settled)) continue;
       poly = candidate;
     }}
 
-    // Whatever the fill grew, trim the biters back out of it: the fill
-    // reaches toward them, so it always needs it. One at a time, keeping
-    // each cut that works -- subtracting them as a group fails as a group
-    // the moment ANY of them would split the shape, and a long hallway with
-    // four rooms leaning on it then drew none of the cuts at all.
-    for (var c = 0; c < biters.length; c++) {{
-      var clip2 = pageToLocalPoly(polyOfBox(biters[c]), fr);
-      var cut = subtractPolys(poly, [clip2]);
+    // Whatever the fill grew, take the carve back out of it -- the fill
+    // reaches toward exactly the boxes being carved around.
+    for (var c = 0; c < plan.taking.length; c++) {{
+      var cut = subtractPolys(poly, [pageToLocalPoly(polyOfBox(plan.taking[c]), fr)]);
       if (cut) poly = cut;
     }}
     return poly;
@@ -2284,9 +2249,15 @@ def render_canvas_html(
     active = box;
     takeGestureSnapshot();
     var p = point(e);
-    var rect = active.getBoundingClientRect();
-    offsetX = p.x - rect.left;
-    offsetY = p.y - rect.top;
+    // Where the grab sits relative to the box's OWN position, not its
+    // bounding rectangle. For a rotated box those differ by however far the
+    // rotation throws its bounding box out, so measuring from the rectangle
+    // made the room jump by that much the instant you picked it up, and
+    // then trail the cursor by it for the rest of the drag.
+    var cRect0 = container.getBoundingClientRect();
+    var r0 = rectOf(active);
+    offsetX = (p.x - cRect0.left) - r0.left;
+    offsetY = (p.y - cRect0.top) - r0.top;
     active.classList.add('dragging');
     e.preventDefault();
   }}
@@ -2320,12 +2291,28 @@ def render_canvas_html(
     var cRect = container.getBoundingClientRect();
     var newLeft = p.x - cRect.left - offsetX;
     var newTop = p.y - cRect.top - offsetY;
-    newLeft = clamp(newLeft, ENV.left, ENV.right - active.offsetWidth);
-    newTop = clamp(newTop, ENV.top, ENV.bottom - active.offsetHeight);
+
+    // Clamp on the box's TRUE footprint, not its unrotated width. A turned
+    // room covers more ground than its own rectangle, so clamping by
+    // offsetWidth let a rotated corner cross the setback line at one end
+    // and held the room short of it at the other.
+    var rNow = rectOf(active), eff = effectiveRectOf(active);
+    var padLeft = rNow.left - eff.left, padTop = rNow.top - eff.top;
+    newLeft = clamp(newLeft, ENV.left + padLeft, ENV.right - eff.width + padLeft);
+    newTop = clamp(newTop, ENV.top + padTop, ENV.bottom - eff.height + padTop);
+
     restoreOthersFromSnapshot(active);
-    active.style.left = snapToGrid(newLeft) + 'px';
-    active.style.top = snapToGrid(newTop) + 'px';
-    snapToNearbyNeighbors(active);
+
+    // Grid and gap snapping both work on the unrotated rectangle, which is
+    // not where a turned room is: snapping its origin to a 0.25m grid moves
+    // no visible edge onto the grid, and the gap snap measures distances
+    // between rectangles the rooms are no longer sitting in. For a rotated
+    // room both did more harm than good -- they fought the cursor -- so it
+    // moves freely and lands exactly where you put it.
+    var freeMoving = !!rotationOf(active);
+    active.style.left = (freeMoving ? newLeft : snapToGrid(newLeft)) + 'px';
+    active.style.top = (freeMoving ? newTop : snapToGrid(newTop)) + 'px';
+    if (!freeMoving) snapToNearbyNeighbors(active);
     clampPositionOnly(active);
     resolveOverlaps(active);
     refreshDiagram();
