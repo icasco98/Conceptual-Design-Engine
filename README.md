@@ -99,6 +99,13 @@ with yours and never sent to Claude as context.
    drawn, marked when a room has been reshaped — an L-shaped room has no
    single width, so area is what you check it against.
 
+   Rotated rooms have no invisible box around them: two rooms turned
+   toward each other are separated by their real shapes, so their drawn
+   edges meet exactly, and they reshape around each other the same way a
+   square room does. (Separation used to be measured on each room's
+   upright bounding box, which for a turned room is bigger than the room —
+   so they were held apart by a gap that wasn't there.)
+
    The building outline is a true union of those shapes, so it follows a
    rotated room's diagonal walls exactly. All the boolean geometry —
    carving, gap fill, the outline — is done by the vendored

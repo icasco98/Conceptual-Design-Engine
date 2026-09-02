@@ -73,6 +73,32 @@ either side of one slot cannot both claim it. Everything is recomputed
 from the rectangles each frame and never written back, so un-rotating
 restores every neighbor whole.
 
+**No invisible boxes.** Two boxes are separated by the smallest push that
+clears their TRUE rotated shapes (`obbPenetration`, the minimum
+translation vector from the same SAT test that detects the overlap). The
+separators used to push by the axis-aligned bounding boxes' overlap
+instead — which for a rotated room is much larger than the room — so two
+rooms turned toward each other were shoved apart by the difference and
+could never be brought together, each behaving as if sealed in an
+invisible square. Carving works in each box's own frame (`frameOf`,
+`pageToLocalPoly`), which is both the frame a CSS clip-path resolves in
+and the frame where a rotated box is an axis-aligned rectangle again — so
+rotated rooms carve each other on exactly the same terms as square ones.
+
+**Keeping a drag smooth.** Three things, all of which were needed:
+`OVERLAP_EPS_PX` — rooms placed flush differ by floating-point noise, and
+every push writes a fresh rounding error back, so without a tolerance the
+resolver found overlaps of a thousandth of a pixel forever and ran all 48
+of its passes on every pointer move (~37ms of the ~47ms frame). A broad
+phase (`anyBoxesOverlap`) that skips the resolver outright while nothing
+is touching, which is most of a drag. And memoized geometry — `rectOf`,
+`effectiveRectOf` and `obbOf` cache on the element keyed by the style
+strings they read, so they invalidate themselves the moment anything
+moves, and `canAbsorbBite` memoizes its polygon solve per resolve cycle.
+Pointer events are then coalesced to one frame (`runPendingMove`), since
+a high-polling-rate mouse delivers several per frame and the handler
+otherwise falls further behind the harder you drag.
+
 **Boolean geometry.** Carving, gap fill and the footprint outline all go
 through the vendored polygon-clipping library (`src/vendor/`, MIT),
 inlined into the page so the document stays self-contained with no CDN
@@ -877,13 +903,25 @@ def render_canvas_html(
   // off, but the footprint union stitches boundary segments by matching
   // their endpoints, and a hairline mismatch there splits one clean outline
   // into a fistful of open chains.
+  // Memoized on the element's own style strings, which are the only thing
+  // it reads -- so the cache invalidates itself the instant anything moves,
+  // with no bookkeeping at the write sites. The collision resolver asks for
+  // the same box's rect thousands of times per pointer move (n^2 pairs, up
+  // to 48 passes, and effectiveRectOf/obbOf both call through here); doing
+  // the parse and the allocation once per box per position instead of once
+  // per question is most of what makes dragging keep up with the mouse.
   function rectOf(el) {{
-    return {{
+    var sig = el.style.left + '|' + el.style.top + '|' + el.style.width + '|' + el.style.height;
+    var cached = el.__rectCache;
+    if (cached !== undefined && cached.sig === sig) return cached.rect;
+    var rect = {{
       left: parseFloat(el.style.left),
       top: parseFloat(el.style.top),
       width: el.style.width ? parseFloat(el.style.width) : el.offsetWidth,
       height: el.style.height ? parseFloat(el.style.height) : el.offsetHeight
     }};
+    el.__rectCache = {{sig: sig, rect: rect}};
+    return rect;
   }}
 
   function rotationOf(el) {{ return parseFloat(el.dataset.rotation || '0'); }}
@@ -902,12 +940,16 @@ def render_canvas_html(
     var r = rectOf(el);
     var deg = rotationOf(el);
     if (!deg) return r;
+    var cached = el.__effCache;
+    if (cached !== undefined && cached.rect === r && cached.deg === deg) return cached.eff;
     var rad = deg * Math.PI / 180;
     var cosA = Math.abs(Math.cos(rad)), sinA = Math.abs(Math.sin(rad));
     var bboxW = r.width * cosA + r.height * sinA;
     var bboxH = r.width * sinA + r.height * cosA;
     var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-    return {{left: cx - bboxW / 2, top: cy - bboxH / 2, width: bboxW, height: bboxH}};
+    var eff = {{left: cx - bboxW / 2, top: cy - bboxH / 2, width: bboxW, height: bboxH}};
+    el.__effCache = {{rect: r, deg: deg, eff: eff}};
+    return eff;
   }}
 
   // The box's true rotated shape as an oriented box: center, half-extents,
@@ -918,13 +960,18 @@ def render_canvas_html(
   // inflated AABB.
   function obbOf(el) {{
     var r = rectOf(el);
-    var rad = rotationOf(el) * Math.PI / 180;
-    return {{
+    var deg = rotationOf(el);
+    var cached = el.__obbCache;
+    if (cached !== undefined && cached.rect === r && cached.deg === deg) return cached.obb;
+    var rad = deg * Math.PI / 180;
+    var obb = {{
       cx: r.left + r.width / 2, cy: r.top + r.height / 2,
       hw: r.width / 2, hh: r.height / 2,
       ax: [Math.cos(rad), Math.sin(rad)],
       ay: [-Math.sin(rad), Math.cos(rad)]
     }};
+    el.__obbCache = {{rect: r, deg: deg, obb: obb}};
+    return obb;
   }}
 
   function cornersOfObb(obb) {{
@@ -969,13 +1016,14 @@ def render_canvas_html(
   }}
 
   function rectsOverlap(a, b) {{
-    return a.left < b.left + b.width && b.left < a.left + a.width &&
-           a.top < b.top + b.height && b.top < a.top + a.height;
+    return a.left + OVERLAP_EPS_PX < b.left + b.width && b.left + OVERLAP_EPS_PX < a.left + a.width &&
+           a.top + OVERLAP_EPS_PX < b.top + b.height && b.top + OVERLAP_EPS_PX < a.top + a.height;
   }}
 
   function boxesReallyOverlap(a, b, ov) {{
     if (!ov) return false;
     if (!boxesTrulyIntersect(a, b)) return false;
+    if (!eitherRotated(a, b)) return true;
     // A rotated room is allowed to bite into a square neighbor rather than
     // shove it away, PROVIDED the neighbor can give up the overlapping
     // sliver and still be a usable room (canAbsorbBite). Reporting the pair
@@ -998,6 +1046,36 @@ def render_canvas_html(
   // by collision resolution, the footprint outline, and door arrows, but
   // stay in `boxes` (and keep their data-initial-* attributes) so Reset
   // can always bring them back.
+  // How far, and in which direction, box A has to move to just clear B --
+  // measured on the two boxes' TRUE rotated shapes (the smallest separating
+  // axis from the same SAT test that detects the overlap).
+  //
+  // The separators used to push by the AABB overlap instead. For a rotated
+  // room that bounding box is much larger than the room, so two rooms
+  // turned toward each other were shoved apart by the difference and could
+  // never be brought together: they behaved as if each sat inside an
+  // invisible square. Pushing along the real MTV lets their drawn edges
+  // meet exactly.
+  function obbPenetration(A, B) {{
+    var dx = B.cx - A.cx, dy = B.cy - A.cy;
+    var axes = [A.ax, A.ay, B.ax, B.ay];
+    var best = Infinity, bestAxis = null;
+    for (var i = 0; i < axes.length; i++) {{
+      var L = axes[i];
+      var dist = Math.abs(dx * L[0] + dy * L[1]);
+      var projA = A.hw * Math.abs(A.ax[0] * L[0] + A.ax[1] * L[1]) + A.hh * Math.abs(A.ay[0] * L[0] + A.ay[1] * L[1]);
+      var projB = B.hw * Math.abs(B.ax[0] * L[0] + B.ax[1] * L[1]) + B.hh * Math.abs(B.ay[0] * L[0] + B.ay[1] * L[1]);
+      var depth = projA + projB - dist;
+      if (depth <= 0) return null;
+      if (depth < best) {{ best = depth; bestAxis = L; }}
+    }}
+    var along = dx * bestAxis[0] + dy * bestAxis[1];
+    var sign = along > 0 ? -1 : 1;
+    return {{x: bestAxis[0] * best * sign, y: bestAxis[1] * best * sign}};
+  }}
+
+  function eitherRotated(a, b) {{ return !!(rotationOf(a) || rotationOf(b)); }}
+
   function activeBoxes() {{
     return boxes.filter(function(b) {{ return b.dataset.deleted !== '1'; }});
   }}
@@ -1060,12 +1138,20 @@ def render_canvas_html(
     el.style.height = height + 'px';
   }}
 
+  // Sub-pixel overlaps don't count. Rooms the packer placed flush share an
+  // edge to within floating-point noise, and every push writes a fresh
+  // rounding error back into the layout -- without this tolerance the
+  // resolver finds "overlaps" of a thousandth of a pixel forever, runs all
+  // 48 of its passes on every single pointer move, and the drag turns to
+  // treacle. Well under the 0.25m grid everything snaps to anyway.
+  var OVERLAP_EPS_PX = 0.05;
+
   function overlapAmount(a, b) {{
     var ax2 = a.left + a.width, ay2 = a.top + a.height;
     var bx2 = b.left + b.width, by2 = b.top + b.height;
     var ox = Math.min(ax2, bx2) - Math.max(a.left, b.left);
     var oy = Math.min(ay2, by2) - Math.max(a.top, b.top);
-    if (ox <= 0 || oy <= 0) {{ return null; }}
+    if (ox <= OVERLAP_EPS_PX || oy <= OVERLAP_EPS_PX) {{ return null; }}
     return {{x: ox, y: oy}};
   }}
 
@@ -1095,6 +1181,17 @@ def render_canvas_html(
           var ov = overlapAmount(ra, rb);
           if (!boxesReallyOverlap(a, b, ov)) continue;
           any = true;
+          if (eitherRotated(a, b)) {{
+            // Rotated boxes are only ever translated, never resized, and by
+            // the true penetration depth rather than the bounding boxes'.
+            var mtvA = obbPenetration(obbOf(a), obbOf(b));
+            if (mtvA) {{
+              a.style.left = (parseFloat(a.style.left) + mtvA.x) + 'px';
+              a.style.top = (parseFloat(a.style.top) + mtvA.y) + 'px';
+              clampToEnvelope(a);
+              continue;
+            }}
+          }}
           if (ov.x < ov.y) {{
             var dir = (ra.left + ra.width / 2) < (rb.left + rb.width / 2) ? -1 : 1;
             if (aRotated) {{
@@ -1178,6 +1275,25 @@ def render_canvas_html(
   // of a conflict at once instead of just one breaks that cycle. This
   // ignores the pinned exemption on purpose: by the time this runs, "no
   // overlap" matters more than "the box under the cursor never moves."
+  function anyBoxesOverlap() {{
+    var live = activeBoxes();
+    var rects = new Array(live.length);
+    for (var i = 0; i < live.length; i++) rects[i] = effectiveRectOf(live[i]);
+    for (var a = 0; a < live.length; a++) {{
+      var ra = rects[a];
+      for (var b = a + 1; b < live.length; b++) {{
+        var rb = rects[b];
+        if (ra.left + OVERLAP_EPS_PX < rb.left + rb.width &&
+            rb.left + OVERLAP_EPS_PX < ra.left + ra.width &&
+            ra.top + OVERLAP_EPS_PX < rb.top + rb.height &&
+            rb.top + OVERLAP_EPS_PX < ra.top + ra.height) {{
+          if (boxesReallyOverlap(live[a], live[b], overlapAmount(ra, rb))) return true;
+        }}
+      }}
+    }}
+    return false;
+  }}
+
   function forceSeparateAnyRemainingOverlaps() {{
     var live = activeBoxes();
     var changed = false;
@@ -1188,6 +1304,18 @@ def render_canvas_html(
         var ov = overlapAmount(ra, rb);
         if (!boxesReallyOverlap(a, b, ov)) continue;
         changed = true;
+        if (eitherRotated(a, b)) {{
+          var mtv = obbPenetration(obbOf(a), obbOf(b));
+          if (mtv) {{
+            a.style.left = (parseFloat(a.style.left) + mtv.x / 2) + 'px';
+            a.style.top = (parseFloat(a.style.top) + mtv.y / 2) + 'px';
+            b.style.left = (parseFloat(b.style.left) - mtv.x / 2) + 'px';
+            b.style.top = (parseFloat(b.style.top) - mtv.y / 2) + 'px';
+            clampToEnvelope(a);
+            clampToEnvelope(b);
+            continue;
+          }}
+        }}
         if (ov.x < ov.y) {{
           // dir=1 means a's center is to the right of b's -- a moves
           // further right (+= ) to separate, b moves further left (-= ).
@@ -1217,6 +1345,12 @@ def render_canvas_html(
   // mutual consistency instead of just one. This is what makes "no
   // overlaps" an invariant rather than a best effort.
   function resolveOverlaps(pinned) {{
+    clearAbsorbMemo();
+    // Broad phase: one cheap sweep over the bounding boxes before any of the
+    // real work. Most of a drag is through open space, and there the answer
+    // is "nothing is touching" for the price of n^2/2 number comparisons
+    // instead of up to 48 passes of shrink/push/separate.
+    if (!anyBoxesOverlap()) return;
     for (var outer = 0; outer < 8; outer++) {{
       var changed1 = shrinkAndPushNonPinned(pinned);
       var changed2 = pushPinnedClearOfOverlaps(pinned);
@@ -1306,6 +1440,38 @@ def render_canvas_html(
 
   function polyOfBox(el) {{ return cornersOfObb(obbOf(el)); }}
 
+  // Every box's display shape is computed in that box's OWN frame: the
+  // unrotated rectangle it would occupy, with the world turned around it.
+  // Two reasons. A CSS clip-path is applied before the element's transform,
+  // so it has to be expressed in exactly this frame anyway; and it means a
+  // rotated box is just an axis-aligned rectangle again, so the carve, the
+  // minimum-rectangle test and the strip measurements all work unchanged
+  // for rotated and square rooms alike. For an unrotated box the two frames
+  // are identical and both transforms are a no-op.
+  function frameOf(el) {{
+    var r = rectOf(el), rad = rotationOf(el) * Math.PI / 180;
+    return {{
+      cx: r.left + r.width / 2, cy: r.top + r.height / 2,
+      cos: Math.cos(rad), sin: Math.sin(rad), rotated: rad !== 0
+    }};
+  }}
+
+  function pageToLocalPoly(poly, fr) {{
+    if (!fr.rotated) return poly;
+    return poly.map(function(p) {{
+      var dx = p[0] - fr.cx, dy = p[1] - fr.cy;
+      return [fr.cx + dx * fr.cos + dy * fr.sin, fr.cy - dx * fr.sin + dy * fr.cos];
+    }});
+  }}
+
+  function localToPagePoly(poly, fr) {{
+    if (!fr.rotated) return poly;
+    return poly.map(function(p) {{
+      var dx = p[0] - fr.cx, dy = p[1] - fr.cy;
+      return [fr.cx + dx * fr.cos - dy * fr.sin, fr.cy + dx * fr.sin + dy * fr.cos];
+    }});
+  }}
+
   function rectPolyOf(r) {{
     return [[r.left, r.top], [r.left + r.width, r.top],
             [r.left + r.width, r.top + r.height], [r.left, r.top + r.height]];
@@ -1364,13 +1530,47 @@ def render_canvas_html(
   // so circulation can never be severed by a bite. Its minimum on both axes
   // is the code hallway width, so the minimum-rectangle test below keeps
   // the remaining strip at full width.
-  function canAbsorbBite(victim, biter) {{
-    if (rotationOf(victim)) return false;
-    if (!rotationOf(biter)) return false;
+  // canAbsorbBite runs a real polygon difference, and the collision
+  // resolver asks it about every overlapping pair on every one of its
+  // passes -- up to 48 times per pointer move. Memoized on the pair's exact
+  // geometry, so a repeat question inside one resolve cycle is a string
+  // compare instead of a boolean-geometry solve. This is the difference
+  // between a drag at ~19fps and one that keeps up with the mouse.
+  var absorbMemo = {{}};
 
+  function geomKey(el) {{
+    return el.style.left + '|' + el.style.top + '|' + el.style.width + '|' +
+           el.style.height + '|' + (el.dataset.rotation || '0');
+  }}
+
+  function boxKey(el) {{
+    if (!el.dataset.boxKey) el.dataset.boxKey = 'k' + Math.random().toString(36).slice(2);
+    return el.dataset.boxKey;
+  }}
+
+  function clearAbsorbMemo() {{ absorbMemo = {{}}; }}
+
+  function canAbsorbBite(victim, biter) {{
+    // Cheapest possible rejections first: only a ROTATED box ever bites, and
+    // building the memo key is itself string work worth skipping. Without
+    // this guard the key was built for every pair on every pass even in a
+    // layout with nothing rotated at all -- tens of thousands of string
+    // concatenations per pointer move, for a question whose answer was
+    // always no.
+    if (!rotationOf(biter) || victim === biter) return false;
+    var key = boxKey(victim) + geomKey(victim) + '>' + boxKey(biter) + geomKey(biter);
+    var hit = absorbMemo[key];
+    if (hit !== undefined) return hit;
+    var result = computeCanAbsorbBite(victim, biter);
+    absorbMemo[key] = result;
+    return result;
+  }}
+
+  function computeCanAbsorbBite(victim, biter) {{
+    var fr = frameOf(victim);
     var rect = rectOf(victim);
     var base = rectPolyOf(rect);
-    var cut = subtractPolys(base, [polyOfBox(biter)]);
+    var cut = subtractPolys(base, [pageToLocalPoly(polyOfBox(biter), fr)]);
     if (!cut) return false;
 
     var full = rect.width * rect.height;
@@ -1381,7 +1581,7 @@ def render_canvas_html(
     var min = minOf(victim);
     if (left < min.w * min.h - 1e-6) return false;
 
-    var bite = bboxOf(polyOfBox(biter));
+    var bite = bboxOf(pageToLocalPoly(polyOfBox(biter), fr));
     var strips = largestFreeStrip(rect, bite);
     for (var i = 0; i < strips.length; i++) {{
       if (strips[i].w >= min.w - 1e-6 && strips[i].h >= min.h - 1e-6) return true;
@@ -1416,11 +1616,12 @@ def render_canvas_html(
     return g;
   }}
 
+  // Returns the box's display polygon IN ITS OWN FRAME (see frameOf).
   function morphedPolygonFor(el, live, settled) {{
     var r = rectOf(el);
-    if (rotationOf(el)) return polyOfBox(el);
-
+    var fr = frameOf(el);
     var poly = rectPolyOf(r);
+
     var rotated = [];
     for (var i = 0; i < live.length; i++) {{
       var o = live[i];
@@ -1431,7 +1632,10 @@ def render_canvas_html(
     // Gap fill first, so the reach is measured from the room's real
     // rectangle; the carve below then trims whatever the rotated rooms
     // actually occupy, out of the grown shape and the original alike.
-    for (var g = 0; g < rotated.length; g++) {{
+    // Gap fill is for square rooms only: a rotated room reaching sideways
+    // into a void would grow along its own tilted axis, which reads as the
+    // room stretching rather than the gap closing.
+    for (var g = 0; g < rotated.length && !fr.rotated; g++) {{
       var o2 = rotated[g], obb = obbOf(o2);
       var oPoly = polyOfBox(o2);
       if (distanceBetweenPolys(poly, oPoly) > MORPH_REACH_PX) continue;
@@ -1452,7 +1656,7 @@ def render_canvas_html(
     // fallbacks step down to the plain rectangle instead: it can only fail
     // to carve in exactly the cases canAbsorbBite also refuses, and there
     // collision has kept the pair apart, so the rectangle is safe to draw.
-    var clippers = rotated.map(polyOfBox);
+    var clippers = rotated.map(function(o) {{ return pageToLocalPoly(polyOfBox(o), fr); }});
     var carved = subtractPolys(poly, clippers);
     if (carved) return carved;
     var base = rectPolyOf(r);
@@ -1519,6 +1723,7 @@ def render_canvas_html(
   }}
 
   function applyDisplayShapes() {{
+    clearAbsorbMemo();
     var live = activeBoxes();
     displayPolys = [];
     // Shaped in order, each against the shapes already settled this pass, so
@@ -1527,9 +1732,9 @@ def render_canvas_html(
       var el = live[i];
       var settled = displayPolys.slice();
       for (var j = i + 1; j < live.length; j++) settled.push(polyOfBox(live[j]));
-      var poly = morphedPolygonFor(el, live, settled);
-      displayPolys.push(poly);
-      paintFill(el, poly);
+      var localPoly = morphedPolygonFor(el, live, settled);
+      displayPolys.push(localToPagePoly(localPoly, frameOf(el)));
+      paintFill(el, localPoly);
     }}
     window.__polys = displayPolys;
     // Exposed for the test suite (and for debugging a layout by hand):
@@ -1541,11 +1746,14 @@ def render_canvas_html(
     }});
   }}
 
+  // `poly` is in the box's own frame (see frameOf), which is the frame a
+  // CSS clip-path is resolved in -- the element's transform is applied
+  // afterwards, carrying the clipped shape round with it.
   function paintFill(el, poly) {{
     var fill = el.querySelector('.fill');
     if (!fill) return;
     var r = rectOf(el);
-    if (rotationOf(el) || samePolygon(poly, rectPolyOf(r))) {{
+    if (samePolygon(poly, rectPolyOf(r))) {{
       fill.style.left = '0px';
       fill.style.top = '0px';
       fill.style.width = '100%';
@@ -1795,6 +2003,13 @@ def render_canvas_html(
         var hInput = tr.querySelector('input[data-axis="h"]');
         wInput.addEventListener('change', function() {{ applyScheduleEdit(box, 'w', parseFloat(wInput.value)); }});
         hInput.addEventListener('change', function() {{ applyScheduleEdit(box, 'h', parseFloat(hInput.value)); }});
+        // Focusing a size field selects its room too, so you can see which
+        // box on the diagram you are about to resize. The row's own click
+        // handler deliberately ignores clicks on inputs (they need to place
+        // a caret), which used to leave typing into a field as the one way
+        // to edit a room without it being highlighted anywhere.
+        wInput.addEventListener('focus', function() {{ selectBox(box, false); }});
+        hInput.addEventListener('focus', function() {{ selectBox(box, false); }});
         tr.querySelector('.schedule-delete').addEventListener('mousedown', function(ev) {{
           ev.preventDefault();
           ev.stopPropagation();
@@ -1880,6 +2095,15 @@ def render_canvas_html(
 
   // Everything that must be re-derived from scratch after any move,
   // resize, rotate, or delete — never left stale from the initial layout.
+  // Exposed so the perf harness can time each stage of a frame separately.
+  window.__stages = {{
+    shapes: function() {{ applyDisplayShapes(); }},
+    footprint: function() {{ updateFootprint(); }},
+    doors: function() {{ updateDoorArrows(); }},
+    schedule: function() {{ renderSchedule(); }},
+    resolve: function() {{ resolveOverlaps(null); }}
+  }};
+
   function refreshDiagram() {{
     applyDisplayShapes();
     updateFootprint();
@@ -1900,25 +2124,43 @@ def render_canvas_html(
     e.preventDefault();
   }}
 
+  // Pointer events can arrive faster than a frame can be drawn -- a
+  // high-polling-rate mouse will happily deliver several per frame, and
+  // collision resolution plus the boolean geometry is far too much work to
+  // run on every one. So a move only records where the pointer is and asks
+  // for a frame; the actual work happens once per frame, on the newest
+  // position. Without this the handler falls further behind the harder you
+  // drag, which is exactly what makes a drag feel like it's snagging.
+  var pendingMove = null;
+  var moveFrame = 0;
+
   function onMove(e) {{
     if (activeResize) {{ doResize(e); return; }}
     if (activeRotate) {{ doRotate(e); return; }}
     if (!active) return;
     var p = point(e);
+    pendingMove = {{x: p.x, y: p.y}};
+    if (!moveFrame) moveFrame = requestAnimationFrame(runPendingMove);
+    e.preventDefault();
+  }}
+
+  function runPendingMove() {{
+    moveFrame = 0;
+    if (!active || !pendingMove) return;
+    var p = pendingMove;
+    pendingMove = null;
+
     var cRect = container.getBoundingClientRect();
     var newLeft = p.x - cRect.left - offsetX;
     var newTop = p.y - cRect.top - offsetY;
     newLeft = clamp(newLeft, ENV.left, ENV.right - active.offsetWidth);
     newTop = clamp(newTop, ENV.top, ENV.bottom - active.offsetHeight);
-    newLeft = snapToGrid(newLeft);
-    newTop = snapToGrid(newTop);
-    active.style.left = newLeft + 'px';
-    active.style.top = newTop + 'px';
+    active.style.left = snapToGrid(newLeft) + 'px';
+    active.style.top = snapToGrid(newTop) + 'px';
     snapToNearbyNeighbors(active);
     clampPositionOnly(active);
     resolveOverlaps(active);
     refreshDiagram();
-    e.preventDefault();
   }}
 
   // Drags a corner handle: the opposite corner stays put, the dragged
@@ -2072,6 +2314,7 @@ def render_canvas_html(
   // to let the whole arrangement fully settle into mutual consistency,
   // however many relationships that takes.
   function onUp() {{
+    if (moveFrame) {{ cancelAnimationFrame(moveFrame); moveFrame = 0; runPendingMove(); }}
     if (active) {{ active.classList.remove('dragging'); }}
     if (activeResize) {{ activeResize.el.classList.remove('dragging'); }}
     if (activeRotate) {{ activeRotate.targets.forEach(function(t) {{ t.classList.remove('dragging'); }}); }}

@@ -517,3 +517,63 @@ def test_schedule_reports_the_area_a_carved_room_actually_has_left():
     assert "polyArea(shape)" in html
     # ...while the editable width/depth still drive the underlying rectangle.
     assert "function applyScheduleEdit" in html
+
+
+def test_rotated_boxes_are_separated_by_their_real_shapes_not_bounding_boxes():
+    """Two rooms turned toward each other must be able to touch. Pushing by
+    the AABB overlap shoved them apart by the difference between the box and
+    its bounding box, so each behaved as if sealed in an invisible square."""
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    assert "function obbPenetration" in html
+    assert "function eitherRotated" in html
+    # Both separators take the true-shape path before the AABB one.
+    assert html.count("obbPenetration(obbOf(a), obbOf(b))") >= 2
+
+
+def test_carving_works_in_each_boxs_own_frame_so_rotated_rooms_carve_too():
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    assert "function frameOf" in html
+    assert "function pageToLocalPoly" in html
+    assert "function localToPagePoly" in html
+    # A rotated victim is no longer refused outright.
+    assert "if (rotationOf(victim)) return false;" not in html
+
+
+def test_drag_work_is_coalesced_to_one_frame():
+    """A high-polling-rate mouse delivers several moves per frame; running
+    collision resolution and boolean geometry on each is what made a drag
+    snag."""
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    assert "requestAnimationFrame(runPendingMove)" in html
+    assert "function runPendingMove" in html
+    # A drag ending between frames still lands on its final position.
+    assert "cancelAnimationFrame(moveFrame)" in html
+
+
+def test_the_resolver_short_circuits_when_nothing_is_touching():
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    # Sub-pixel tolerance: flush rooms differ by floating-point noise, and
+    # without it the resolver "found" overlaps forever and ran all 48 passes
+    # on every pointer move.
+    assert "OVERLAP_EPS_PX" in html
+    # Broad phase before any real work, and memoized/cached geometry.
+    assert "if (!anyBoxesOverlap()) return;" in html
+    assert "function anyBoxesOverlap" in html
+    assert "el.__rectCache" in html
+    assert "var absorbMemo" in html
+
+
+def test_focusing_a_size_field_selects_its_room():
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    assert "wInput.addEventListener('focus'" in html
+    assert "hInput.addEventListener('focus'" in html
