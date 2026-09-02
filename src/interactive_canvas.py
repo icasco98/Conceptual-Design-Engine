@@ -44,6 +44,46 @@ Per-box controls, all pure client-side JS (see the generated `<script>`):
   always snaps to that same 0.25m grid while dragging or resizing
   (`snapToGrid`, `GRID_PX`) — the grid is a visibility choice, snapping
   isn't.
+**Any box bites; the other gives way.** Two overlapping boxes are not
+pushed apart if one of them can give up the overlap instead — it draws
+itself carved (an L-shape) while its rectangle, position and schedule entry
+stay put. This is not something only a rotated box can do: push two square
+rooms together and one draws itself as an L, which is how an L-shaped room
+gets made directly rather than by rotating something into it.
+
+Which one gives way is decided in one place (`chooseBiteVictim`) that the
+collision gate, the rotation check and the shape pass all ask, so the room
+that gets vetted is always the room that gets carved — approving one
+direction and drawing the other left rooms visibly overlapping. Circulation
+never gives way to a room: a corridor is long and thin, so by raw spare
+area it looked like the roomiest thing on the canvas and lost to everything
+that drifted into it. Otherwise the box under the cursor bites (pushing the
+room you are deliberately moving is not what you asked for), and with
+neither pinned the one with more area to spare over its own minimum gives
+way. Where neither can absorb the cut, the pair is pushed apart as before.
+
+**Nothing resizes a room but its owner.** A room's size is set by its
+resize handle and the schedule's fields, and by nothing else. Collision
+used to shrink whatever it pushed toward the type minimum, and the envelope
+clamp squashed whatever reached the setback line — so dragging the garage
+into the kitchen silently cost the kitchen metres, with nothing on screen
+saying so. Both now translate instead.
+
+**Displacement undoes itself.** Every gesture snapshots where the other
+boxes were (`takeGestureSnapshot`) and each frame restores them before
+resolving, so what gets displaced is a pure function of where the dragged
+box is *now*: drag across the plan and back and everything comes with you.
+Pushes used to be one-way and cumulative, so a room shoved aside stayed
+shoved long after the thing that shoved it had gone, and one careless drag
+could scatter a layout with no way back but Reset.
+
+**A room is never drawn on top of another.** Whatever the rules above
+decide, the shape pass takes a final sweep: anything still overlapping a
+shape already settled has that overlap subtracted from it, keeping the
+largest piece if the cut would otherwise be refused
+(`subtractLargestPiece`). The drawing is not allowed to lie about which
+space a room actually has.
+
 **Rotation bites, it does not shove.** A rotated box is allowed to overlap
 a square neighbor, and the neighbor gives up exactly the overlapping
 sliver — it draws itself carved (an L-shape against the slanted wall)
@@ -1023,14 +1063,17 @@ def render_canvas_html(
   function boxesReallyOverlap(a, b, ov) {{
     if (!ov) return false;
     if (!boxesTrulyIntersect(a, b)) return false;
-    if (!eitherRotated(a, b)) return true;
-    // A rotated room is allowed to bite into a square neighbor rather than
-    // shove it away, PROVIDED the neighbor can give up the overlapping
-    // sliver and still be a usable room (canAbsorbBite). Reporting the pair
-    // as not-overlapping is what keeps every push, shrink and cascade off
-    // them -- the neighbor simply draws itself carved instead. Rotation
-    // stays a local edit this way, rather than scattering the whole plan.
-    if (canAbsorbBite(a, b) || canAbsorbBite(b, a)) return false;
+    // Any room may bite any room -- it is no longer something only a
+    // rotated one can do. Push two square rooms together and the one giving
+    // way draws itself as an L instead of shrinking or sliding off, which
+    // is how you make an L-shaped room directly rather than having to
+    // rotate something into it. The guards are unchanged: the victim keeps
+    // its minimum area AND its minimum rectangle, and no cut may split it
+    // in two or punch a hole through it.
+    //
+    // Reporting an absorbable pair as not-overlapping is what keeps every
+    // push and cascade off them; the victim simply draws itself carved.
+    if (chooseBiteVictim(a, b)) return false;
     return true;
   }}
 
@@ -1076,6 +1119,46 @@ def render_canvas_html(
 
   function eitherRotated(a, b) {{ return !!(rotationOf(a) || rotationOf(b)); }}
 
+  // How much room a box has to give: floor area above its own minimum.
+  function slackOf(el) {{
+    var r = rectOf(el), m = minOf(el);
+    return (r.width * r.height) - (m.w * m.h);
+  }}
+
+  // Of an overlapping pair, the one that will actually give up the overlap:
+  // the preferred victim if it can absorb the cut, otherwise the other one,
+  // otherwise nobody and the pair has to be pushed apart.
+  //
+  // Every place that cares -- the collision gate, the rotation check and the
+  // shape pass -- asks THIS, so the room that gets vetted is always the room
+  // that gets carved. Asking one question and drawing the other answer left
+  // rooms visibly overlapping.
+  function chooseBiteVictim(a, b) {{
+    var first = biteVictim(a, b);
+    var second = first === a ? b : a;
+    if (canAbsorbBite(first, second)) return first;
+    if (canAbsorbBite(second, first)) return second;
+    return null;
+  }}
+
+  // Which of the pair SHOULD give way, before asking whether it can.
+  function biteVictim(a, b) {{
+    // Circulation never gives way to a room. A corridor is long and thin,
+    // so by raw spare area it looks like the roomiest thing on the canvas
+    // and lost to everything -- rooms drifting into the hallway ate it
+    // instead of being stopped by it. It is the one space whose whole
+    // purpose is to stay open.
+    var aCorridor = a.classList.contains('corridor');
+    var bCorridor = b.classList.contains('corridor');
+    if (aCorridor !== bCorridor) return aCorridor ? b : a;
+
+    if (pinnedBox === a) return b;
+    if (pinnedBox === b) return a;
+    // Neither is being dragged: the roomier one gives way. A bathroom at
+    // its code minimum has nothing to spare; a great room does.
+    return slackOf(a) >= slackOf(b) ? a : b;
+  }}
+
   function activeBoxes() {{
     return boxes.filter(function(b) {{ return b.dataset.deleted !== '1'; }});
   }}
@@ -1104,38 +1187,13 @@ def render_canvas_html(
   // ever translated (see clampPositionOnly): resizing its true rectangle
   // while a CSS rotation is applied would visibly distort it, which is a
   // worse outcome than just sliding it to stay inside the line.
+  // A box pushed against the setback line STOPS at it. It used to be
+  // squashed against it instead, shrinking toward its type minimum -- the
+  // last place a room could quietly lose metres the owner never gave up.
+  // Nothing but the owner's own resize handle and the schedule's size
+  // fields changes a room's size now.
   function clampToEnvelope(el) {{
-    if (rotationOf(el)) {{ clampPositionOnly(el); return; }}
-
-    var r = rectOf(el), m = minOf(el);
-    var left = r.left, top = r.top, width = r.width, height = r.height;
-
-    if (left < ENV.left) {{
-      width = Math.max(m.w, width - (ENV.left - left));
-      left = ENV.left;
-    }}
-    if (left + width > ENV.right) {{
-      width = Math.max(m.w, width - (left + width - ENV.right));
-    }}
-    if (left + width > ENV.right) {{
-      left = Math.max(ENV.left, ENV.right - width);
-    }}
-
-    if (top < ENV.top) {{
-      height = Math.max(m.h, height - (ENV.top - top));
-      top = ENV.top;
-    }}
-    if (top + height > ENV.bottom) {{
-      height = Math.max(m.h, height - (top + height - ENV.bottom));
-    }}
-    if (top + height > ENV.bottom) {{
-      top = Math.max(ENV.top, ENV.bottom - height);
-    }}
-
-    el.style.left = left + 'px';
-    el.style.top = top + 'px';
-    el.style.width = width + 'px';
-    el.style.height = height + 'px';
+    clampPositionOnly(el);
   }}
 
   // Sub-pixel overlaps don't count. Rooms the packer placed flush share an
@@ -1172,8 +1230,6 @@ def render_canvas_html(
       for (var i = 0; i < live.length; i++) {{
         var a = live[i];
         if (a === pinned) continue;
-        var ma = minOf(a);
-        var aRotated = !!rotationOf(a);
         for (var j = 0; j < live.length; j++) {{
           if (i === j) continue;
           var b = live[j];
@@ -1192,42 +1248,20 @@ def render_canvas_html(
               continue;
             }}
           }}
+          // Translate only. A room's SIZE is the owner's decision -- made by
+          // dragging its corner or typing in the schedule -- and nothing
+          // else may quietly change it. This used to shrink whatever it
+          // pushed, down toward the type minimum: drag the garage into the
+          // kitchen and the kitchen silently got smaller, with nothing on
+          // screen saying so and no way to get the metres back.
           if (ov.x < ov.y) {{
             var dir = (ra.left + ra.width / 2) < (rb.left + rb.width / 2) ? -1 : 1;
-            if (aRotated) {{
-              a.style.left = (parseFloat(a.style.left) + dir * ov.x) + 'px';
-            }} else {{
-              var newWidth = Math.max(ma.w, ra.width - ov.x);
-              var consumed = ra.width - newWidth;
-              var remaining = ov.x - consumed;
-              if (dir === -1) {{
-                a.style.width = newWidth + 'px';
-                if (remaining > 0) {{ a.style.left = (ra.left - remaining) + 'px'; }}
-              }} else {{
-                a.style.left = (ra.left + consumed) + 'px';
-                a.style.width = newWidth + 'px';
-                if (remaining > 0) {{ a.style.left = (parseFloat(a.style.left) + remaining) + 'px'; }}
-              }}
-            }}
+            a.style.left = (parseFloat(a.style.left) + dir * ov.x) + 'px';
           }} else {{
             var dirY = (ra.top + ra.height / 2) < (rb.top + rb.height / 2) ? -1 : 1;
-            if (aRotated) {{
-              a.style.top = (parseFloat(a.style.top) + dirY * ov.y) + 'px';
-            }} else {{
-              var newHeight = Math.max(ma.h, ra.height - ov.y);
-              var consumedY = ra.height - newHeight;
-              var remainingY = ov.y - consumedY;
-              if (dirY === -1) {{
-                a.style.height = newHeight + 'px';
-                if (remainingY > 0) {{ a.style.top = (ra.top - remainingY) + 'px'; }}
-              }} else {{
-                a.style.top = (ra.top + consumedY) + 'px';
-                a.style.height = newHeight + 'px';
-                if (remainingY > 0) {{ a.style.top = (parseFloat(a.style.top) + remainingY) + 'px'; }}
-              }}
-            }}
+            a.style.top = (parseFloat(a.style.top) + dirY * ov.y) + 'px';
           }}
-          clampToEnvelope(a);
+          clampPositionOnly(a);
         }}
       }}
       if (any) {{ changedAtAll = true; }}
@@ -1346,6 +1380,7 @@ def render_canvas_html(
   // overlaps" an invariant rather than a best effort.
   function resolveOverlaps(pinned) {{
     clearAbsorbMemo();
+    pinnedBox = pinned;
     // Broad phase: one cheap sweep over the bounding boxes before any of the
     // real work. Most of a drag is through open space, and there the answer
     // is "nothing is touching" for the price of n^2/2 number comparisons
@@ -1400,6 +1435,27 @@ def render_canvas_html(
     if (out[0].length !== 1) return null;
     var ring = ringToPoly(out[0][0]);
     return ring.length >= 3 ? ring : null;
+  }}
+
+  // Same subtraction, but never refusing. Where subtractPolys declines a
+  // cut that would split a shape or hole it, this takes the largest piece
+  // that survives. Used only as the last step of drawing: whatever the
+  // collision rules decided, a room must never be DRAWN sitting on top of
+  // another one, and a room shown a fragment smaller than it really is at
+  // least tells the truth about the space it can still use.
+  function subtractLargestPiece(subject, clipper) {{
+    var out;
+    try {{ out = polygonClipping.difference(polyToGeom(subject), polyToGeom(clipper)); }}
+    catch (err) {{ return null; }}
+    if (!out || !out.length) return null;
+    var best = null, bestArea = 0;
+    for (var i = 0; i < out.length; i++) {{
+      var ring = ringToPoly(out[i][0]);
+      if (ring.length < 3) continue;
+      var area = polyArea(ring);
+      if (area > bestArea) {{ bestArea = area; best = ring; }}
+    }}
+    return best;
   }}
 
   function unionPolys(polys) {{
@@ -1537,6 +1593,12 @@ def render_canvas_html(
   // compare instead of a boolean-geometry solve. This is the difference
   // between a drag at ~19fps and one that keeps up with the mouse.
   var absorbMemo = {{}};
+  // The box currently under the cursor. When a pair overlaps and one of
+  // them is it, that one bites and the other gives way -- pushing the room
+  // you are deliberately moving is not what you asked for. With neither
+  // pinned (a cascade), the room with more spare area over its own minimum
+  // gives way, since it is the one that can best afford to.
+  var pinnedBox = null;
 
   function geomKey(el) {{
     return el.style.left + '|' + el.style.top + '|' + el.style.width + '|' +
@@ -1551,13 +1613,7 @@ def render_canvas_html(
   function clearAbsorbMemo() {{ absorbMemo = {{}}; }}
 
   function canAbsorbBite(victim, biter) {{
-    // Cheapest possible rejections first: only a ROTATED box ever bites, and
-    // building the memo key is itself string work worth skipping. Without
-    // this guard the key was built for every pair on every pass even in a
-    // layout with nothing rotated at all -- tens of thousands of string
-    // concatenations per pointer move, for a question whose answer was
-    // always no.
-    if (!rotationOf(biter) || victim === biter) return false;
+    if (victim === biter) return false;
     var key = boxKey(victim) + geomKey(victim) + '>' + boxKey(biter) + geomKey(biter);
     var hit = absorbMemo[key];
     if (hit !== undefined) return hit;
@@ -1617,24 +1673,50 @@ def render_canvas_html(
   }}
 
   // Returns the box's display polygon IN ITS OWN FRAME (see frameOf).
+  // Returns the box's display polygon IN ITS OWN FRAME (see frameOf).
   function morphedPolygonFor(el, live, settled) {{
     var r = rectOf(el);
     var fr = frameOf(el);
     var poly = rectPolyOf(r);
 
-    var rotated = [];
+    // Two different lists. `rotated` is what the gap fill reaches toward --
+    // only a turned room opens the triangular voids that fill exists to
+    // close. `biters` is everything this box is currently giving way to,
+    // which also includes square rooms pushed into it: that is what draws
+    // an L-shaped room without anything being rotated at all.
+    var rotated = [], biters = [];
     for (var i = 0; i < live.length; i++) {{
       var o = live[i];
-      if (o !== el && rotationOf(o)) rotated.push(o);
+      if (o === el) continue;
+      if (rotationOf(o)) {{
+        rotated.push(o);
+        biters.push(o);
+        continue;
+      }}
+      // A square neighbour bites only where it genuinely overlaps and this
+      // box is the one chosen to give way -- rooms merely sitting side by
+      // side must never start eating each other.
+      if (boxesTrulyIntersect(el, o) && chooseBiteVictim(el, o) === el) {{
+        biters.push(o);
+      }}
     }}
-    if (!rotated.length) return poly;
+    if (!biters.length) return poly;
 
-    // Gap fill first, so the reach is measured from the room's real
-    // rectangle; the carve below then trims whatever the rotated rooms
-    // actually occupy, out of the grown shape and the original alike.
-    // Gap fill is for square rooms only: a rotated room reaching sideways
-    // into a void would grow along its own tilted axis, which reads as the
-    // room stretching rather than the gap closing.
+    // Carve before filling. canAbsorbBite vetted each cut against the plain
+    // RECTANGLE, so that is the shape the cut is guaranteed to work on;
+    // applying it to a gap-filled shape instead could split it, the cut
+    // would be dropped, and the room would be left drawn overlapping the
+    // very neighbour collision had stood down for.
+    for (var b = 0; b < biters.length; b++) {{
+      var clip = pageToLocalPoly(polyOfBox(biters[b]), fr);
+      var firstCut = subtractPolys(poly, [clip]) || subtractLargestPiece(poly, clip);
+      if (firstCut) poly = firstCut;
+    }}
+
+    // Then the gap fill, measured from where the room now is. Square boxes
+    // only: a rotated room reaching sideways into a void would grow along
+    // its own tilted axis, which reads as the room stretching rather than
+    // the gap closing.
     for (var g = 0; g < rotated.length && !fr.rotated; g++) {{
       var o2 = rotated[g], obb = obbOf(o2);
       var oPoly = polyOfBox(o2);
@@ -1649,19 +1731,17 @@ def render_canvas_html(
       poly = candidate;
     }}
 
-    // Whatever the gap fill grew, the rotated rooms' own footprints come
-    // back out of it -- the fill reaches toward them, so it always needs
-    // trimming. Falling back to the GROWN shape when a cut isn't drawable
-    // would leave a room visibly overlapping the rotated one, so the
-    // fallbacks step down to the plain rectangle instead: it can only fail
-    // to carve in exactly the cases canAbsorbBite also refuses, and there
-    // collision has kept the pair apart, so the rectangle is safe to draw.
-    var clippers = rotated.map(function(o) {{ return pageToLocalPoly(polyOfBox(o), fr); }});
-    var carved = subtractPolys(poly, clippers);
-    if (carved) return carved;
-    var base = rectPolyOf(r);
-    carved = subtractPolys(base, clippers);
-    return carved || base;
+    // Whatever the fill grew, trim the biters back out of it: the fill
+    // reaches toward them, so it always needs it. One at a time, keeping
+    // each cut that works -- subtracting them as a group fails as a group
+    // the moment ANY of them would split the shape, and a long hallway with
+    // four rooms leaning on it then drew none of the cuts at all.
+    for (var c = 0; c < biters.length; c++) {{
+      var clip2 = pageToLocalPoly(polyOfBox(biters[c]), fr);
+      var cut = subtractPolys(poly, [clip2]) || subtractLargestPiece(poly, clip2);
+      if (cut) poly = cut;
+    }}
+    return poly;
   }}
 
   function clipPolyToEnvelope(poly) {{
@@ -1733,13 +1813,31 @@ def render_canvas_html(
       var settled = displayPolys.slice();
       for (var j = i + 1; j < live.length; j++) settled.push(polyOfBox(live[j]));
       var localPoly = morphedPolygonFor(el, live, settled);
-      displayPolys.push(localToPagePoly(localPoly, frameOf(el)));
+      // Last line of defence. Whatever the rules upstream decided, two
+      // rooms must never be DRAWN on top of each other: anything still
+      // overlapping a shape already settled this pass gets that overlap
+      // taken out of it here.
+      var fr = frameOf(el);
+      var pagePoly = localToPagePoly(localPoly, fr);
+      for (var s2 = 0; s2 < displayPolys.length; s2++) {{
+        if (intersectionArea(pagePoly, displayPolys[s2]) <= 1) continue;
+        var trimmed = subtractPolys(pagePoly, [displayPolys[s2]])
+                   || subtractLargestPiece(pagePoly, displayPolys[s2]);
+        if (trimmed && trimmed.length >= 3) pagePoly = trimmed;
+      }}
+      localPoly = pageToLocalPoly(pagePoly, fr);
+      displayPolys.push(pagePoly);
       paintFill(el, localPoly);
     }}
     window.__polys = displayPolys;
     // Exposed for the test suite (and for debugging a layout by hand):
     // which rooms a rotated box is currently allowed to bite into.
     window.__canAbsorbBite = canAbsorbBite;
+    window.__debug = {{
+      victim: biteVictim, absorb: canAbsorbBite, intersect: boxesTrulyIntersect,
+      pinned: function() {{ return pinnedBox; }}, slack: slackOf,
+      morph: function(el) {{ return morphedPolygonFor(el, activeBoxes(), null); }}
+    }};
     window.__names = live.map(function(el) {{
       var l = el.querySelector('.label');
       return l ? l.textContent : '?';
@@ -2111,11 +2209,41 @@ def render_canvas_html(
     renderSchedule();
   }}
 
+  // Where every box sat when the current gesture began. Each frame restores
+  // the others to this before resolving, so what gets displaced is a pure
+  // function of where the dragged box is NOW -- drag across the plan and
+  // back and everything springs back with you.
+  //
+  // Pushes used to be one-way and cumulative: a room shoved aside stayed
+  // shoved even after the thing that shoved it had gone, so a single
+  // careless drag could scatter a layout with no way back but Reset.
+  var gestureSnapshot = null;
+
+  function takeGestureSnapshot() {{
+    gestureSnapshot = activeBoxes().map(function(el) {{
+      return {{el: el, left: el.style.left, top: el.style.top,
+              width: el.style.width, height: el.style.height}};
+    }});
+  }}
+
+  function restoreOthersFromSnapshot(keep) {{
+    if (!gestureSnapshot) return;
+    for (var i = 0; i < gestureSnapshot.length; i++) {{
+      var entry = gestureSnapshot[i];
+      if (entry.el === keep || entry.el.dataset.deleted === '1') continue;
+      entry.el.style.left = entry.left;
+      entry.el.style.top = entry.top;
+      entry.el.style.width = entry.width;
+      entry.el.style.height = entry.height;
+    }}
+  }}
+
   function onDown(e) {{
     var box = e.currentTarget;
     selectBox(box, e.shiftKey);
 
     active = box;
+    takeGestureSnapshot();
     var p = point(e);
     var rect = active.getBoundingClientRect();
     offsetX = p.x - rect.left;
@@ -2155,6 +2283,7 @@ def render_canvas_html(
     var newTop = p.y - cRect.top - offsetY;
     newLeft = clamp(newLeft, ENV.left, ENV.right - active.offsetWidth);
     newTop = clamp(newTop, ENV.top, ENV.bottom - active.offsetHeight);
+    restoreOthersFromSnapshot(active);
     active.style.left = snapToGrid(newLeft) + 'px';
     active.style.top = snapToGrid(newTop) + 'px';
     snapToNearbyNeighbors(active);
@@ -2223,6 +2352,14 @@ def render_canvas_html(
   // dragging and it picks up again the moment the angle works.
   function rotationIsAllowed(targets) {{
     var live = activeBoxes();
+    // The turning box is the one doing the biting, exactly as the box under
+    // the cursor is during a drag. Rotation never went through
+    // resolveOverlaps, so pinnedBox was left holding whatever the last
+    // gesture set -- and then the shape pass picked a different room of the
+    // pair to give way than this check had approved, so the cut that got
+    // drawn was not the cut that was vetted and the two were left visibly
+    // overlapping.
+    pinnedBox = targets.length === 1 ? targets[0] : null;
     for (var i = 0; i < targets.length; i++) {{
       var el = targets[i];
       for (var j = 0; j < live.length; j++) {{
@@ -2230,7 +2367,9 @@ def render_canvas_html(
         if (other === el || targets.indexOf(other) !== -1) continue;
         if (!rectsOverlap(effectiveRectOf(el), effectiveRectOf(other))) continue;
         if (!boxesTrulyIntersect(el, other)) continue;
-        if (!canAbsorbBite(other, el) && !canAbsorbBite(el, other)) return false;
+        // Same question the shape pass will ask, so the room that gets
+        // vetted here is the room that gets carved there.
+        if (!chooseBiteVictim(el, other)) return false;
       }}
     }}
     return true;
@@ -2315,6 +2454,12 @@ def render_canvas_html(
   // however many relationships that takes.
   function onUp() {{
     if (moveFrame) {{ cancelAnimationFrame(moveFrame); moveFrame = 0; runPendingMove(); }}
+    // Which box the gesture belonged to. The settle-up pass below has to
+    // resolve with the SAME box pinned as every frame during the gesture --
+    // clearing it first flips which room of each pair gives way, so pairs
+    // that had stood down all through the drag would suddenly push apart
+    // the instant the mouse came up.
+    var gestureBox = active || (activeResize && activeResize.el) || (activeRotate && activeRotate.el);
     if (active) {{ active.classList.remove('dragging'); }}
     if (activeResize) {{ activeResize.el.classList.remove('dragging'); }}
     if (activeRotate) {{ activeRotate.targets.forEach(function(t) {{ t.classList.remove('dragging'); }}); }}
@@ -2322,8 +2467,9 @@ def render_canvas_html(
     active = null;
     activeResize = null;
     activeRotate = null;
+    gestureSnapshot = null;
     if (gestureEnded) {{
-      resolveOverlaps(null);
+      resolveOverlaps(gestureBox || null);
       refreshDiagram();
     }}
   }}

@@ -452,8 +452,17 @@ def test_a_rotated_room_bites_its_neighbor_instead_of_shoving_it():
 
     assert "function canAbsorbBite" in html
     # The collision gate reports an absorbable overlap as no overlap, which
-    # is what keeps every push, shrink and cascade off the pair.
-    assert "if (canAbsorbBite(a, b) || canAbsorbBite(b, a)) return false;" in html
+    # is what keeps every push and cascade off the pair.
+    assert "if (chooseBiteVictim(a, b)) return false;" in html
+    # The box under the cursor bites; the stationary one gives way. Pushing
+    # the room you are deliberately moving is not what you asked for.
+    assert "function biteVictim" in html
+    assert "if (pinnedBox === a) return b;" in html
+    # One chooser used by the collision gate, the rotation check AND the
+    # shape pass, so the room that gets vetted is the room that gets carved.
+    # Approving one direction and drawing the other left rooms overlapping.
+    assert "function chooseBiteVictim" in html
+    assert html.count("chooseBiteVictim(") >= 4
     # Rotation refuses rather than displaces -- pushes are one-way, so one
     # awkward angle mid-drag used to permanently scatter the layout.
     assert "function rotationIsAllowed" in html
@@ -577,3 +586,51 @@ def test_focusing_a_size_field_selects_its_room():
 
     assert "wInput.addEventListener('focus'" in html
     assert "hInput.addEventListener('focus'" in html
+
+
+def test_any_room_can_carve_any_room_not_only_a_rotated_one():
+    """Push two square rooms together and one draws itself as an L. That is
+    how an L-shaped room gets made directly, instead of the only route being
+    to rotate something into it."""
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    # The carve is no longer gated on the biter being rotated.
+    assert "if (!rotationOf(biter) || victim === biter) return false;" not in html
+    assert "function slackOf" in html
+    # With neither room being dragged, the one with more spare area over its
+    # own minimum gives way -- a bathroom at code minimum has nothing to give.
+    assert "return slackOf(a) >= slackOf(b) ? a : b;" in html
+
+
+def test_nothing_resizes_a_room_except_its_owner():
+    """A room's size is set by its resize handle and the schedule's fields,
+    and by nothing else. Collision used to shrink whatever it pushed, and
+    the envelope clamp squashed whatever reached the setback line."""
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    # The resolver translates; it no longer computes a smaller width/height.
+    resolver = html.split("function shrinkAndPushNonPinned")[1].split("function pushPinnedClearOfOverlaps")[0]
+    assert "style.width" not in resolver
+    assert "style.height" not in resolver
+    # The envelope clamp stops a box at the line instead of squashing it.
+    clamp = html.split("function clampToEnvelope")[1][:200]
+    assert "clampPositionOnly(el)" in clamp
+    assert "Math.max(m.w" not in clamp
+
+
+def test_displacement_is_recomputed_from_where_the_drag_started():
+    """Drag across the plan and back and everything springs back. Pushes
+    used to be one-way and cumulative, so a room shoved aside stayed shoved
+    after the thing that shoved it had gone."""
+    rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
+    html, _ = _render(rooms)
+
+    assert "function takeGestureSnapshot" in html
+    assert "function restoreOthersFromSnapshot" in html
+    assert "restoreOthersFromSnapshot(active);" in html
+    # Taken when the gesture starts and dropped when it ends, so the new
+    # arrangement is the baseline for the next drag.
+    assert "takeGestureSnapshot();" in html
+    assert "gestureSnapshot = null;" in html
