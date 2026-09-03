@@ -153,11 +153,18 @@ export interface ChatMessage {
   content: string;
 }
 
+export interface RoomRotation {
+  room_name: string;
+  degrees: number;
+}
+
 export interface ChatOut {
   assistant_message: string;
   explanation: string | null;
   project: Project;
   layout_plan: LayoutPlan | null;
+  /** Rooms the owner asked to have turned. Requests: the canvas decides. */
+  rotations: RoomRotation[];
 }
 
 export interface ProjectSummary {

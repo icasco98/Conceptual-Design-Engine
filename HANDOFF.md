@@ -58,6 +58,7 @@ replaceable.
 | `planner.py` | Packs several candidate orderings, thins corridors to what access needs, scores them, returns the best. **The architectural judgement lives here, in code you can read and argue with.** |
 | `levels.py` | Default storey split when the owner has not said (bedrooms up, one bathroom down). |
 | `palette.py` | The zoning colours and the wash strength the canvas paints them at. |
+| `edits.py` | Edits the owner asks for in words. One model so far: a room and the angle it should end up at. Claude names the room and the angle and computes nothing; the canvas decides whether it fits. |
 
 ### 2. API (`api/`) — FastAPI, thin
 
@@ -150,6 +151,20 @@ bearing for the access guarantee.
 **`carvePlanFor` answers two questions at once** — what to draw, and
 whether anything must move. Computing them separately is how the old code
 came to approve one room's cut and draw another's.
+
+**Rotation only works in 5-degree steps, and that is not cosmetic.** Each
+step resolves before the next is tried, so neighbours are pushed clear a
+little at a time. Jumping straight to a final angle asks every neighbour to
+give way at once and is refused almost always — the first version of
+`geometry/rotate.ts` did exactly that and could not turn a room 10 degrees
+that the handle turns to 45.
+
+**The overlap rules need rewriting from scratch** (owner's decision, not
+yet scheduled). `obbPenetration` and `obbsSeparated` disagreeing by their
+own tolerance was a symptom: three modules — `carve.ts`, `resolve.ts`,
+`rect.ts` — each hold part of one question, and the seams between them are
+where the bugs live. The current behaviour is documented at the top of
+`carve.ts`; treat that as the specification to replace, not to extend.
 
 **A room only ever gives space up, never takes any.** Display shapes may
 be smaller than the rectangle, never larger.

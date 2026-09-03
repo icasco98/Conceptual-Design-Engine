@@ -20,6 +20,7 @@ import type {
   Project,
   ProjectSummary,
 } from "../api/types";
+import { applyRotations, rotationReport } from "../geometry/rotate";
 import type { Box, Envelope } from "../geometry/types";
 
 /** What the 3D pane draws: coloured zones per room, or one grey volume. */
@@ -160,6 +161,18 @@ export const useStore = create<State>((set, get) => ({
       set({ history: next, layoutPlan: out.layout_plan, busy: "Arranging the rooms…" });
       const layout = await api.layout(out.project, out.layout_plan);
       get().applyLayout(layout, out.project);
+      // Rotations asked for in words go through the same rules a hand
+      // rotation goes through, on the arrangement that was just packed.
+      // Whatever will not fit is said out loud rather than dropped.
+      if (out.rotations.length) {
+        const envelope = get().envelope;
+        if (envelope) {
+          const outcome = applyRotations(get().boxes, out.rotations, envelope, out.project.storeys);
+          get().commitBoxes(outcome.boxes);
+          const report = rotationReport(outcome);
+          if (report) set({ history: [...get().history, { role: "assistant", content: report }] });
+        }
+      }
     } catch (e) {
       set({ history: [...history, { role: "assistant", content: `Couldn't reach Claude: ${(e as Error).message}` }] });
     } finally {

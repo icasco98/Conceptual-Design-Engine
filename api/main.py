@@ -38,6 +38,7 @@ from api.serialize import (
 )
 from src.access import access_problems_for
 from src.claude_client import explain_issues
+from src.edits import RoomRotation
 from src.extraction import extract_project
 from src.geometry import BuildableEnvelope, IncompleteSiteError, compute_buildable_envelope
 from src.layout_plan import LayoutPlan, plan_layout
@@ -279,6 +280,10 @@ class ChatOut(BaseModel):
     explanation: str | None
     project: Project
     layout_plan: LayoutPlan | None
+    # Rooms the owner asked to have turned. Requests, not results: the
+    # canvas applies them through the same rules a hand rotation goes
+    # through, and reports back what would not fit.
+    rotations: list[RoomRotation] = []
 
 
 @app.post("/api/chat", response_model=ChatOut)
@@ -308,7 +313,11 @@ def chat(body: ChatIn) -> ChatOut:
         plan = call_claude("Grouping the rooms", lambda: plan_layout(project))
 
     return ChatOut(
-        assistant_message=result.assistant_message, explanation=explanation, project=project, layout_plan=plan
+        assistant_message=result.assistant_message,
+        explanation=explanation,
+        project=project,
+        layout_plan=plan,
+        rotations=result.rotations,
     )
 
 

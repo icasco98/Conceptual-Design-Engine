@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from src.claude_client import EFFORT, MODEL, cached_system, get_client
 from src.defaults import ROOM_DEFAULTS
+from src.edits import RoomRotation
 from src.models import Project
 
 ChatMessage = dict[str, str]
@@ -24,6 +25,10 @@ ChatMessage = dict[str, str]
 class ExtractionResult(BaseModel):
     project: Project
     assistant_message: str
+    # Rides along with extraction rather than costing a second round trip:
+    # the model is already reading the whole conversation, and a rotation
+    # request only ever appears in the owner's latest sentence.
+    rotations: list[RoomRotation] = []
 
 
 def _room_catalog_text() -> str:
@@ -101,6 +106,16 @@ circulation between the room groups is handled automatically instead. \
 The owner can drag, resize and rotate rooms by hand on the diagram below \
 the chat — if asked, say so plainly; their manual arrangement is theirs to \
 explore, you don't need to describe positions.
+- ROTATION: when the owner asks for a room to be turned ("rotate the \
+office 45 degrees", "put the living room on the diagonal", "straighten \
+the kitchen"), add an entry to `rotations` naming the room and the angle \
+it should end up at — absolute, clockwise, 0 = upright. A bare "rotate X \
+by N degrees" means N unless they have clearly turned that room before. \
+"Straighten" or "put it back square" is 0. Leave `rotations` empty for \
+every message that does not ask for one; it is not a place to volunteer \
+ideas. Say in `assistant_message` that you have turned it, and add that a \
+turned room has to fit — the diagram will say so if it cannot. Never \
+promise the angle will hold, and never state coordinates.
 - Do not fabricate site dimensions, setbacks, or room counts the owner \
 never mentioned. Leave fields null/empty until they're actually stated.
 """

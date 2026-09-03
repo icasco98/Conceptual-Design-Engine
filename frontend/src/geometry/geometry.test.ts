@@ -6,6 +6,7 @@ import { footprintRings } from "./footprint";
 import { polyArea } from "./poly";
 import { boxesTrulyIntersect, obbPenetration, obbOf, obbsSeparated } from "./rect";
 import { clampPositionOnly, resolveOverlaps, rotationIsAllowed, snapToGrid, snapToNearbyNeighbors } from "./resolve";
+import { applyRotations, normaliseAngle, rotationReport } from "./rotate";
 import { shaftsPiercing, stairShafts } from "./shafts";
 import type { Box, Envelope } from "./types";
 
@@ -206,5 +207,79 @@ describe("vertical circulation", () => {
     expect(shaftsPiercing(shafts, 1)).toHaveLength(1);
     expect(shaftsPiercing(shafts, 2)).toHaveLength(1);
     expect(shaftsPiercing(shafts, 3)).toHaveLength(0);
+  });
+});
+
+describe("rotation asked for in words", () => {
+  it("snaps to the same 5 degrees the rotate handle uses, and wraps", () => {
+    expect(normaliseAngle(43)).toBe(45);
+    expect(normaliseAngle(-45)).toBe(315);
+    expect(normaliseAngle(360)).toBe(0);
+    expect(normaliseAngle(722)).toBe(0);
+  });
+
+  it("turns a room that has the space for it", () => {
+    const boxes = [box({ id: "a", name: "Office", left: 2, top: 2, width: 3, height: 3 })];
+    const out = applyRotations(boxes, [{ room_name: "office", degrees: 45 }], ENV, 1);
+    expect(out.applied).toEqual([{ name: "Office", degrees: 45, wanted: 45 }]);
+    expect(out.boxes[0].rotation).toBe(45);
+    expect(out.refused).toEqual([]);
+  });
+
+  it("goes as far as it can when the whole turn will not fit", () => {
+    // Room enough to start turning, not enough to reach 90.
+    const boxes = [
+      box({ id: "a", name: "Office", left: 4, top: 4, width: 3, height: 3 }),
+      box({ id: "n", name: "North", left: 4, top: 0.4, width: 3, height: 3, minWidth: 3, minHeight: 3 }),
+      box({ id: "s", name: "South", left: 4, top: 7.6, width: 3, height: 3, minWidth: 3, minHeight: 3 }),
+    ];
+    const out = applyRotations(boxes, [{ room_name: "Office", degrees: 90 }], ENV, 1);
+    // Either it got all the way or it stopped short — but it must have
+    // moved, and it must report the angle it actually holds.
+    expect(out.refused).toEqual([]);
+    expect(out.applied[0].wanted).toBe(90);
+    expect(out.boxes.find((b) => b.id === "a")!.rotation).toBe(out.applied[0].degrees);
+  });
+
+  it("refuses a room boxed in, and leaves it exactly as it was", () => {
+    // Three rooms at their minimum, packed tight: nothing can give up a corner.
+    const mid = box({ id: "mid", name: "Office", left: 4, top: 4, width: 2.7, height: 3, minWidth: 2.7, minHeight: 3 });
+    const boxes = [
+      mid,
+      box({ id: "l", name: "Left", left: 1.3, top: 4, width: 2.7, height: 3, minWidth: 2.7, minHeight: 3 }),
+      box({ id: "r", name: "Right", left: 6.7, top: 4, width: 2.7, height: 3, minWidth: 2.7, minHeight: 3 }),
+    ];
+    const out = applyRotations(boxes, [{ room_name: "Office", degrees: 45 }], ENV, 1);
+    expect(out.applied).toEqual([]);
+    expect(out.refused).toEqual(["Office"]);
+    expect(out.boxes).toEqual(boxes);
+  });
+
+  it("names a room the project does not have rather than failing silently", () => {
+    const out = applyRotations([box({ id: "a", name: "Office", left: 2, top: 2, width: 3, height: 3 })],
+      [{ room_name: "Ballroom", degrees: 45 }], ENV, 1);
+    expect(out.unknown).toEqual(["Ballroom"]);
+    expect(out.applied).toEqual([]);
+  });
+
+  it("a stair turns on every storey at once, or on none", () => {
+    const stair = (level: number) =>
+      box({ id: `s${level}`, name: "Stair", roomType: "stair", left: 2, top: 2, width: 1.2, height: 5, level });
+    const out = applyRotations([stair(0), stair(1)], [{ room_name: "Stair", degrees: 90 }], ENV, 2);
+    expect(out.applied).toHaveLength(1);
+    const held = out.applied[0].degrees;
+    expect(out.boxes.map((b) => b.rotation)).toEqual([held, held]);
+  });
+
+  it("says what happened, including what would not fit", () => {
+    expect(rotationReport({ boxes: [], applied: [{ name: "Office", degrees: 45, wanted: 45 }], refused: [], unknown: [] }))
+      .toContain("Turned Office to 45");
+    expect(rotationReport({ boxes: [], applied: [{ name: "Office", degrees: 0, wanted: 0 }], refused: [], unknown: [] }))
+      .toContain("Straightened Office");
+    expect(rotationReport({ boxes: [], applied: [{ name: "Office", degrees: 20, wanted: 45 }], refused: [], unknown: [] }))
+      .toContain("as far as 20");
+    expect(rotationReport({ boxes: [], applied: [], refused: ["Office"], unknown: [] }))
+      .toContain("can't turn at all");
+    expect(rotationReport({ boxes: [], applied: [], refused: [], unknown: [] })).toBeNull();
   });
 });
