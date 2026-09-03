@@ -4,6 +4,7 @@ import { displayShapes } from "../geometry/carve";
 import { polyArea } from "../geometry/poly";
 import { clampPositionOnly, liveBoxes, resolveOverlaps } from "../geometry/resolve";
 import type { Box } from "../geometry/types";
+import { fillFor } from "../palette";
 import { useStore } from "../state/store";
 
 export function Schedule() {
@@ -11,6 +12,7 @@ export function Schedule() {
   const level = useStore((s) => s.level);
   const envelope = useStore((s) => s.envelope);
   const selected = useStore((s) => s.selected);
+  const layoutPlan = useStore((s) => s.layoutPlan);
   const select = useStore((s) => s.select);
   const deleteBoxes = useStore((s) => s.deleteBoxes);
   const commitBoxes = useStore((s) => s.commitBoxes);
@@ -38,19 +40,23 @@ export function Schedule() {
     commitBoxes(boxes.map((x) => byId.get(x.id) ?? x));
   };
 
+  const categoryOf = (b: Box) => {
+    const base = b.name.replace(/ \d+$/, "");
+    const a = layoutPlan?.assignments.find((x) => x.room_name === b.name || x.room_name === base);
+    return a?.category;
+  };
+
   return (
     <div className="schedule">
-      <h3>Room schedule</h3>
-      <p className="muted">Click a row to select it. Edit width and depth here or drag a corner.</p>
       <table>
         <thead>
           <tr>
             <th>Space</th>
-            <th>W (m)</th>
-            <th>D (m)</th>
-            <th>Area</th>
-            <th>Rot.</th>
-            <th></th>
+            <th className="r">Width</th>
+            <th className="r">Depth</th>
+            <th className="r">Area</th>
+            <th className="r">Rot.</th>
+            <th />
           </tr>
         </thead>
         <tbody>
@@ -66,8 +72,11 @@ export function Schedule() {
                   select(b.id, e.shiftKey);
                 }}
               >
-                <td>{b.name}</td>
-                <td>
+                <td className="name">
+                  <i style={{ background: fillFor(b.roomType, b.kind, categoryOf(b)) }} />
+                  {b.name}
+                </td>
+                <td className="r">
                   <input
                     type="number"
                     step="0.05"
@@ -78,7 +87,7 @@ export function Schedule() {
                     onChange={(e) => edit(b, "w", parseFloat(e.target.value))}
                   />
                 </td>
-                <td>
+                <td className="r">
                   <input
                     type="number"
                     step="0.05"
@@ -89,10 +98,10 @@ export function Schedule() {
                     onChange={(e) => edit(b, "h", parseFloat(e.target.value))}
                   />
                 </td>
-                <td className={carved ? "carved" : ""} title={carved ? "Shaped around a neighbour" : ""}>
-                  {areaOf(b).toFixed(1)}
+                <td className={`r num ${carved ? "carved" : ""}`} title={carved ? "Shaped around a neighbour" : ""}>
+                  {areaOf(b).toFixed(1)} m²
                 </td>
-                <td>{b.rotation}°</td>
+                <td className="r num">{b.rotation}°</td>
                 <td>
                   <button
                     type="button"

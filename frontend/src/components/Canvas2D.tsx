@@ -8,7 +8,9 @@
  * All geometry is in plan-frame meters (geometry/types.ts). The SVG's
  * inner group scales meters to pixels, so pointer positions are read back
  * in meters through its inverse screen matrix and nothing here ever
- * thinks in pixels.
+ * thinks in pixels. The camera (pan and zoom) is an outer group wrapping
+ * that one, which is why dragging a room still lands where the pointer is
+ * at any zoom: the inverse screen matrix already carries the camera.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -27,12 +29,18 @@ import {
 } from "../geometry/resolve";
 import { effectiveRectOf } from "../geometry/rect";
 import { GRID_M, type Box, type Poly, type Rect } from "../geometry/types";
-import { fillFor } from "../palette";
+import { IconFit, IconMinus, IconPlus } from "./icons";
+import { CATEGORY_WASH, INK, fillFor } from "../palette";
 import { useStore } from "../state/store";
 
 const PX = 26;
-const MARGIN = 34;
-const HEADROOM = 20;
+const MARGIN = 40;
+const HEADROOM = 26;
+/** Room to the right for the north point, and below for the scale bar. */
+const GUTTER_R = 96;
+const GUTTER_B = 86;
+const MIN_ZOOM = 0.4;
+const MAX_ZOOM = 12;
 const HANDLE = 0.42;
 const WET_TYPES = new Set(["bathroom", "half_bath", "kitchen", "laundry"]);
 
@@ -62,7 +70,11 @@ export function Canvas2D() {
   const layoutPlan = useStore((s) => s.layoutPlan);
 
   const gRef = useRef<SVGGElement>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
   const gesture = useRef<Gesture | null>(null);
+  const [cam, setCam] = useState({ z: 1, x: 0, y: 0 });
+  const pan = useRef<{ x: number; y: number; cx: number; cy: number } | null>(null);
+  const [panning, setPanning] = useState(false);
   const pending = useRef<{ x: number; y: number } | null>(null);
   const frame = useRef(0);
   const [pinnedId, setPinnedId] = useState<string | null>(null);
@@ -83,8 +95,8 @@ export function Canvas2D() {
 
   const width = project?.site.width_m ?? 0;
   const depth = project?.site.depth_m ?? 0;
-  const svgW = width * PX + 2 * MARGIN;
-  const svgH = depth * PX + 2 * MARGIN + HEADROOM;
+  const svgW = width * PX + MARGIN + GUTTER_R;
+  const svgH = depth * PX + MARGIN + HEADROOM + GUTTER_B;
 
   /** Pointer position in plan-frame meters. */
   const toMeters = useCallback((e: { clientX: number; clientY: number }) => {
@@ -277,13 +289,70 @@ export function Canvas2D() {
     deleteBoxes(selected.includes(b.id) && selected.length > 1 ? selected : [b.id]);
   };
 
+  // ---- camera -----------------------------------------------------------
+
+  /** Pointer position in the SVG's own viewBox units, before the camera. */
+  const toViewBox = useCallback((e: { clientX: number; clientY: number }) => {
+    const svg = svgRef.current;
+    if (!svg) return { x: 0, y: 0 };
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return { x: 0, y: 0 };
+    const pt = new DOMPoint(e.clientX, e.clientY).matrixTransform(ctm.inverse());
+    return { x: pt.x, y: pt.y };
+  }, []);
+
+  const onWheel = useCallback(
+    (e: React.WheelEvent) => {
+      const p = toViewBox(e);
+      setCam((c) => {
+        const z = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, c.z * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+        // Hold the point under the pointer still: it is at (p - offset) / z
+        // in camera space before and after, so the offset absorbs the change.
+        return { z, x: p.x - ((p.x - c.x) / c.z) * z, y: p.y - ((p.y - c.y) / c.z) * z };
+      });
+    },
+    [toViewBox],
+  );
+
+  const onPanDown = useCallback((e: React.PointerEvent) => {
+    // Only the background pans; a room swallows the event before this.
+    if (e.target !== e.currentTarget) return;
+    select(null);
+    e.currentTarget.setPointerCapture(e.pointerId);
+    pan.current = { x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y };
+    setPanning(true);
+  }, [cam.x, cam.y, select]);
+
+  const onPanMove = useCallback((e: React.PointerEvent) => {
+    const p = pan.current;
+    if (!p) return;
+    const svg = svgRef.current;
+    const rect = svg?.getBoundingClientRect();
+    if (!rect) return;
+    // Screen pixels to viewBox units: the SVG scales to fit its box.
+    const k = svgW / rect.width;
+    setCam((c) => ({ ...c, x: p.cx + (e.clientX - p.x) * k, y: p.cy + (e.clientY - p.y) * k }));
+  }, [svgW]);
+
+  const onPanUp = useCallback(() => {
+    if (!pan.current) return;
+    pan.current = null;
+    setPanning(false);
+  }, []);
+
+  const fit = useCallback(() => setCam({ z: 1, x: 0, y: 0 }), []);
+
   if (!project || !envelope) return null;
 
   const streetEdges = new Set(project.site.edges.filter((e) => e.adjacency === "street").map((e) => e.position));
 
+  const scaleBarM = 5;
+  const northX = width + 1.6;
+
   return (
-    <div className="canvas-wrap">
-      <div className="legend">
+    <div className={`plan-pane${panning ? " panning" : ""}`}>
+      <div className="pane-tag label">Plan</div>
+      <div className="legend" style={{ position: "absolute", top: 12, right: 16, maxWidth: 300, justifyContent: "flex-end" }}>
         {layoutPlan &&
           (["category_a", "category_b", "category_c"] as CategoryKey[]).map((k) => (
             <span key={k} className="legend-item">
@@ -294,7 +363,7 @@ export function Canvas2D() {
           <i className="legend-hall" /> Hallway
         </span>
         <span className="legend-item">
-          <i style={{ background: fillFor("stair", "room", undefined) }} /> Stair (shared by every level)
+          <i style={{ background: fillFor("stair", "room", undefined) }} /> Stair
         </span>
         <span className="legend-item">
           <i className="legend-entry" /> Entry
@@ -302,37 +371,49 @@ export function Canvas2D() {
         <span className="legend-item">→ Door</span>
       </div>
       <svg
-        className="plan"
+        ref={svgRef}
+        className="plan-svg"
         viewBox={`0 0 ${svgW} ${svgH}`}
-        style={{ width: "100%", maxWidth: svgW, height: "auto" }}
-        onPointerMove={onPointerMove}
-        onPointerDown={(e) => {
-          if (e.target === e.currentTarget) select(null);
+        preserveAspectRatio="xMidYMid meet"
+        onPointerMove={(e) => {
+          onPointerMove(e);
+          onPanMove(e);
         }}
+        onPointerDown={onPanDown}
+        onPointerUp={onPanUp}
+        onPointerLeave={onPanUp}
+        onWheel={onWheel}
       >
         <defs>
           <pattern id="grid" width={GRID_M} height={GRID_M} patternUnits="userSpaceOnUse">
             <path d={`M ${GRID_M} 0 L 0 0 0 ${GRID_M}`} fill="none" stroke="#000" strokeOpacity="0.08" strokeWidth={0.02} />
           </pattern>
           <pattern id="hatch" width={0.5} height={0.5} patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-            <line x1="0" y1="0" x2="0" y2={0.5} stroke="#777" strokeWidth={0.06} />
+            <line x1="0" y1="0" x2="0" y2={0.5} stroke={INK.site} strokeWidth={0.09} />
           </pattern>
           <marker id="door-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse" markerUnits="strokeWidth">
             <path d="M 0 0 L 10 5 L 0 10 z" fill="#1a1a1a" fillOpacity="0.6" />
           </marker>
         </defs>
-        <text x={MARGIN + (width * PX) / 2} y={MARGIN + HEADROOM - 6} textAnchor="middle" className="street-label">
-          {streetEdges.has("front") ? "STREET" : ""}
+        <g transform={`translate(${cam.x} ${cam.y}) scale(${cam.z})`}>
+        <text
+          x={MARGIN + (width * PX) / 2}
+          y={MARGIN + HEADROOM - 8}
+          textAnchor="middle"
+          className="anno"
+          style={{ fontSize: 13, letterSpacing: "0.22em", fill: INK.street }}
+        >
+          {streetEdges.has("front") ? "Street" : ""}
         </text>
         <g ref={gRef} transform={`translate(${MARGIN} ${MARGIN + HEADROOM}) scale(${PX})`}>
           {/* site */}
-          <rect x={0} y={0} width={width} height={depth} fill="#fbfbf9" stroke="#444" strokeWidth={0.06} />
+          <rect x={0} y={0} width={width} height={depth} fill={INK.sheet} stroke={INK.site} strokeWidth={0.06} />
           {showGrid && <rect x={0} y={0} width={width} height={depth} fill="url(#grid)" />}
           {/* street edges */}
-          {streetEdges.has("front") && <line x1={0} y1={0} x2={width} y2={0} stroke="#c0392b" strokeWidth={0.16} />}
-          {streetEdges.has("back") && <line x1={0} y1={depth} x2={width} y2={depth} stroke="#c0392b" strokeWidth={0.16} />}
-          {streetEdges.has("left") && <line x1={0} y1={0} x2={0} y2={depth} stroke="#c0392b" strokeWidth={0.16} />}
-          {streetEdges.has("right") && <line x1={width} y1={0} x2={width} y2={depth} stroke="#c0392b" strokeWidth={0.16} />}
+          {streetEdges.has("front") && <line x1={0} y1={0} x2={width} y2={0} stroke={INK.street} strokeWidth={0.2} />}
+          {streetEdges.has("back") && <line x1={0} y1={depth} x2={width} y2={depth} stroke={INK.street} strokeWidth={0.2} />}
+          {streetEdges.has("left") && <line x1={0} y1={0} x2={0} y2={depth} stroke={INK.street} strokeWidth={0.2} />}
+          {streetEdges.has("right") && <line x1={width} y1={0} x2={width} y2={depth} stroke={INK.street} strokeWidth={0.2} />}
           {/* setback line */}
           <rect
             x={envelope.left}
@@ -340,7 +421,7 @@ export function Canvas2D() {
             width={envelope.right - envelope.left}
             height={envelope.bottom - envelope.top}
             fill="none"
-            stroke="#c9a227"
+            stroke={INK.setback}
             strokeWidth={0.05}
             strokeDasharray="0.4 0.25"
           />
@@ -369,7 +450,7 @@ export function Canvas2D() {
             );
           })}
           {/* footprint */}
-          <path d={footprint} fill="none" stroke="#1a1a1a" strokeWidth={0.12} strokeLinejoin="round" />
+          <path d={footprint} fill="none" stroke={INK.footprint} strokeWidth={0.2} strokeLinejoin="round" />
           {/* boxes */}
           {live.map((b) => {
             const shape = shapes.find((s) => s.id === b.id);
@@ -391,6 +472,8 @@ export function Canvas2D() {
             const fitWidth = Math.max(b.width, b.rotation ? b.width : 0);
             let fontSize = Math.min(0.5, fitWidth / (labelText.length * 0.6));
             const vertical = fontSize < 0.28 && b.height > b.width * 1.6;
+            // The area only fits under the name when the room has room for it.
+            const showArea = !vertical && b.kind === "room" && b.height > 2.2 && b.width > 2.2;
             if (vertical) fontSize = Math.min(0.5, b.height / (labelText.length * 0.6));
             fontSize = Math.max(0.22, fontSize);
             return (
@@ -403,19 +486,19 @@ export function Canvas2D() {
                 <polygon
                   points={pointsOf(poly)}
                   fill={b.kind === "corridor" ? "url(#hatch)" : fill}
-                  fillOpacity={b.kind === "corridor" ? 1 : 0.88}
-                  stroke={b.isEntry ? "#0b0b0b" : isSel ? "#0b0b0b" : "#333"}
-                  strokeWidth={b.isEntry ? 0.14 : isSel ? 0.12 : 0.05}
+                  fillOpacity={b.kind === "corridor" ? 1 : isSel ? CATEGORY_WASH * 2 : CATEGORY_WASH}
+                  stroke={b.isEntry || isSel ? "#0b0b0b" : INK.room}
+                  strokeWidth={b.isEntry ? 0.12 : isSel ? 0.12 : 0.05}
                   strokeDasharray={b.isEntry ? "0.35 0.2" : undefined}
                   strokeLinejoin="round"
                 />
                 {b.kind === "corridor" && (
-                  <polygon points={pointsOf(poly)} fill="#e9e6dc" fillOpacity={0.55} stroke="none" />
+                  <polygon points={pointsOf(poly)} fill={INK.sheet} fillOpacity={0.55} stroke="none" />
                 )}
                 <text
                   x={cx}
-                  y={cy}
-                  className={`label ${b.kind === "corridor" ? "corridor-label" : ""}`}
+                  y={vertical || !showArea ? cy : cy - 0.08}
+                  className="room-label"
                   textAnchor="middle"
                   dominantBaseline="middle"
                   style={{ fontSize: `${fontSize}px` }}
@@ -423,6 +506,11 @@ export function Canvas2D() {
                 >
                   {labelText}
                 </text>
+                {showArea && (
+                  <text x={cx} y={cy + 0.82} className="area-label" textAnchor="middle" style={{ fontSize: 0.44 }}>
+                    {(b.width * b.height).toFixed(1)} m²
+                  </text>
+                )}
                 {solo &&
                   (["nw", "ne", "sw", "se"] as Corner[]).map((c) => (
                     <rect
@@ -466,8 +554,60 @@ export function Canvas2D() {
               pointerEvents="none"
             />
           ))}
+
+          {/* The conventions that make a drawing read as a drawing: which
+              way is north, and how long a metre is. Both sit outside the
+              site rectangle so they never cover a room. */}
+          <g pointerEvents="none">
+            <circle cx={northX} cy={1.6} r={1.02} fill="none" stroke={INK.labelSub} strokeWidth={0.05} />
+            <path
+              d={`M ${northX} ${1.6 - 0.76} L ${northX + 0.34} ${1.6 + 0.48} L ${northX} ${1.6 + 0.18} L ${northX - 0.34} ${1.6 + 0.48} Z`}
+              fill={INK.footprint}
+            />
+            <text x={northX} y={3.5} textAnchor="middle" className="anno" style={{ fontSize: 0.52 }}>
+              North
+            </text>
+          </g>
+          <g pointerEvents="none" transform={`translate(0 ${depth + 1.3})`}>
+            {[0, 1, 2, 3].map((i) => (
+              <rect
+                key={i}
+                x={i * (scaleBarM / 2)}
+                y={0}
+                width={scaleBarM / 2}
+                height={0.34}
+                fill={i % 2 ? INK.sheet : INK.footprint}
+                stroke={INK.footprint}
+                strokeWidth={0.035}
+              />
+            ))}
+            <text x={0} y={1.1} className="anno" style={{ fontSize: 0.46 }}>
+              0
+            </text>
+            <text x={scaleBarM} y={1.1} textAnchor="middle" className="anno" style={{ fontSize: 0.46 }}>
+              {scaleBarM}
+            </text>
+            <text x={scaleBarM * 2} y={1.1} textAnchor="middle" className="anno" style={{ fontSize: 0.46 }}>
+              {scaleBarM * 2} m
+            </text>
+          </g>
+        </g>
         </g>
       </svg>
+
+      <div className="pane-tools zoomer">
+        <button type="button" title="Zoom out" aria-label="Zoom out" onClick={() => setCam((c) => ({ ...c, z: Math.max(MIN_ZOOM, c.z / 1.3) }))}>
+          <IconMinus />
+        </button>
+        <span className="pct num">{Math.round(cam.z * 100)} %</span>
+        <button type="button" title="Zoom in" aria-label="Zoom in" onClick={() => setCam((c) => ({ ...c, z: Math.min(MAX_ZOOM, c.z * 1.3) }))}>
+          <IconPlus />
+        </button>
+        <span className="sep" />
+        <button type="button" title="Fit the whole site" aria-label="Fit the whole site" onClick={fit}>
+          <IconFit />
+        </button>
+      </div>
     </div>
   );
 }

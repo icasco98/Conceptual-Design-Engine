@@ -368,7 +368,7 @@ typecheck, unit tests and build.
 | `src/levels.py` | The default storey split for a multi-storey house the owner hasn't split themselves. |
 | `src/sample_project.py` | The worked example the app opens on — a complete, validating project plus the layout plan Claude would have returned for it, so the first paint needs no API call. |
 | `api/` | FastAPI server: `/api/layout` packs and scores, `/api/check` runs access and stacking on a hand-made arrangement, `/api/chat` is one conversational turn, `/api/projects` saves to SQLite. Serves `frontend/dist` at `/`. `serialize.py` is the wire contract between Python's site frame and the canvas. |
-| `frontend/` | The browser app (Vite, React, TypeScript). `src/geometry/` is the canvas's movement rules — carve, protect the minimum, push last; SAT overlap on rotated shapes; door arrows; footprint union — as pure functions with their own unit tests. `src/state/store.ts` is the single source of truth for the arrangement; `Canvas2D.tsx` (SVG plan), `View3D.tsx` (Three.js) and `Schedule.tsx` all render from it. |
+| `frontend/` | The browser app (Vite, React, TypeScript). `src/geometry/` is the canvas's movement rules — carve, protect the minimum, push last; SAT overlap on rotated shapes; door arrows; footprint union — as pure functions with their own unit tests. `src/state/store.ts` is the single source of truth for the arrangement; `Canvas2D.tsx` (SVG plan, pan and zoom), `View3D.tsx` (Three.js, zones or solid massing), `Schedule.tsx` and `StatusBar.tsx` all render from it. Typography is Manrope for the interface and Barlow for drawing annotation, both bundled so the app still works offline. |
 | `start.sh` / `start.bat` | One-click local start: installs into the folder on first run, builds the frontend, starts the server, opens the browser. |
 | `src/models.py` | The shared data shapes (`Project`, `Site`, `Room`, ...). |
 | `src/defaults.py` | Room-sizing defaults table (widths/depths per room type). |
@@ -378,7 +378,7 @@ typecheck, unit tests and build.
 | `src/claude_client.py` | Anthropic client + plain-language explanation of issues. |
 | `src/layout_plan.py` | Claude picks room categories + adjacency order (structured output). |
 | `src/layout.py` | Deterministic rectangle packing, footprint compaction, building footprint outline, and circulation graph — no LLM math, unit-tested. `pack_levels` packs every storey with the stair pinned to one rectangle on each. |
-| `src/palette.py` | The 3 validated diagram colors (see dataviz notes in the module docstring). |
+| `src/palette.py` | The zoning colours, and how strongly a room is washed with one (see the module docstring). |
 | `tests/` | Unit tests for the domain layer — geometry, defaults, validation, access, layout, planner, stacking. |
 
 ## Roadmap

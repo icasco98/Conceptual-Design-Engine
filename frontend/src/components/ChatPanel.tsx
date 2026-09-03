@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+import { IconSend } from "./icons";
 import { useStore } from "../state/store";
 
 export function ChatPanel() {
@@ -23,12 +24,13 @@ export function ChatPanel() {
   };
 
   return (
-    <section className="chat">
+    <>
+      <div className="label">Conversation</div>
       <div className="chat-scroll" ref={scroller}>
         {history.length === 0 && (
           <p className="chat-empty">
-            Describe your project: the site and its size, which sides face the street, how many
-            storeys, the rooms you need, and what matters to you. The diagram on the right is a worked
+            Describe your project — the site and its size, which sides face the street, how many
+            storeys, the rooms you need, and what matters to you. The drawing beside this is a worked
             example until you do.
           </p>
         )}
@@ -43,13 +45,13 @@ export function ChatPanel() {
           type="text"
           value={text}
           disabled={!hasApiKey || !!busy}
-          placeholder={hasApiKey ? "Describe your project — site, rooms, priorities…" : "Chat disabled: add ANTHROPIC_API_KEY to .env"}
+          placeholder={hasApiKey ? "Describe a change…" : "Add ANTHROPIC_API_KEY to .env to chat"}
           onChange={(e) => setText(e.target.value)}
         />
-        <button type="submit" disabled={!hasApiKey || !!busy || !text.trim()}>
-          Send
+        <button type="submit" disabled={!hasApiKey || !!busy || !text.trim()} title="Send" aria-label="Send">
+          <IconSend />
         </button>
       </form>
-    </section>
+    </>
   );
 }

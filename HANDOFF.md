@@ -57,7 +57,7 @@ replaceable.
 | `stacking.py` | What an upper storey owes the one below: wet rooms should overlap wet rooms, nothing should hang far past the floor below. Uses shapely. |
 | `planner.py` | Packs several candidate orderings, thins corridors to what access needs, scores them, returns the best. **The architectural judgement lives here, in code you can read and argue with.** |
 | `levels.py` | Default storey split when the owner has not said (bedrooms up, one bathroom down). |
-| `palette.py` | The three validated diagram colours. |
+| `palette.py` | The zoning colours and the wash strength the canvas paints them at. |
 
 ### 2. API (`api/`) — FastAPI, thin
 
@@ -79,8 +79,22 @@ coordinate frames meet** (see Gotchas).
 - `src/geometry/` — the canvas's movement rules as pure functions with
   real unit tests: carve, protect the minimum, push last; SAT overlap on
   rotated shapes; gap and grid snapping; door arrows; footprint union.
-- `src/components/Canvas2D.tsx` — SVG plan, all gestures.
-- `src/components/View3D.tsx` — Three.js, extruded per level.
+- `src/components/Canvas2D.tsx` — SVG plan, all gestures, and the camera
+  (drag the background to pan, scroll to zoom). The camera is an outer
+  group wrapping the metres-to-pixels one, so the inverse screen matrix
+  the gestures already used carries it for free.
+- `src/components/View3D.tsx` — Three.js. Two readings of one arrangement,
+  chosen by the "Colour by zone" checkbox: rooms coloured by category and
+  translucent, or one grey volume per storey traced from that storey's
+  outline. The second is the first step towards phase 2, massing.
+- `src/components/StatusBar.tsx` — the checks, along the foot of the window
+  where they cannot be scrolled out of sight.
+
+**Layout.** A tool rail, the plan, a column carrying the massing over the
+room schedule, then the conversation. Plan and massing are on screen
+together at all times rather than being a mode you switch between. There
+is no `Toolbar.tsx` any more: its level switch moved to the header, its
+toggles to the rail, and its rationale text to the sidebar.
 
 ---
 

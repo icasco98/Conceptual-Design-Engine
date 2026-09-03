@@ -1,9 +1,15 @@
 /**
  * The building in three dimensions, from the same boxes the plan edits.
- * Every live box on every level is extruded to the storey height and set
- * on its level; each storey gets a slab traced from its own outline. The
- * current level is drawn solid, the others translucent, so the plan you
- * are editing reads clearly inside the whole.
+ *
+ * Two readings of the same arrangement, chosen with the "Colour by zone"
+ * checkbox above:
+ *
+ *   zones — every live box on every level extruded to the storey height and
+ *     coloured by its category, the current level solid and the others
+ *     translucent, so the plan you are editing reads inside the whole;
+ *   mass  — one grey volume per storey, traced from that storey's own
+ *     outline. No rooms, no colour: the shape the building makes on the
+ *     site, which is the question massing actually asks.
  *
  * Three.js is vendored through npm and bundled; nothing is fetched at
  * runtime, so the view works with no connection.
@@ -21,6 +27,8 @@ import { fillFor } from "../palette";
 import { useStore } from "../state/store";
 
 const SLAB = 0.22;
+/** The one grey the massing volume is made of, lit rather than shaded flat. */
+const MASS = "#9aa1a6";
 
 export function View3D() {
   const project = useStore((s) => s.project);
@@ -29,6 +37,7 @@ export function View3D() {
   const selected = useStore((s) => s.selected);
   const layoutPlan = useStore((s) => s.layoutPlan);
   const envelope = useStore((s) => s.envelope);
+  const massing = useStore((s) => s.massing);
 
   const mount = useRef<HTMLDivElement>(null);
   const scene = useRef<THREE.Scene>();
@@ -160,8 +169,34 @@ export function View3D() {
       const y0 = lv * storeyH;
       const current = lv === level;
 
+      const rings = footprintRings(shapes.map((s) => s.page));
+
+      if (massing === "mass") {
+        // One solid per storey, the storey's own outline taken to full
+        // height. Stacked they read as a single volume, because each
+        // storey's top face is buried under the next storey's base.
+        for (const ring of rings) {
+          const shape = new THREE.Shape(ring.map((p) => new THREE.Vector2(p[0], p[1])));
+          const geo = new THREE.ExtrudeGeometry(shape, { depth: storeyH, bevelEnabled: false });
+          const solid = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: MASS }));
+          solid.rotation.x = Math.PI / 2;
+          solid.position.set(0, y0 + storeyH, 0);
+          group.add(solid);
+          // Only the storey's outline is drawn, so the volume keeps its
+          // silhouette without the room joints showing through it.
+          const outline = new THREE.Line(
+            new THREE.BufferGeometry().setFromPoints(
+              ring.concat([ring[0]]).map((pt) => new THREE.Vector3(pt[0], y0 + storeyH + 0.005, pt[1])),
+            ),
+            new THREE.LineBasicMaterial({ color: "#5c6469" }),
+          );
+          group.add(outline);
+        }
+        continue;
+      }
+
       // Slab from the level's own outline.
-      for (const ring of footprintRings(shapes.map((s) => s.page))) {
+      for (const ring of rings) {
         const shape = new THREE.Shape(ring.map((p) => new THREE.Vector2(p[0], p[1])));
         const geo = new THREE.ExtrudeGeometry(shape, { depth: SLAB, bevelEnabled: false });
         const slab = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: "#d9d4c7" }));
@@ -177,7 +212,7 @@ export function View3D() {
         const mat = new THREE.MeshLambertMaterial({
           color,
           transparent: true,
-          opacity: current ? 0.92 : 0.28,
+          opacity: current ? 0.55 : 0.16,
         });
         const mesh = new THREE.Mesh(geo, mat);
         const cx = b.left + b.width / 2;
@@ -194,7 +229,7 @@ export function View3D() {
         group.add(edges);
       }
     }
-  }, [boxes, level, project, storeyH, width, depth, envelope, categories, selected]);
+  }, [boxes, level, project, storeyH, width, depth, envelope, categories, selected, massing]);
 
   return <div className="view3d" ref={mount} />;
 }

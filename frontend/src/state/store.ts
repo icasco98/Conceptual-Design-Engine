@@ -22,7 +22,8 @@ import type {
 } from "../api/types";
 import type { Box, Envelope } from "../geometry/types";
 
-export type ViewMode = "2d" | "3d" | "both";
+/** What the 3D pane draws: coloured zones per room, or one grey volume. */
+export type MassingMode = "zones" | "mass";
 
 export interface State {
   project: Project | null;
@@ -41,7 +42,7 @@ export interface State {
   busy: string | null;
   error: string | null;
   showGrid: boolean;
-  view: ViewMode;
+  massing: MassingMode;
   showGhost: boolean;
   savedId: string | null;
   savedName: string;
@@ -56,7 +57,7 @@ export interface State {
   deleteBoxes: (ids: string[]) => void;
   resetLayout: () => void;
   setLevel: (level: number) => void;
-  setView: (view: ViewMode) => void;
+  setMassing: (massing: MassingMode) => void;
   toggleGrid: () => void;
   toggleGhost: () => void;
   runCheck: () => Promise<void>;
@@ -100,7 +101,7 @@ export const useStore = create<State>((set, get) => ({
   busy: null,
   error: null,
   showGrid: false,
-  view: "both",
+  massing: "zones",
   showGhost: true,
   savedId: null,
   savedName: "",
@@ -207,8 +208,8 @@ export const useStore = create<State>((set, get) => ({
   setLevel(level) {
     set({ level, selected: [] });
   },
-  setView(view) {
-    set({ view });
+  setMassing(massing) {
+    set({ massing });
   },
   toggleGrid() {
     set({ showGrid: !get().showGrid });
