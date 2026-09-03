@@ -187,3 +187,21 @@ def test_no_credit_is_explained_in_plain_language(client, monkeypatch):
     detail = client.post("/api/chat", json={"history": [{"role": "user", "content": "hi"}]}).json()["detail"]
     assert "credit" in detail.lower()
     assert "console.anthropic.com" in detail
+
+
+def test_an_identity_linked_key_is_told_to_name_its_workspace(client, monkeypatch):
+    import anthropic
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+
+    def needs_workspace(_history):
+        raise anthropic.BadRequestError(
+            "anthropic-workspace-id is required when authenticating with an identity-linked "
+            "API key; send the id of the workspace this request acts in.",
+            response=httpx.Response(400, request=httpx.Request("POST", "https://api.anthropic.com")),
+            body=None,
+        )
+
+    monkeypatch.setattr(api_main, "extract_project", needs_workspace)
+    detail = client.post("/api/chat", json={"history": [{"role": "user", "content": "hi"}]}).json()["detail"]
+    assert "ANTHROPIC_WORKSPACE_ID" in detail

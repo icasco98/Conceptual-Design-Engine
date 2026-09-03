@@ -107,7 +107,16 @@ def call_claude(step: str, fn: Callable[[], T]) -> T:
         ) from exc
     except anthropic.APIStatusError as exc:
         message = getattr(exc, "message", "") or str(exc)
-        if "credit balance" in message.lower() or "billing" in message.lower():
+        lowered = message.lower()
+        if "workspace" in lowered and "required" in lowered:
+            detail = (
+                "This API key is identity-linked, so every request must name the workspace it "
+                "acts in. Add a line to your .env file reading ANTHROPIC_WORKSPACE_ID=<the id>, "
+                "then restart the app. The id is in the workspace's URL at console.anthropic.com "
+                "(Settings -> Workspaces). Alternatively, create a plain workspace API key under "
+                "Settings -> API keys and use that instead."
+            )
+        elif "credit balance" in lowered or "billing" in lowered:
             detail = (
                 "Your Anthropic account has no credit left, so Claude declined the request. "
                 "Add credit at console.anthropic.com under Billing, then try again."

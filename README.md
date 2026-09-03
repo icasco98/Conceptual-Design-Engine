@@ -324,6 +324,13 @@ project folder (`.venv/` and `frontend/node_modules/`). It creates a
 key after `ANTHROPIC_API_KEY=`. A browser tab opens at
 <http://localhost:8000>. Closing the terminal window stops the app.
 
+If the chat answers that the key is *identity-linked* and a workspace id
+is required, the key belongs to you rather than to one workspace, so every
+request has to say which workspace it acts in. Add the id on the
+`ANTHROPIC_WORKSPACE_ID=` line of `.env` (it is in the workspace's URL at
+console.anthropic.com under Settings → Workspaces) and restart, or create
+a plain workspace API key instead.
+
 Your saved projects live in `data/projects.db` inside the folder.
 
 ## Setup (developers)

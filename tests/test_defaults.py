@@ -24,3 +24,24 @@ def test_unknown_room_type_falls_back_to_other():
     footprint = resolve_footprint("nonexistent_type", None, None)
     other = ROOM_DEFAULTS["other"]
     assert footprint.width_m == other.typical_width_m
+
+
+def test_a_workspace_id_is_sent_as_a_header_when_one_is_configured():
+    """An identity-linked key must name the workspace each request acts in;
+    a plain key ignores the header, so it is set whenever configured."""
+    import os
+
+    from src.claude_client import get_client
+
+    os.environ["ANTHROPIC_API_KEY"] = "sk-ant-test"
+    os.environ["ANTHROPIC_WORKSPACE_ID"] = "wrkspc_123"
+    get_client.cache_clear()
+    try:
+        assert get_client().default_headers["anthropic-workspace-id"] == "wrkspc_123"
+        del os.environ["ANTHROPIC_WORKSPACE_ID"]
+        get_client.cache_clear()
+        assert "anthropic-workspace-id" not in get_client().default_headers
+    finally:
+        os.environ.pop("ANTHROPIC_WORKSPACE_ID", None)
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+        get_client.cache_clear()

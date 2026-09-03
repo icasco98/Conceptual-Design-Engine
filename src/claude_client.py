@@ -9,6 +9,7 @@ below). Claude never computes the geometry itself.
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 
 import anthropic
@@ -37,6 +38,14 @@ def cached_system(text: str) -> list:
 def get_client() -> anthropic.Anthropic:
     # Anthropic() resolves ANTHROPIC_API_KEY (or another configured credential)
     # from the environment; app.py loads .env before this is first called.
+    #
+    # An identity-linked key belongs to a person rather than to one
+    # workspace, so every request has to name the workspace it acts in or
+    # the API rejects it. Setting ANTHROPIC_WORKSPACE_ID in .env supplies
+    # that; a plain key ignores the header, so this is safe either way.
+    workspace_id = os.environ.get("ANTHROPIC_WORKSPACE_ID", "").strip()
+    if workspace_id:
+        return anthropic.Anthropic(default_headers={"anthropic-workspace-id": workspace_id})
     return anthropic.Anthropic()
 
 
