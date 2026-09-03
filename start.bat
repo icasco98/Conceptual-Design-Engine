@@ -1,6 +1,7 @@
 @echo off
-REM One-click start for Windows. Double-click this file. First run installs
-REM everything into this folder; later runs are quick. Close the window to stop.
+REM One-click start for Windows. Double-click this file. It installs whatever
+REM the app needs into this folder and then starts; the first run does the
+REM real work, later runs only check. Close the window to stop.
 setlocal
 cd /d "%~dp0"
 
@@ -29,8 +30,25 @@ pip install -q -r requirements.txt
 
 echo Building the screen ^(frontend^)...
 pushd frontend
-if not exist node_modules call npm install --no-audit --no-fund
-call npm run build --silent
+REM Install every time, not only when node_modules is missing. Skipping it
+REM once the folder exists means a version of the app that needs a new
+REM package never gets it, and the build then fails on an import that looks
+REM fine. npm returns in about a second when it is already satisfied.
+call npm install --no-audit --no-fund
+if errorlevel 1 (
+  popd
+  echo.
+  echo Could not install what the screen needs. Check your internet connection and run this again.
+  pause & exit /b 1
+)
+call npm run build
+if errorlevel 1 (
+  popd
+  echo.
+  echo The screen failed to build, so the app was not started. The error is above.
+  echo Nothing is broken on your machine - send that message and it can be fixed.
+  pause & exit /b 1
+)
 popd
 
 echo Starting. Your browser will open at http://localhost:8000 - close this window to stop.

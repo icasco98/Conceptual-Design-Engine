@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # One-click start for macOS / Linux. Double-click this file, or run
-# `./start.sh` in a terminal. First run installs everything it needs into
-# this folder (a Python virtual environment in .venv and the frontend's
-# node_modules); later runs are quick. Close the terminal window to stop.
+# `./start.sh` in a terminal. It installs whatever the app needs into this
+# folder (a Python virtual environment in .venv and the frontend's
+# node_modules) and then starts. The first run does the real work; later
+# runs only check, and are quick. Close the terminal window to stop.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -27,7 +28,14 @@ pip install -q --upgrade pip
 pip install -q -r requirements.txt
 
 say "Building the screen (frontend)…"
-( cd frontend && { [ -d node_modules ] || npm install --no-audit --no-fund; } && npm run build --silent )
+# Install every time, not only when node_modules is missing. Skipping it
+# once the folder exists means a version of the app that needs a new
+# package never gets it, and the build fails on an import that looks
+# fine. npm does nothing and returns in about a second when it is
+# already satisfied, which is a cheap price for that not happening.
+( cd frontend && npm install --no-audit --no-fund && npm run build )
+# set -e already stops here on a failed build, so we never serve the
+# previous build and let it look like the new one.
 
 say "Starting. Your browser will open at http://localhost:8000 — close this window to stop."
 ( sleep 2; if command -v xdg-open >/dev/null 2>&1; then xdg-open http://localhost:8000; elif command -v open >/dev/null 2>&1; then open http://localhost:8000; fi ) &

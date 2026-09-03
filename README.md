@@ -315,9 +315,14 @@ machine, to Claude, through your own API key.
 - macOS / Linux: double-click `start.sh` (or run `./start.sh`).
 
 The first run takes a few minutes while it installs what it needs into the
-project folder (`.venv/` and `frontend/node_modules/`). It creates a
-`.env` file from `.env.example`; open that in a text editor and paste your
-key after `ANTHROPIC_API_KEY=`. A browser tab opens at
+project folder (`.venv/` and `frontend/node_modules/`). Every run after
+that re-checks those installs before building — a second or two — so a
+version of the app that needs a new package gets it instead of failing on
+an import. If the build fails the app does not start, rather than serving
+the previous build as though it were the new one.
+
+It creates a `.env` file from `.env.example`; open that in a text editor
+and paste your key after `ANTHROPIC_API_KEY=`. A browser tab opens at
 <http://localhost:8000>. Closing the terminal window stops the app.
 
 If the chat answers that the key is *identity-linked* and a workspace id
@@ -369,7 +374,7 @@ typecheck, unit tests and build.
 | `src/sample_project.py` | The worked example the app opens on — a complete, validating project plus the layout plan Claude would have returned for it, so the first paint needs no API call. |
 | `api/` | FastAPI server: `/api/layout` packs and scores, `/api/check` runs access and stacking on a hand-made arrangement, `/api/chat` is one conversational turn, `/api/projects` saves to SQLite. Serves `frontend/dist` at `/`. `serialize.py` is the wire contract between Python's site frame and the canvas. |
 | `frontend/` | The browser app (Vite, React, TypeScript). `src/geometry/` is the canvas's movement rules — carve, protect the minimum, push last; SAT overlap on rotated shapes; door arrows; footprint union — as pure functions with their own unit tests. `src/state/store.ts` is the single source of truth for the arrangement; `Canvas2D.tsx` (SVG plan, pan and zoom), `View3D.tsx` (Three.js, zones or solid massing), `Schedule.tsx` and `StatusBar.tsx` all render from it. Typography is Manrope for the interface and Barlow for drawing annotation, both bundled so the app still works offline. |
-| `start.sh` / `start.bat` | One-click local start: installs into the folder on first run, builds the frontend, starts the server, opens the browser. |
+| `start.sh` / `start.bat` | One-click local start: installs dependencies (every run, so new ones arrive), builds the frontend, and starts the server only if that build succeeded. |
 | `src/models.py` | The shared data shapes (`Project`, `Site`, `Room`, ...). |
 | `src/defaults.py` | Room-sizing defaults table (widths/depths per room type). |
 | `src/geometry.py` | Buildable envelope from site + setbacks. |
