@@ -6,6 +6,7 @@ import { footprintRings } from "./footprint";
 import { polyArea } from "./poly";
 import { boxesTrulyIntersect, obbPenetration, obbOf, obbsSeparated } from "./rect";
 import { clampPositionOnly, resolveOverlaps, rotationIsAllowed, snapToGrid, snapToNearbyNeighbors } from "./resolve";
+import { shaftsPiercing, stairShafts } from "./shafts";
 import type { Box, Envelope } from "./types";
 
 function box(partial: Partial<Box> & { id: string; left: number; top: number; width: number; height: number }): Box {
@@ -173,5 +174,37 @@ describe("doors and footprint", () => {
     const rings = footprintRings(displayShapes([a, b], null).map((s) => s.page));
     expect(rings).toHaveLength(1);
     expect(polyArea(rings[0])).toBeCloseTo(32);
+  });
+});
+
+describe("vertical circulation", () => {
+  const stairOn = (level: number) =>
+    box({ id: `room:${level}:Stair`, name: "Stair", roomType: "stair", left: 1.5, top: 2, width: 1.2, height: 5, level });
+
+  it("a stair on every storey is one shaft, not one box per storey", () => {
+    const boxes = [stairOn(0), stairOn(1), stairOn(2), box({ id: "bed", left: 8, top: 2, width: 3, height: 4, level: 1 })];
+    const shafts = stairShafts(boxes, 3);
+    expect(shafts).toHaveLength(1);
+    expect(shafts[0].from).toBe(0);
+    expect(shafts[0].to).toBe(2);
+  });
+
+  it("a stair that stops short only spans the storeys it connects", () => {
+    const shafts = stairShafts([stairOn(1), stairOn(2)], 3);
+    expect(shafts[0].from).toBe(1);
+    expect(shafts[0].to).toBe(2);
+  });
+
+  it("two stairs stay two shafts", () => {
+    const other = box({ id: "room:0:Back Stair", name: "Back Stair", roomType: "stair", left: 12, top: 2, width: 1.2, height: 5 });
+    expect(stairShafts([stairOn(0), stairOn(1), other], 2)).toHaveLength(2);
+  });
+
+  it("a shaft pierces the floors above its base, and stands on its own", () => {
+    const shafts = stairShafts([stairOn(0), stairOn(1), stairOn(2)], 3);
+    expect(shaftsPiercing(shafts, 0)).toHaveLength(0);
+    expect(shaftsPiercing(shafts, 1)).toHaveLength(1);
+    expect(shaftsPiercing(shafts, 2)).toHaveLength(1);
+    expect(shaftsPiercing(shafts, 3)).toHaveLength(0);
   });
 });

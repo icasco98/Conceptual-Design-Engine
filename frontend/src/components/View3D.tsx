@@ -11,6 +11,11 @@
  *     outline. No rooms, no colour: the shape the building makes on the
  *     site, which is the question massing actually asks.
  *
+ * The stair is drawn once, floor to top, rather than once per storey, and
+ * every floor plate it passes through is cut around it. Vertical
+ * circulation is one continuous volume in a building and has to read as
+ * one here, not as boxes stacked on each other.
+ *
  * Three.js is vendored through npm and bundled; nothing is fetched at
  * runtime, so the view works with no connection.
  */
@@ -21,6 +26,8 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { CategoryKey } from "../api/types";
 import { displayShapes } from "../geometry/carve";
 import { footprintRings } from "../geometry/footprint";
+import { polyOfBox } from "../geometry/poly";
+import { shaftsPiercing, stairShafts } from "../geometry/shafts";
 import { liveBoxes } from "../geometry/resolve";
 import type { Box } from "../geometry/types";
 import { fillFor } from "../palette";
@@ -163,6 +170,8 @@ export function View3D() {
       group.add(street);
     }
 
+    const shafts = stairShafts(boxes, project.storeys);
+
     for (let lv = 0; lv < project.storeys; lv++) {
       const live = liveBoxes(boxes, lv);
       const shapes = displayShapes(live, null);
@@ -195,9 +204,15 @@ export function View3D() {
         continue;
       }
 
-      // Slab from the level's own outline.
+      // Slab from the level's own outline, with a void where a stair comes
+      // up through it — a floor plate with no opening would slice the shaft
+      // into the stacked boxes this is meant to stop.
+      const voids = shaftsPiercing(shafts, lv);
       for (const ring of rings) {
         const shape = new THREE.Shape(ring.map((p) => new THREE.Vector2(p[0], p[1])));
+        for (const v of voids) {
+          shape.holes.push(new THREE.Path(polyOfBox(v.box).map((p) => new THREE.Vector2(p[0], p[1]))));
+        }
         const geo = new THREE.ExtrudeGeometry(shape, { depth: SLAB, bevelEnabled: false });
         const slab = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: "#d9d4c7" }));
         slab.rotation.x = Math.PI / 2; // shape y -> world +z; extrude -> world -y
@@ -206,6 +221,7 @@ export function View3D() {
       }
 
       for (const b of live) {
+        if (b.roomType === "stair") continue; // drawn once as a shaft below
         const h = storeyH - SLAB;
         const geo = new THREE.BoxGeometry(b.width, h, b.height);
         const color = fillFor(b.roomType, b.kind, categories.get(b.name) ?? categories.get(b.name.replace(/ \d+$/, "")));
@@ -223,6 +239,40 @@ export function View3D() {
         const edges = new THREE.LineSegments(
           new THREE.EdgesGeometry(geo),
           new THREE.LineBasicMaterial({ color: selected.includes(b.id) ? "#000000" : "#333333", transparent: true, opacity: current ? 0.9 : 0.25 }),
+        );
+        edges.position.copy(mesh.position);
+        edges.rotation.copy(mesh.rotation);
+        group.add(edges);
+      }
+    }
+
+    // The shaft, once, from the floor of its lowest storey to the ceiling of
+    // its highest. Drawn after the rooms so its edges read through them, and
+    // only in zones mode — the massing volume already contains it.
+    if (massing === "zones") {
+      for (const shaft of shafts) {
+        const b = shaft.box;
+        const h = (shaft.to - shaft.from + 1) * storeyH - SLAB;
+        const geo = new THREE.BoxGeometry(b.width, h, b.height);
+        const mat = new THREE.MeshLambertMaterial({
+          color: fillFor(b.roomType, b.kind, undefined),
+          transparent: true,
+          // Slightly firmer than a room: it is one object passing through
+          // every storey, so it should not fade out on the ones you are not
+          // looking at.
+          opacity: 0.62,
+        });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.set(b.left + b.width / 2, shaft.from * storeyH + SLAB + h / 2, b.top + b.height / 2);
+        mesh.rotation.y = (-b.rotation * Math.PI) / 180;
+        group.add(mesh);
+        const edges = new THREE.LineSegments(
+          new THREE.EdgesGeometry(geo),
+          new THREE.LineBasicMaterial({
+            color: selected.includes(b.id) ? "#000000" : "#333333",
+            transparent: true,
+            opacity: 0.9,
+          }),
         );
         edges.position.copy(mesh.position);
         edges.rotation.copy(mesh.rotation);
