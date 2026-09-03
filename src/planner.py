@@ -25,19 +25,23 @@ Two rules do most of the work:
   very fault access forbids. So corridors are thinned only as far as access
   survives, and the score prefers plans landing in the band a house normally
   spends on circulation rather than the smallest number.
+
+A multi-storey plan is scored as one building: every level's circulation
+and compactness count, access is walked across the stair, and
+`src.stacking` adds what one floor asks of the floor below it.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import NamedTuple
 
 from src.access import access_problems_for, zone_of
 from src.defaults import resolve_footprint
 from src.geometry import BuildableEnvelope
-from src.layout import LayoutResult, pack_rooms, row_count
+from src.layout import LayoutResult, MultiLevelLayout, pack_levels, row_count
 from src.layout_plan import LayoutPlan
 from src.models import Project
+from src.stacking import stacking_report
 
 # Share of built area a house normally spends on circulation. Below the
 # floor, rooms are usually being entered through other rooms; above the
@@ -54,7 +58,7 @@ MAX_CANDIDATES = 12
 
 
 class ScoredLayout(NamedTuple):
-    result: LayoutResult
+    result: MultiLevelLayout
     placement_order: list[str]
     score: float
     access_problems: int
@@ -68,13 +72,15 @@ def _built_area(result: LayoutResult) -> float:
     return rooms + corridors
 
 
-def circulation_ratio(result: LayoutResult) -> float:
+def circulation_ratio(result: LayoutResult | MultiLevelLayout) -> float:
     """Corridor area as a share of everything built. The number to judge
     'is there too much hallway here' by."""
-    total = _built_area(result)
+    levels = result.levels if isinstance(result, MultiLevelLayout) else [result]
+    total = sum(_built_area(level) for level in levels)
     if total <= 0:
         return 0.0
-    return sum(c.width_m * c.depth_m for c in result.corridors) / total
+    corridor = sum(c.width_m * c.depth_m for level in levels for c in level.corridors)
+    return corridor / total
 
 
 def _footprint_area(result: LayoutResult) -> float:
@@ -97,7 +103,8 @@ def _privacy_penalty(result: LayoutResult) -> float:
 
     Measured as distance from the entry: a bedroom nearer the front door
     than the living room is the wrong way round. Scaled by the plan's own
-    size so it means the same on any plot.
+    size so it means the same on any plot. An upper level has no entry and
+    is already private by being upstairs, so it scores zero here.
     """
     entry = next((r for r in result.rooms if r.is_entry), None)
     if entry is None or not result.rooms:
@@ -111,7 +118,7 @@ def _privacy_penalty(result: LayoutResult) -> float:
 
     public, private = [], []
     for room in result.rooms:
-        if room.is_entry:
+        if room.is_entry or room.room_type == "stair":
             continue
         distance = (abs(room.x_m + room.width_m / 2 - ex) + abs(room.y_m + room.depth_m / 2 - ey)) / scale
         zone = zone_of(room.room_type)
@@ -127,7 +134,15 @@ def _privacy_penalty(result: LayoutResult) -> float:
     return max(0.0, sum(public) / len(public) - sum(private) / len(private))
 
 
-def score_layout(result: LayoutResult) -> tuple[float, int, float]:
+def _compactness_penalty(result: LayoutResult) -> float:
+    built = _built_area(result)
+    footprint = _footprint_area(result)
+    if built > 0 and footprint > built:
+        return (footprint - built) / built
+    return 0.0
+
+
+def score_layout(result: LayoutResult | MultiLevelLayout) -> tuple[float, int, float]:
     """Lower is better. Returns (score, access problem count, circulation
     ratio).
 
@@ -135,8 +150,9 @@ def score_layout(result: LayoutResult) -> tuple[float, int, float]:
     dominates everything: no arrangement of rectangles is worth a plan you
     cannot walk through.
     """
-    problems = len(access_problems_for(result))
-    ratio = circulation_ratio(result)
+    multi = result if isinstance(result, MultiLevelLayout) else MultiLevelLayout(levels=[result])
+    problems = len(access_problems_for(multi))
+    ratio = circulation_ratio(multi)
 
     score = 100.0 * problems
 
@@ -145,12 +161,15 @@ def score_layout(result: LayoutResult) -> tuple[float, int, float]:
     elif ratio > CIRCULATION_TARGET_HIGH:
         score += 30.0 * (ratio - CIRCULATION_TARGET_HIGH)
 
-    score += 12.0 * _privacy_penalty(result)
+    for level in multi.levels:
+        score += 12.0 * _privacy_penalty(level)
+        score += 8.0 * _compactness_penalty(level)
 
-    built = _built_area(result)
-    footprint = _footprint_area(result)
-    if built > 0 and footprint > built:
-        score += 8.0 * ((footprint - built) / built)
+    if len(multi.levels) > 1:
+        # An unstacked bathroom or a room hanging off the floor below costs
+        # about as much as a badly placed private room: worth moving for,
+        # never worth an access problem.
+        score += 10.0 * stacking_report(multi).penalty
 
     return score, problems, ratio
 
@@ -158,37 +177,34 @@ def score_layout(result: LayoutResult) -> tuple[float, int, float]:
 def thin_corridors(
     project: Project,
     envelope: BuildableEnvelope,
-    order: Sequence[str],
-) -> tuple[LayoutResult, list[bool]]:
+    order: list[str],
+) -> tuple[MultiLevelLayout, list[list[bool]]]:
     """Drop every corridor the plan doesn't actually need.
 
-    Starts from one corridor in every gap -- the most circulation, and the
-    best access -- then tries removing them one at a time, keeping a removal
-    only when the access check still comes back clean. What's left is the
-    least hallway that still serves every room, which is the honest reading
-    of "minimize circulation": corridors earn their floor area by being
-    load-bearing for access, not by being cheap.
-
-    Removals are tried widest-gap-first so that when two corridors are
-    interchangeable the more expensive one goes.
+    Starts from one corridor in every gap on every level -- the most
+    circulation, and the best access -- then tries removing them one at a
+    time, keeping a removal only when the whole building's access check
+    still comes back clean. What's left is the least hallway that still
+    serves every room, which is the honest reading of "minimize
+    circulation": corridors earn their floor area by being load-bearing for
+    access, not by being cheap.
     """
-    # One slot per row: the gap below it. The last slot sits past the final
-    # row, which is what lets a single-row plan have a corridor at all.
-    gaps = row_count(project, envelope, list(order))
-    if gaps <= 0:
-        return pack_rooms(project, envelope, list(order)), []
-
-    keep = [True] * gaps
-    best = pack_rooms(project, envelope, list(order), keep)
+    # One slot per row per level: the gap below it. The last slot sits past
+    # the final row, which is what lets a single-row plan have a corridor.
+    keep: list[list[bool]] = [
+        [True] * row_count(project, envelope, order, level=level) for level in range(project.storeys)
+    ]
+    best = pack_levels(project, envelope, order, keep)
     baseline_problems = len(access_problems_for(best))
 
-    for index in range(gaps):
-        trial = list(keep)
-        trial[index] = False
-        candidate = pack_rooms(project, envelope, list(order), trial)
-        if len(access_problems_for(candidate)) <= baseline_problems:
-            keep = trial
-            best = candidate
+    for level in range(project.storeys):
+        for index in range(len(keep[level])):
+            trial = [list(gaps) for gaps in keep]
+            trial[level][index] = False
+            candidate = pack_levels(project, envelope, order, trial)
+            if len(access_problems_for(candidate)) <= baseline_problems:
+                keep = trial
+                best = candidate
 
     return best, keep
 
@@ -206,7 +222,7 @@ def _candidate_orders(project: Project, plan: LayoutPlan | None) -> list[list[st
     if not names:
         return []
 
-    def dedupe(order: Sequence[str]) -> list[str]:
+    def dedupe(order: list[str]) -> list[str]:
         seen, out = set(), []
         for name in order:
             if name in names and name not in seen:
@@ -280,7 +296,7 @@ def best_layout(
     """
     orders = _candidate_orders(project, plan)
     if not orders:
-        result = pack_rooms(project, envelope, plan.placement_order if plan else None)
+        result = pack_levels(project, envelope, plan.placement_order if plan else None)
         score, problems, ratio = score_layout(result)
         return ScoredLayout(result, [], score, problems, ratio, "no rooms to arrange")
 

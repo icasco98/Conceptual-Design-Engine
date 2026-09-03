@@ -44,6 +44,9 @@ ROOM_DEFAULTS: dict[str, RoomSizeDefault] = {
     "closet": RoomSizeDefault("Closet", 0.9, 0.6, 1.5, 0.6),
     "storage": RoomSizeDefault("Storage", 1.5, 1.5, 2.0, 2.0),
     "mudroom": RoomSizeDefault("Mudroom", 1.5, 1.8, 1.8, 2.1),
+    # A straight flight with a landing, sized in plan. Depth is the run
+    # direction; a 3.0m storey needs roughly this much.
+    "stair": RoomSizeDefault("Stair", 1.0, 2.4, 1.2, 3.0),
     "other": RoomSizeDefault("Room", 2.0, 2.0, 3.0, 3.0),
 }
 

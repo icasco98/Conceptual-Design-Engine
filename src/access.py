@@ -43,6 +43,9 @@ class RoomAccess(NamedTuple):
     zone: Zone
     passable: bool
     street_access: bool = False
+    # Plumbed rooms. On a multi-storey plan these want to sit above one
+    # another so the pipework stacks -- see src.stacking.
+    wet: bool = False
 
 
 # Defaults chosen so that the rooms you would never route through -- sleeping,
@@ -55,14 +58,18 @@ ROOM_ACCESS: dict[str, RoomAccess] = {
     "living_room": RoomAccess("public", True),
     "family_room": RoomAccess("public", True),
     "dining_room": RoomAccess("public", True),
-    "kitchen": RoomAccess("public", False),
+    "kitchen": RoomAccess("public", False, wet=True),
     "office": RoomAccess("private", False),
     "bedroom_primary": RoomAccess("private", False),
     "bedroom": RoomAccess("private", False),
-    "bathroom": RoomAccess("private", False),
-    "half_bath": RoomAccess("public", False),
+    "bathroom": RoomAccess("private", False, wet=True),
+    "half_bath": RoomAccess("public", False, wet=True),
     "closet": RoomAccess("private", False),
-    "laundry": RoomAccess("service", False),
+    "laundry": RoomAccess("service", False, wet=True),
+    # The stair is circulation: you walk through it to reach the next
+    # level, so it must be passable, and it is how upper levels are
+    # reached at all (see find_access_problems' `links`).
+    "stair": RoomAccess("public", True),
     "storage": RoomAccess("service", False),
     "garage_single": RoomAccess("service", False, street_access=True),
     "garage_double": RoomAccess("service", False, street_access=True),
@@ -82,6 +89,10 @@ def is_passable(room_type: str) -> bool:
 
 def zone_of(room_type: str) -> Zone:
     return access_for(room_type).zone
+
+
+def is_wet(room_type: str) -> bool:
+    return access_for(room_type).wet
 
 
 class AccessProblem(NamedTuple):
@@ -112,6 +123,10 @@ class Node(NamedTuple):
     passable: bool
     is_entry: bool
     street_access: bool = False
+    # Storey the rectangle is on. Rectangles on different levels never
+    # touch, however their plan coordinates overlap -- a bedroom above the
+    # kitchen shares a slab with it, not a door.
+    level: int = 0
 
 
 def rects_touch(a: tuple[float, float, float, float],
@@ -128,8 +143,15 @@ def rects_touch(a: tuple[float, float, float, float],
     return False
 
 
-def find_access_problems(nodes: Sequence[Node]) -> list[AccessProblem]:
+def find_access_problems(
+    nodes: Sequence[Node],
+    links: Sequence[tuple[int, int]] = (),
+) -> list[AccessProblem]:
     """Every room the plan fails to serve, walking out from the entry.
+
+    `links` are extra adjacencies between node indices that geometry alone
+    can't see: the stair on level 0 and the same stair on level 1 are two
+    rectangles in two graphs, joined by the flight between them.
 
     The walk may only pass THROUGH a passable node. A room that is only
     touched by impassable rooms is reported with what stands in the way, so
@@ -148,9 +170,14 @@ def find_access_problems(nodes: Sequence[Node]) -> list[AccessProblem]:
     adjacency: list[list[int]] = [[] for _ in nodes]
     for i in range(len(nodes)):
         for j in range(i + 1, len(nodes)):
-            if rects_touch(nodes[i].rect, nodes[j].rect):
+            if nodes[i].level == nodes[j].level and rects_touch(nodes[i].rect, nodes[j].rect):
                 adjacency[i].append(j)
                 adjacency[j].append(i)
+    for a, b in links:
+        if b not in adjacency[a]:
+            adjacency[a].append(b)
+        if a not in adjacency[b]:
+            adjacency[b].append(a)
 
     # Breadth-first from the entry, expanding only through passable rooms.
     # Reaching an impassable room is fine -- it just can't be walked onward
@@ -183,7 +210,7 @@ def find_access_problems(nodes: Sequence[Node]) -> list[AccessProblem]:
     return problems
 
 
-def nodes_from_layout(placed_rooms, corridors) -> list[Node]:
+def nodes_from_layout(placed_rooms, corridors, level: int = 0) -> list[Node]:
     """Build the touching graph's nodes from a `src.layout.LayoutResult`'s
     rooms and corridors. Corridors are always passable; a room's passability
     comes from its type."""
@@ -196,6 +223,7 @@ def nodes_from_layout(placed_rooms, corridors) -> list[Node]:
             passable=acc.passable,
             is_entry=room.is_entry,
             street_access=acc.street_access,
+            level=level,
         ))
     for i, corridor in enumerate(corridors, start=1):
         nodes.append(Node(
@@ -204,10 +232,39 @@ def nodes_from_layout(placed_rooms, corridors) -> list[Node]:
                   corridor.x_m + corridor.width_m, corridor.y_m + corridor.depth_m),
             passable=True,
             is_entry=False,
+            level=level,
         ))
     return nodes
 
 
+def nodes_from_levels(levels) -> tuple[list[Node], list[tuple[int, int]]]:
+    """One graph for a whole building: every level's rooms and corridors,
+    plus a link joining each stair to the same stair one level up. Returns
+    (nodes, links) ready for `find_access_problems`."""
+    nodes: list[Node] = []
+    stair_index_by_level: dict[int, dict[str, int]] = {}
+    for result in levels:
+        offset = len(nodes)
+        level_nodes = nodes_from_layout(result.rooms, result.corridors, level=result.level)
+        for i, room in enumerate(result.rooms):
+            if room.room_type == "stair":
+                stair_index_by_level.setdefault(result.level, {})[room.name] = offset + i
+        nodes.extend(level_nodes)
+
+    links: list[tuple[int, int]] = []
+    for level, stairs in stair_index_by_level.items():
+        above = stair_index_by_level.get(level + 1, {})
+        for name, index in stairs.items():
+            if name in above:
+                links.append((index, above[name]))
+    return nodes, links
+
+
 def access_problems_for(result) -> list[AccessProblem]:
-    """Convenience wrapper: the access problems in a packed layout."""
+    """Convenience wrapper: the access problems in a packed layout -- one
+    level (`LayoutResult`) or a whole building (`MultiLevelLayout`), in
+    which case the stair joins the levels."""
+    if hasattr(result, "levels"):
+        nodes, links = nodes_from_levels(result.levels)
+        return find_access_problems(nodes, links)
     return find_access_problems(nodes_from_layout(result.rooms, result.corridors))

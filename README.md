@@ -232,6 +232,32 @@ with yours and never sent to Claude as context.
    room) is a bigger feature than this tool needs; this covers the part
    that matters for exploring adjacency.
 
+5. **Multi-storey.** A house can have more than one level
+   (`Project.storeys`). Every room lists the storeys it is on
+   (`Room.levels`, `[0]` = ground). Three rules are built in, all plain
+   geometry (`src/layout.py`, `src/access.py`, `src/stacking.py`):
+
+   - **The stair is one room shared by every level it connects.** It has a
+     single rectangle, pinned at the left end of the first row on each of
+     its levels and spanning that row's full depth, so it meets the
+     corridor below like the entry does. Upper levels have no front door;
+     the access walk reaches them only through the stair, and a level the
+     stair doesn't reach is reported as cut off.
+   - **Wet rooms are asked to stack.** Bathrooms, kitchens and laundries
+     carry the pipework, so an upper wet room is scored on how much of it
+     sits over *some* wet room below — any overlap will do, exact
+     alignment isn't required. One with nothing under it is named in a
+     warning and costs in the planner's score.
+   - **Levels may have different footprints.** Each storey is packed to
+     its own outline. A room hanging more than a quarter of its area past
+     the level below is flagged as a cantilever.
+
+   If the owner never says what goes where, `src/levels.py` opens on the
+   architect's first sketch — sleeping upstairs, living downstairs, one
+   bathroom kept on the ground floor — as a starting point to move away
+   from. The app shows one canvas per storey behind a selector; the stair
+   appears on each.
+
 **Not yet built:** a chat-driven revision loop where the arrangement you
 dragged becomes the starting point for Claude's next suggestion. See
 Roadmap below.
@@ -287,16 +313,22 @@ The geometry, defaults, and validation logic is unit-tested and doesn't
 call the API:
 
 ```bash
-pip install pytest
+pip install -r requirements-dev.txt
+ruff check .
 pytest
 ```
+
+The same two commands run in GitHub Actions on every push
+(`.github/workflows/ci.yml`).
 
 ## Project layout
 
 | Path | Purpose |
 |---|---|
 | `src/planner.py` | Picks the layout: packs several candidate orderings, thins each one's corridors down to what access actually needs, scores them on access/circulation/privacy/compactness, and returns the best. The architectural judgement lives here, in code that can be read and tested. |
-| `src/access.py` | How each room type behaves in circulation — its zone, whether you may walk *through* it, whether it meets the street — and the check that walks a packed layout from the entry and reports rooms that can't be reached without passing through a bedroom, bathroom or garage. |
+| `src/access.py` | How each room type behaves in circulation — its zone, whether you may walk *through* it, whether it meets the street, whether it is plumbed — and the check that walks a packed building from the entry (across the stair, level to level) and reports rooms that can't be reached without passing through a bedroom, bathroom or garage. |
+| `src/stacking.py` | What one storey asks of the storey below it: wet-room stacking and cantilever checks, in shapely polygon arithmetic. Feeds both the planner's score and the owner's warnings. |
+| `src/levels.py` | The default storey split for a multi-storey house the owner hasn't split themselves. |
 | `src/vendor/` | Vendored third-party code — polygon-clipping (MIT) for boolean polygon geometry, inlined into the diagram rather than loaded from a CDN. |
 | `src/sample_project.py` | The worked example the app opens on — a complete, validating project plus the layout plan Claude would have returned for it, so the first paint needs no API call. |
 | `app.py` | Streamlit UI — chat (fixed-height, scrollable) + interactive zoning diagram below it (schedule panel left of the drawing), sidebar summary of captured site/setback/envelope/priority state. |
@@ -307,7 +339,7 @@ pytest
 | `src/extraction.py` | Conversation → structured `Project` (Claude, structured output). |
 | `src/claude_client.py` | Anthropic client + plain-language explanation of issues. |
 | `src/layout_plan.py` | Claude picks room categories + adjacency order (structured output). |
-| `src/layout.py` | Deterministic rectangle packing, footprint compaction, building footprint outline, and circulation graph — no LLM math, unit-tested. |
+| `src/layout.py` | Deterministic rectangle packing, footprint compaction, building footprint outline, and circulation graph — no LLM math, unit-tested. `pack_levels` packs every storey with the stair pinned to one rectangle on each. |
 | `src/interactive_canvas.py` | Renders the interactive zoning diagram (title, legend, live door arrows, a 0.25m snap grid, selection-gated draggable/resizable/rotatable/deletable rooms and hallways with multi-select group rotate/delete, a live-synced editable room schedule in a column left of the drawing, display-shape morphing around rotated neighbours, a true polygon-union footprint outline, gap-closing snap, true rotated-shape collision, live footprint outline, setback-constrained collision resolution with shrink-toward-minimum) as self-contained HTML/CSS/JS, unit-tested. |
 | `src/palette.py` | The 3 validated diagram colors (see dataviz notes in the module docstring). |
 | `tests/` | Unit tests for geometry/defaults/validation/layout/interactive canvas. |
@@ -323,5 +355,7 @@ pytest
 - Setbacks: flat (not height-dependent). Default 2 m from street-facing
   edges, 1.5 m from neighbor-facing edges. A corner lot can tag more than
   one edge as street-facing.
-- Max building height: 15 m.
+- Max building height: 15 m. Storey height defaults to 3.0 m.
+- Stair: 1.2 m x 3.0 m in plan by default (minimum 1.0 m x 2.4 m), one
+  per house, pinned to the same rectangle on every level it connects.
 - Hallway width: fixed at 1.2 m (code compliance), enforced in validation.

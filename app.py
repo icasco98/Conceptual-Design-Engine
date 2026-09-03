@@ -25,9 +25,11 @@ from src.extraction import extract_project
 from src.geometry import BuildableEnvelope, IncompleteSiteError, compute_buildable_envelope
 from src.interactive_canvas import CANVAS_CHROME_HEIGHT_PX, canvas_size_px, render_canvas_html
 from src.layout_plan import LayoutPlan, plan_layout
+from src.levels import assign_default_levels
 from src.models import Project
 from src.planner import CIRCULATION_TARGET_HIGH, CIRCULATION_TARGET_LOW, best_layout
 from src.sample_project import sample_layout_plan, sample_project
+from src.stacking import stacking_issues
 from src.validation import Issue, validate_room_program
 
 load_dotenv()
@@ -212,7 +214,7 @@ def render_interactive_canvas(
     # their corridors thinned to what access actually needs, and the best
     # scoring one drawn (src/planner.py).
     chosen = best_layout(project, envelope, layout_plan)
-    result = chosen.result
+    building = chosen.result
 
     st.caption(
         f"{chosen.notes}. Circulation is scored against the "
@@ -221,7 +223,7 @@ def render_interactive_canvas(
         "room depends on one to be reachable."
     )
 
-    access_problems = access_problems_for(result)
+    access_problems = access_problems_for(building)
     if access_problems:
         st.warning(
             "**Circulation problems in this layout** — "
@@ -229,6 +231,18 @@ def render_interactive_canvas(
             + (f" (+{len(access_problems) - 4} more)" if len(access_problems) > 4 else "")
             + "  \nDrag the rooms to open a route, or describe the change you want in the chat."
         )
+    if project.storeys > 1:
+        for issue in stacking_issues(building):
+            st.warning(issue.message)
+
+    # One canvas per storey, chosen with a selector. The stair is the same
+    # rectangle on every level it connects, so it appears on each.
+    if project.storeys > 1:
+        labels = ["Ground floor"] + [f"Level {i}" for i in range(1, project.storeys)]
+        picked = st.radio("Storey", labels, horizontal=True, key="level_picker")
+        result = building.level(labels.index(picked))
+    else:
+        result = building.ground
 
     assignments = {a.room_name: a.category for a in layout_plan.assignments}
     html_doc = render_canvas_html(project, envelope, result, assignments, layout_plan)
@@ -277,26 +291,30 @@ def process_new_message(prompt: str) -> None:
         return
 
     st.session_state.history.append({"role": "assistant", "content": result.assistant_message})
-    st.session_state.project = result.project
+    # A multi-storey house described without saying what goes where opens
+    # on the architect's first sketch -- bedrooms up, living down -- rather
+    # than a bungalow with an empty floor above (src/levels.py).
+    st.session_state.project = assign_default_levels(result.project)
 
-    new_envelope = compute_envelope(result.project)
-    new_issues = validate_room_program(result.project, new_envelope)
+    project = st.session_state.project
+    new_envelope = compute_envelope(project)
+    new_issues = validate_room_program(project, new_envelope)
     # Warnings already show in the sidebar; only spend an API call explaining
     # when something is actually blocking (an error-severity issue).
     if any(issue.severity == "error" for issue in new_issues):
         try:
             explanation = explain_issues(
-                json.dumps(result.project.model_dump(mode="json"), indent=2),
-                result.project.priorities,
+                json.dumps(project.model_dump(mode="json"), indent=2),
+                project.priorities,
                 new_issues,
             )
             st.session_state.history.append({"role": "assistant", "content": explanation})
         except Exception as exc:  # noqa: BLE001
             st.session_state.history.append({"role": "assistant", "content": f"Couldn't reach Claude: {exc}"})
 
-    if new_envelope is not None and new_envelope.is_valid and result.project.rooms:
+    if new_envelope is not None and new_envelope.is_valid and project.rooms:
         try:
-            st.session_state.layout_plan = plan_layout(result.project)
+            st.session_state.layout_plan = plan_layout(project)
         except Exception:  # noqa: BLE001 - diagram just won't refresh this turn
             pass
     else:

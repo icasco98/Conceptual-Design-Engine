@@ -48,7 +48,13 @@ def validate_room_program(project: Project, envelope: BuildableEnvelope | None) 
         return issues
 
     total_min_area = 0.0
+    min_area_by_level: dict[int, float] = {}
     for room, footprint in _room_footprints(project.rooms):
+        for level in room.levels:
+            min_area_by_level[level] = (
+                min_area_by_level.get(level, 0.0)
+                + footprint.min_width_m * footprint.min_depth_m * room.count
+            )
         if footprint.width_m < footprint.min_width_m or footprint.depth_m < footprint.min_depth_m:
             issues.append(
                 Issue(
@@ -71,7 +77,7 @@ def validate_room_program(project: Project, envelope: BuildableEnvelope | None) 
                 )
             )
 
-    if total_min_area > envelope.area_m2:
+    if project.storeys == 1 and total_min_area > envelope.area_m2:
         issues.append(
             Issue(
                 "error",
@@ -80,6 +86,50 @@ def validate_room_program(project: Project, envelope: BuildableEnvelope | None) 
                 f"but the buildable envelope is only {envelope.area_m2:.1f} m².",
             )
         )
+    if project.storeys > 1:
+        for level, area in sorted(min_area_by_level.items()):
+            if area > envelope.area_m2:
+                issues.append(
+                    Issue(
+                        "error",
+                        "level_area_exceeds_envelope",
+                        f"Level {level} needs at least {area:.1f} m² at minimum sizes, but the "
+                        f"buildable envelope is only {envelope.area_m2:.1f} m² per storey.",
+                    )
+                )
+
+    stairs = [room for room in project.rooms if room.room_type == "stair"]
+    if project.storeys > 1 and not stairs:
+        issues.append(
+            Issue(
+                "error",
+                "no_stair",
+                f"A {project.storeys}-storey house needs a stair, and none is in the program yet.",
+            )
+        )
+    for stair in stairs:
+        connected = set(stair.levels)
+        wanted = set(range(project.storeys))
+        if project.storeys > 1 and not wanted <= connected:
+            missing = ", ".join(str(level) for level in sorted(wanted - connected))
+            issues.append(
+                Issue(
+                    "warning",
+                    "stair_misses_level",
+                    f"{stair.name} doesn't reach level {missing}; a stair should connect every storey.",
+                )
+            )
+    for room in project.rooms:
+        too_high = [level for level in room.levels if level >= project.storeys]
+        if too_high:
+            issues.append(
+                Issue(
+                    "warning",
+                    "room_above_top_storey",
+                    f"{room.name} is placed on level {too_high[0]}, but the house has "
+                    f"{project.storeys} storey{'s' if project.storeys != 1 else ''} (levels 0–{project.storeys - 1}).",
+                )
+            )
 
     street_edges = [e for e in project.site.edges if e.adjacency == "street"]
     if project.site.is_complete() and not street_edges:

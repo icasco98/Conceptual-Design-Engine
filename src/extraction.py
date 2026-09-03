@@ -65,6 +65,15 @@ described them differently (sizes, priorities) — whichever preserves what \
 they actually said.
 - Mark is_entry=true on whichever room(s) the owner describes as a main \
 entry, foyer, or front door.
+- Storeys: `storeys` defaults to 1. Set it to 2 (or more) only when the \
+owner says the house has more than one floor ("two-storey", "bedrooms \
+upstairs", "a first floor"). When storeys > 1, add one Room of room_type \
+"stair" (name it "Stair") with `levels` listing every storey it connects, \
+e.g. [0, 1] -- the stair is the one room that exists on several levels. \
+Every other room's `levels` is a single level, 0 = ground; put a room on \
+an upper level only when the owner places it there ("bedrooms upstairs" \
+-> bedrooms and their bathrooms get [1]). Leave everything else on [0]; \
+don't invent a level split the owner never described.
 - Record the owner's stated priorities in their own words (e.g. "privacy \
 from the street", "morning light in the kitchen") in `priorities`.
 - Setbacks default to 2m from street-facing edges and 1.5m from \

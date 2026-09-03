@@ -68,6 +68,7 @@ RoomType = Literal[
     "closet",
     "storage",
     "mudroom",
+    "stair",
     "other",
 ]
 
@@ -83,6 +84,14 @@ class Room(BaseModel):
     is_entry: bool = Field(
         default=False, description="True if this room is a building entry point."
     )
+    # Which storeys this room is on, 0 = ground. Almost every room is on
+    # exactly one. A stair lists every level it connects and is the one
+    # room that exists on several at once -- one rectangle, drawn on each.
+    levels: list[int] = Field(
+        default_factory=lambda: [0],
+        description="Storeys this room is on, 0 = ground. A stair lists every level it "
+        "connects (e.g. [0, 1]). Only set a level above 0 when the owner says so.",
+    )
     priority_notes: str | None = Field(
         default=None,
         description="Short note on what matters for this room, e.g. 'wants privacy from street', "
@@ -96,6 +105,8 @@ class Project(BaseModel):
     setbacks: Setbacks = Field(default_factory=Setbacks)
     max_building_height_m: float = 15.0
     hallway_width_m: float = 1.2
+    storeys: int = Field(default=1, ge=1, description="Number of storeys, 1 = single level.")
+    storey_height_m: float = Field(default=3.0, gt=0, description="Floor-to-floor height in meters.")
     rooms: list[Room] = Field(default_factory=list)
     priorities: list[str] = Field(
         default_factory=list,

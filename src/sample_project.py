@@ -27,13 +27,17 @@ from src.models import Project, Room, Setbacks, Site, SiteEdge
 # A mid-size suburban lot, street at the front, neighbors on the other
 # three sides — the most ordinary case there is, so the defaults on show
 # (2m street setback, 1.5m neighbor) are the ones most owners will get.
+# Two storeys, living down and sleeping up, so the level selector, the
+# shared stair and the wet-room stacking all have something to show.
 SAMPLE_SITE_WIDTH_M = 20.0
 SAMPLE_SITE_DEPTH_M = 28.0
 
 _SAMPLE_ROOM_ORDER = [
     "Front Entry",
+    "Stair",
     "Great Room",
     "Kitchen",
+    "Powder Room",
     "Office",
     "Primary Bedroom",
     "Bedroom",
@@ -57,14 +61,17 @@ def sample_project() -> Project:
             ],
         ),
         setbacks=Setbacks(),
+        storeys=2,
         rooms=[
             Room(name="Front Entry", room_type="entry", is_entry=True),
+            Room(name="Stair", room_type="stair", levels=[0, 1]),
             Room(name="Great Room", room_type="living_room"),
             Room(name="Kitchen", room_type="kitchen"),
+            Room(name="Powder Room", room_type="half_bath"),
             Room(name="Office", room_type="office"),
-            Room(name="Primary Bedroom", room_type="bedroom_primary"),
-            Room(name="Bedroom", room_type="bedroom", count=2),
-            Room(name="Bathroom", room_type="bathroom", count=2),
+            Room(name="Primary Bedroom", room_type="bedroom_primary", levels=[1]),
+            Room(name="Bedroom", room_type="bedroom", count=2, levels=[1]),
+            Room(name="Bathroom", room_type="bathroom", count=2, levels=[1]),
             Room(name="Double Garage", room_type="garage_double"),
         ],
         priorities=[
@@ -79,8 +86,10 @@ def sample_layout_plan() -> LayoutPlan:
     order and rationale — written out so the sample needs no API call."""
     categories = {
         "Front Entry": "category_b",
+        "Stair": "category_b",
         "Great Room": "category_b",
         "Kitchen": "category_b",
+        "Powder Room": "category_c",
         "Office": "category_a",
         "Primary Bedroom": "category_a",
         "Bedroom": "category_a",
@@ -101,8 +110,8 @@ def sample_layout_plan() -> LayoutPlan:
         placement_order=list(_SAMPLE_ROOM_ORDER),
         rationale=(
             "Shared rooms sit along the street edge with the kitchen next to the "
-            "entry, and the bedrooms are grouped together at the back, away from "
-            "the front door. This is a sample — describe your own project in the "
+            "entry, and the bedrooms are upstairs, reached by the stair beside the "
+            "front door. This is a sample — describe your own project in the "
             "chat and it will be replaced."
         ),
     )

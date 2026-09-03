@@ -101,6 +101,9 @@ class PlacedRoom:
     # than this.
     min_width_m: float
     min_depth_m: float
+    # Storey this rectangle is on (0 = ground). A stair is placed once per
+    # level it connects, with identical coordinates on each.
+    level: int = 0
 
     @property
     def center(self) -> Point:
@@ -135,6 +138,41 @@ class LayoutResult:
     # own exterior wall line — the union of every room and corridor, not
     # the buildable envelope it sits inside.
     footprint: list[Point]
+    level: int = 0
+
+
+@dataclass(frozen=True)
+class MultiLevelLayout:
+    """One packed plan per storey, index = level. A single-storey project
+    is the one-element case; nothing downstream special-cases it."""
+
+    levels: list[LayoutResult]
+
+    @property
+    def ground(self) -> LayoutResult:
+        return self.levels[0]
+
+    def level(self, index: int) -> LayoutResult:
+        return self.levels[index]
+
+    @property
+    def rooms(self) -> list[PlacedRoom]:
+        """Every room on every level. A single-storey building's rooms are
+        exactly its ground floor's."""
+        return [room for result in self.levels for room in result.rooms]
+
+    @property
+    def corridors(self) -> list[CorridorSegment]:
+        return [corridor for result in self.levels for corridor in result.corridors]
+
+    @property
+    def footprint(self) -> list[Point]:
+        """The ground floor's outline -- what meets the site."""
+        return self.ground.footprint
+
+    @property
+    def circulation_edges(self) -> list[tuple[Point, Point]]:
+        return [edge for result in self.levels for edge in result.circulation_edges]
 
 
 def _expand_and_order(rooms: list[Room], order: list[str]) -> list[tuple[Room, str]]:
@@ -145,7 +183,7 @@ def _expand_and_order(rooms: list[Room], order: list[str]) -> list[tuple[Room, s
     relative order is otherwise preserved."""
     expanded: list[tuple[Room, str]] = []
     for room in rooms:
-        if room.room_type == "hallway":
+        if room.room_type in ("hallway", "stair"):
             continue
         if room.count <= 1:
             expanded.append((room, room.name))
@@ -166,18 +204,23 @@ def _form_rows(
     footprints: list[tuple[Room, str, float, float, float, float]],
     envelope_width: float,
     max_shrink: float,
+    first_row_reserved: float = 0.0,
 ) -> list[list[tuple[Room, str, float, float, float, float]]]:
     """Place rooms left-to-right, wrapping into a new row when one doesn't
     fit. Before wrapping, try shrinking the room's width (never below its
     own minimum, never by more than `max_shrink`) to exactly fill the row's
-    remaining space instead — one fewer row is a smaller footprint."""
+    remaining space instead — one fewer row is a smaller footprint.
+
+    `first_row_reserved` is width the first row can't use: the pinned stair
+    sits at its left end (see `pack_levels`)."""
     rows: list[list[tuple[Room, str, float, float, float, float]]] = []
     current: list[tuple[Room, str, float, float, float, float]] = []
     row_width = 0.0
     for room, base_name, w, d, min_w, min_d in footprints:
-        if current and row_width + w > envelope_width + 1e-9:
+        capacity = envelope_width - (first_row_reserved if not rows else 0.0)
+        if current and row_width + w > capacity + 1e-9:
             shrink_floor = max(min_w, w - max_shrink)
-            available = envelope_width - row_width
+            available = capacity - row_width
             if available >= shrink_floor - 1e-9:
                 w = available
             else:
@@ -195,11 +238,20 @@ def _row_width(row: list[tuple[Room, str, float, float, float, float]]) -> float
     return sum(w for _, _, w, _, _, _ in row)
 
 
+def _row_height(row: list[tuple[Room, str, float, float, float, float]], max_shrink: float) -> float:
+    """A row is as deep as its deepest room, trimmed toward that room's own
+    minimum (never past it, never by more than `max_shrink`)."""
+    nominal_height = max((d for _, _, _, d, _, _ in row), default=0.0)
+    floors_at_max = [min_d for _, _, _, d, _, min_d in row if abs(d - nominal_height) < 1e-9]
+    return max(max(floors_at_max), nominal_height - max_shrink) if floors_at_max else nominal_height
+
+
 def _layout_from_rows(
     rows: list[list[tuple[Room, str, float, float, float, float]]],
     corridor_width: float,
     max_shrink: float,
     corridor_gaps: list[bool] | None = None,
+    pinned: tuple[float, float] | None = None,
 ) -> tuple[
     list[tuple[Room, str, float, float, float, float, float, float]],
     list[tuple[float, float, float, float]],
@@ -221,16 +273,26 @@ def _layout_from_rows(
     is how src.planner buys back the floor area an unnecessary hallway was
     costing: it starts with every gap corridored and drops the ones the
     access check says nothing needs. A corridor is only worth its area if a
-    room depends on it to be reachable."""
+    room depends on it to be reachable.
+
+    `pinned` is (width, depth) of a box fixed at the first row's left end --
+    the stair on a multi-storey plan. The first row starts to its right and
+    is at least as deep as it, so the box spans the row's full depth and
+    meets the corridor below like the entry does."""
     placed = []
     corridors: list[tuple[float, float, float, float]] = []
     bands: list[tuple[float, float, float]] = []
-    row_widths = [_row_width(row) for row in rows]
+    pinned_w, pinned_d = pinned if pinned is not None else (0.0, 0.0)
+    if not rows and pinned is not None:
+        # Nothing on this level but the stair itself.
+        rows = [[]]
+    row_widths = [_row_width(row) + (pinned_w if i == 0 else 0.0) for i, row in enumerate(rows)]
     y = 0.0
     for i, row in enumerate(rows):
         nominal_height = max((d for _, _, _, d, _, _ in row), default=0.0)
-        floors_at_max = [min_d for _, _, _, d, _, min_d in row if abs(d - nominal_height) < 1e-9]
-        row_height = max(max(floors_at_max), nominal_height - max_shrink) if floors_at_max else nominal_height
+        row_height = _row_height(row, max_shrink)
+        if i == 0 and pinned is not None:
+            row_height = max(row_height, pinned_d)
         # Which side of the band the corridor is on decides which edge the
         # rooms line up with. A row is only as deep as its deepest room, so
         # top-aligning everything left every shallower room hanging off the
@@ -246,7 +308,7 @@ def _layout_from_rows(
         )
         align_to_bottom = corridor_below and not corridor_above
 
-        x = 0.0
+        x = pinned_w if i == 0 else 0.0
         for room, base_name, w, d, min_w, min_d in row:
             d_final = row_height if abs(d - nominal_height) < 1e-9 else d
             offset = (row_height - d_final) if align_to_bottom else 0.0
@@ -311,16 +373,61 @@ def _corridor_count(rows: int, corridor_gaps: list[bool] | None) -> int:
     return sum(1 for i in range(rows) if i < len(corridor_gaps) and corridor_gaps[i])
 
 
-def row_count(project: Project, envelope: BuildableEnvelope,
-              placement_order: list[str] | None = None) -> int:
-    """How many rows this ordering packs into -- so a caller can size the
-    corridor-gap list without packing the whole layout first."""
-    ordered = _expand_and_order(project.rooms, placement_order or [])
-    footprints = [
+def rooms_on_level(project: Project, level: int) -> list[Room]:
+    return [room for room in project.rooms if level in room.levels]
+
+
+def stair_of(project: Project) -> Room | None:
+    """The stair room, if the program has one. One stair per project for
+    now; a second would need its own pin."""
+    return next((room for room in project.rooms if room.room_type == "stair"), None)
+
+
+def _stair_width(project: Project) -> float:
+    stair = stair_of(project)
+    if stair is None:
+        return 0.0
+    return resolve_footprint("stair", stair.explicit_width_m, stair.explicit_depth_m).width_m
+
+
+def _footprints_for(rooms: list[Room], placement_order: list[str] | None):
+    ordered = _expand_and_order(rooms, placement_order or [])
+    return [
         (room, base_name, *resolve_footprint(room.room_type, room.explicit_width_m, room.explicit_depth_m))
         for room, base_name in ordered
     ]
-    return len(_form_rows(footprints, envelope.width_m, MAX_SHRINK_M))
+
+
+def row_count(project: Project, envelope: BuildableEnvelope,
+              placement_order: list[str] | None = None, level: int = 0) -> int:
+    """How many rows this ordering packs into -- so a caller can size the
+    corridor-gap list without packing the whole layout first."""
+    footprints = _footprints_for(rooms_on_level(project, level), placement_order)
+    reserved = _stair_width(project) if stair_of(project) and level in stair_of(project).levels else 0.0
+    rows = _form_rows(footprints, envelope.width_m, MAX_SHRINK_M, reserved)
+    if not rows and reserved:
+        return 1
+    return len(rows)
+
+
+def stair_depth(project: Project, envelope: BuildableEnvelope,
+                placement_order: list[str] | None = None) -> float:
+    """The one depth the stair has on every level: its own nominal depth or
+    the deepest first row on any level it connects, whichever is more, so
+    the same rectangle spans the full first row everywhere."""
+    stair = stair_of(project)
+    if stair is None:
+        return 0.0
+    footprint = resolve_footprint("stair", stair.explicit_width_m, stair.explicit_depth_m)
+    depth = footprint.depth_m
+    for level in stair.levels:
+        rows = _form_rows(
+            _footprints_for(rooms_on_level(project, level), placement_order),
+            envelope.width_m, MAX_SHRINK_M, footprint.width_m,
+        )
+        if rows:
+            depth = max(depth, _row_height(rows[0], MAX_SHRINK_M))
+    return depth
 
 
 def pack_rooms(
@@ -328,14 +435,22 @@ def pack_rooms(
     envelope: BuildableEnvelope,
     placement_order: list[str] | None = None,
     corridor_gaps: list[bool] | None = None,
+    level: int = 0,
+    pinned_stair_depth: float | None = None,
 ) -> LayoutResult:
-    ordered = _expand_and_order(project.rooms, placement_order or [])
-    footprints = [
-        (room, base_name, *resolve_footprint(room.room_type, room.explicit_width_m, room.explicit_depth_m))
-        for room, base_name in ordered
-    ]
+    """Pack one level. With a stair in the program that reaches this level,
+    it is pinned at the first row's left end at `pinned_stair_depth` (or
+    `stair_depth()` when not given), identically on every level."""
+    footprints = _footprints_for(rooms_on_level(project, level), placement_order)
 
     corridor_width = project.hallway_width_m
+
+    stair = stair_of(project)
+    pinned: tuple[float, float] | None = None
+    if stair is not None and level in stair.levels:
+        depth = pinned_stair_depth if pinned_stair_depth is not None else stair_depth(project, envelope, placement_order)
+        pinned = (_stair_width(project), depth)
+    reserved = pinned[0] if pinned else 0.0
 
     # A corridor between two rows only ever touches those two rows. With
     # three or more rows that leaves the corridors as separate strips, and
@@ -343,14 +458,14 @@ def pack_rooms(
     # bathrooms -- everything past the first corridor is cut off. The plan
     # needs a spine down one side linking them into one network, so the
     # width is reserved for it up front and the rows are packed narrower.
-    rows_wide = _form_rows(footprints, envelope.width_m, MAX_SHRINK_M)
-    needs_spine = _corridor_count(len(rows_wide), corridor_gaps) >= 2
+    rows_wide = _form_rows(footprints, envelope.width_m, MAX_SHRINK_M, reserved)
+    needs_spine = _corridor_count(max(len(rows_wide), 1 if pinned else 0), corridor_gaps) >= 2
 
     if needs_spine:
         usable_width = max(corridor_width, envelope.width_m - corridor_width)
-        rows = _form_rows(footprints, usable_width, MAX_SHRINK_M)
+        rows = _form_rows(footprints, usable_width, MAX_SHRINK_M, reserved)
         placed, corridors, total_height, bands = _layout_from_rows(
-            rows, corridor_width, MAX_SHRINK_M, corridor_gaps
+            rows, corridor_width, MAX_SHRINK_M, corridor_gaps, pinned
         )
         placed = [(r, b, x + corridor_width, y, w, d, mw, md)
                   for r, b, x, y, w, d, mw, md in placed]
@@ -364,7 +479,16 @@ def pack_rooms(
             bands = [(w + corridor_width, y0, y1) for w, y0, y1 in bands]
     else:
         rows = rows_wide
-        placed, corridors, _, bands = _layout_from_rows(rows, corridor_width, MAX_SHRINK_M, corridor_gaps)
+        placed, corridors, _, bands = _layout_from_rows(rows, corridor_width, MAX_SHRINK_M, corridor_gaps, pinned)
+
+    if pinned is not None and stair is not None:
+        # The stair is one rectangle on every level: first row, left end,
+        # full row depth. It goes through the same coordinate handling as
+        # everything else from here on (spine shift, y flip, arrows).
+        stair_fp = resolve_footprint("stair", stair.explicit_width_m, stair.explicit_depth_m)
+        shift = corridor_width if needs_spine else 0.0
+        placed.append((stair, stair.name, shift, 0.0, pinned[0], pinned[1],
+                       stair_fp.min_width_m, stair_fp.min_depth_m))
     # If it still doesn't fit after compaction, that's left as-is rather
     # than forced smaller — no room ever goes below its real minimum, and
     # src.validation's area-exceeds-envelope check already tells the owner
@@ -396,6 +520,7 @@ def pack_rooms(
                 depth_m=d,
                 min_width_m=min_w,
                 min_depth_m=min_d,
+                level=level,
             )
         )
 
@@ -416,7 +541,27 @@ def pack_rooms(
         corridors=corridor_segments,
         circulation_edges=circulation_edges,
         footprint=footprint,
+        level=level,
     )
+
+
+def pack_levels(
+    project: Project,
+    envelope: BuildableEnvelope,
+    placement_order: list[str] | None = None,
+    corridor_gaps_by_level: list[list[bool] | None] | None = None,
+) -> MultiLevelLayout:
+    """Pack every storey of the project, the stair pinned to the same
+    rectangle on each. `corridor_gaps_by_level[n]` is level n's gap
+    selection (see `pack_rooms`); None means the default."""
+    depth = stair_depth(project, envelope, placement_order)
+    levels = []
+    for level in range(project.storeys):
+        gaps = None
+        if corridor_gaps_by_level is not None and level < len(corridor_gaps_by_level):
+            gaps = corridor_gaps_by_level[level]
+        levels.append(pack_rooms(project, envelope, placement_order, gaps, level=level, pinned_stair_depth=depth))
+    return MultiLevelLayout(levels=levels)
 
 
 Rect = tuple[float, float, float, float]  # x0, y0, x1, y1
@@ -470,6 +615,9 @@ def _build_circulation_edges(
     whichever touching neighbor first reached it — so every arrow is a
     single hop between actual neighbors, never a shortcut past one."""
     entry_index = next((i for i, p in enumerate(placed) if p[0].is_entry), None)
+    if entry_index is None:
+        # An upper level has no front door; you arrive by the stair.
+        entry_index = next((i for i, p in enumerate(placed) if p[0].room_type == "stair"), None)
     if entry_index is None:
         return []
 
