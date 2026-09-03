@@ -6,7 +6,7 @@ These are the shapes that flow between the conversational extraction layer
 
 from __future__ import annotations
 
-from typing import List, Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -19,23 +19,23 @@ class SiteEdge(BaseModel):
     adjacency: Adjacency
     # Only set when the owner states a specific setback for this edge that
     # overrides the project-wide street/neighbor default.
-    setback_override_m: Optional[float] = None
+    setback_override_m: float | None = None
 
 
 class Site(BaseModel):
-    width_m: Optional[float] = Field(
+    width_m: float | None = Field(
         default=None, description="Site dimension along the left/right axis, in meters."
     )
-    depth_m: Optional[float] = Field(
+    depth_m: float | None = Field(
         default=None, description="Site dimension along the front/back axis, in meters."
     )
-    rotation_deg: Optional[float] = Field(
+    rotation_deg: float | None = Field(
         default=None,
         description="Rotation of the site's front edge relative to true north, "
         "clockwise in degrees. Not used for Phase 1 geometry; recorded for "
         "Phase 2 solar/orientation analysis.",
     )
-    edges: List[SiteEdge] = Field(default_factory=list)
+    edges: list[SiteEdge] = Field(default_factory=list)
 
     def edges_by_position(self) -> dict:
         return {edge.position: edge for edge in self.edges}
@@ -78,12 +78,12 @@ class Room(BaseModel):
     count: int = Field(default=1, ge=1, description="Number of identical instances of this room.")
     # Explicit sizing the owner stated in conversation. When absent, the
     # geometry layer fills these in from src.defaults (never guessed by the LLM).
-    explicit_width_m: Optional[float] = None
-    explicit_depth_m: Optional[float] = None
+    explicit_width_m: float | None = None
+    explicit_depth_m: float | None = None
     is_entry: bool = Field(
         default=False, description="True if this room is a building entry point."
     )
-    priority_notes: Optional[str] = Field(
+    priority_notes: str | None = Field(
         default=None,
         description="Short note on what matters for this room, e.g. 'wants privacy from street', "
         "'needs morning light'. Used later for color-coding and layout, not Phase 1 geometry.",
@@ -91,15 +91,15 @@ class Room(BaseModel):
 
 
 class Project(BaseModel):
-    owner: Optional[str] = None
+    owner: str | None = None
     site: Site = Field(default_factory=Site)
     setbacks: Setbacks = Field(default_factory=Setbacks)
     max_building_height_m: float = 15.0
     hallway_width_m: float = 1.2
-    rooms: List[Room] = Field(default_factory=list)
-    priorities: List[str] = Field(
+    rooms: list[Room] = Field(default_factory=list)
+    priorities: list[str] = Field(
         default_factory=list,
         description="Owner-stated priorities in their own words, e.g. 'privacy', "
         "'family togetherness', 'morning light in the kitchen'.",
     )
-    notes: Optional[str] = None
+    notes: str | None = None

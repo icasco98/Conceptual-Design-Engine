@@ -72,13 +72,12 @@ area-exceeds-envelope validation check has already flagged to the owner.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
 
 from src.defaults import resolve_footprint
 from src.geometry import BuildableEnvelope
 from src.models import Project, Room
 
-Point = Tuple[float, float]
+Point = tuple[float, float]
 
 # How much smaller (in meters, per dimension) a room may be nudged from its
 # nominal size to make the overall footprint more compact. Never applied
@@ -127,24 +126,24 @@ class CorridorSegment:
 
 @dataclass(frozen=True)
 class LayoutResult:
-    rooms: List[PlacedRoom]
-    corridors: List[CorridorSegment]
+    rooms: list[PlacedRoom]
+    corridors: list[CorridorSegment]
     # (from_point, to_point) pairs — draw as arrows to show how to get
     # from the entry to any given room.
-    circulation_edges: List[Tuple[Point, Point]]
+    circulation_edges: list[tuple[Point, Point]]
     # Ordered polygon vertices (site-frame meters) tracing the building's
     # own exterior wall line — the union of every room and corridor, not
     # the buildable envelope it sits inside.
-    footprint: List[Point]
+    footprint: list[Point]
 
 
-def _expand_and_order(rooms: List[Room], order: List[str]) -> List[tuple[Room, str]]:
+def _expand_and_order(rooms: list[Room], order: list[str]) -> list[tuple[Room, str]]:
     """Expand Room.count>1 into individual instances (paired with their base
     name, for placement_order/category lookups), drop hallway-type rooms
     (circulation is generated, not placed as a box), sort by `order`, then
     force any entry room(s) to the front. Both sorts are stable, so
     relative order is otherwise preserved."""
-    expanded: List[tuple[Room, str]] = []
+    expanded: list[tuple[Room, str]] = []
     for room in rooms:
         if room.room_type == "hallway":
             continue
@@ -164,16 +163,16 @@ def _expand_and_order(rooms: List[Room], order: List[str]) -> List[tuple[Room, s
 
 
 def _form_rows(
-    footprints: List[tuple[Room, str, float, float, float, float]],
+    footprints: list[tuple[Room, str, float, float, float, float]],
     envelope_width: float,
     max_shrink: float,
-) -> List[List[tuple[Room, str, float, float, float, float]]]:
+) -> list[list[tuple[Room, str, float, float, float, float]]]:
     """Place rooms left-to-right, wrapping into a new row when one doesn't
     fit. Before wrapping, try shrinking the room's width (never below its
     own minimum, never by more than `max_shrink`) to exactly fill the row's
     remaining space instead — one fewer row is a smaller footprint."""
-    rows: List[List[tuple[Room, str, float, float, float, float]]] = []
-    current: List[tuple[Room, str, float, float, float, float]] = []
+    rows: list[list[tuple[Room, str, float, float, float, float]]] = []
+    current: list[tuple[Room, str, float, float, float, float]] = []
     row_width = 0.0
     for room, base_name, w, d, min_w, min_d in footprints:
         if current and row_width + w > envelope_width + 1e-9:
@@ -192,20 +191,20 @@ def _form_rows(
     return rows
 
 
-def _row_width(row: List[tuple[Room, str, float, float, float, float]]) -> float:
+def _row_width(row: list[tuple[Room, str, float, float, float, float]]) -> float:
     return sum(w for _, _, w, _, _, _ in row)
 
 
 def _layout_from_rows(
-    rows: List[List[tuple[Room, str, float, float, float, float]]],
+    rows: list[list[tuple[Room, str, float, float, float, float]]],
     corridor_width: float,
     max_shrink: float,
-    corridor_gaps: Optional[List[bool]] = None,
-) -> Tuple[
-    List[tuple[Room, str, float, float, float, float, float, float]],
-    List[Tuple[float, float, float, float]],
+    corridor_gaps: list[bool] | None = None,
+) -> tuple[
+    list[tuple[Room, str, float, float, float, float, float, float]],
+    list[tuple[float, float, float, float]],
     float,
-    List[Tuple[float, float, float]],
+    list[tuple[float, float, float]],
 ]:
     """Place rows top-to-bottom, with a corridor strip in the gaps
     `corridor_gaps` asks for (default: every gap, one per pair of rows).
@@ -224,8 +223,8 @@ def _layout_from_rows(
     access check says nothing needs. A corridor is only worth its area if a
     room depends on it to be reachable."""
     placed = []
-    corridors: List[Tuple[float, float, float, float]] = []
-    bands: List[Tuple[float, float, float]] = []
+    corridors: list[tuple[float, float, float, float]] = []
+    bands: list[tuple[float, float, float]] = []
     row_widths = [_row_width(row) for row in rows]
     y = 0.0
     for i, row in enumerate(rows):
@@ -282,14 +281,14 @@ def _layout_from_rows(
     return placed, corridors, y, bands
 
 
-def _footprint_polygon(bands: List[Tuple[float, float, float]]) -> List[Point]:
+def _footprint_polygon(bands: list[tuple[float, float, float]]) -> list[Point]:
     """`bands` are (width, y_start, y_end) — contiguous in y from 0, each
     left-aligned at x=0 (see module docstring, rule 5). Traces the
     right-side staircase boundary and closes back down x=0."""
     if not bands:
         return []
-    points: List[Point] = [(0.0, 0.0)]
-    prev_width: Optional[float] = None
+    points: list[Point] = [(0.0, 0.0)]
+    prev_width: float | None = None
     for width, y_start, y_end in bands:
         if prev_width is None or abs(width - prev_width) > 1e-9:
             points.append((width, y_start))
@@ -299,7 +298,7 @@ def _footprint_polygon(bands: List[Tuple[float, float, float]]) -> List[Point]:
     return points
 
 
-def _corridor_count(rows: int, corridor_gaps: Optional[List[bool]]) -> int:
+def _corridor_count(rows: int, corridor_gaps: list[bool] | None) -> int:
     """How many corridors this row count and gap selection will produce.
 
     With no selection given the default stands: a corridor in each gap
@@ -313,7 +312,7 @@ def _corridor_count(rows: int, corridor_gaps: Optional[List[bool]]) -> int:
 
 
 def row_count(project: Project, envelope: BuildableEnvelope,
-              placement_order: Optional[List[str]] = None) -> int:
+              placement_order: list[str] | None = None) -> int:
     """How many rows this ordering packs into -- so a caller can size the
     corridor-gap list without packing the whole layout first."""
     ordered = _expand_and_order(project.rooms, placement_order or [])
@@ -327,8 +326,8 @@ def row_count(project: Project, envelope: BuildableEnvelope,
 def pack_rooms(
     project: Project,
     envelope: BuildableEnvelope,
-    placement_order: Optional[List[str]] = None,
-    corridor_gaps: Optional[List[bool]] = None,
+    placement_order: list[str] | None = None,
+    corridor_gaps: list[bool] | None = None,
 ) -> LayoutResult:
     ordered = _expand_and_order(project.rooms, placement_order or [])
     footprints = [
@@ -420,10 +419,10 @@ def pack_rooms(
     )
 
 
-Rect = Tuple[float, float, float, float]  # x0, y0, x1, y1
+Rect = tuple[float, float, float, float]  # x0, y0, x1, y1
 
 
-def _touching_edge(a: Rect, b: Rect, tol: float = 1e-6) -> Optional[Tuple[str, Point]]:
+def _touching_edge(a: Rect, b: Rect, tol: float = 1e-6) -> tuple[str, Point] | None:
     """If rectangles a and b share a boundary segment, return (axis,
     midpoint) — axis is "x" when the shared edge is vertical (the two
     rects sit side by side, so the connecting arrow should run
@@ -449,7 +448,7 @@ def _touching_edge(a: Rect, b: Rect, tol: float = 1e-6) -> Optional[Tuple[str, P
 
 def _perpendicular_arrow(
     axis: str, midpoint: Point, from_center: Point, to_center: Point, inset: float = 0.35
-) -> Tuple[Point, Point]:
+) -> tuple[Point, Point]:
     """A short arrow crossing straight through `midpoint`, perpendicular to
     the shared wall, pointing from the `from_` side to the `to_` side."""
     mx, my = midpoint
@@ -461,10 +460,10 @@ def _perpendicular_arrow(
 
 
 def _build_circulation_edges(
-    placed: List[tuple[Room, str, float, float, float, float, float, float]],
-    corridors: List[Tuple[float, float, float, float]],
+    placed: list[tuple[Room, str, float, float, float, float, float, float]],
+    corridors: list[tuple[float, float, float, float]],
     to_site_coords,
-) -> List[Tuple[Point, Point]]:
+) -> list[tuple[Point, Point]]:
     """Breadth-first walk of the touching-graph (rooms + corridors as
     nodes, an edge only where two rectangles share a boundary) starting
     from the entry. Each node is connected by exactly one arrow — to
@@ -481,14 +480,14 @@ def _build_circulation_edges(
         x0, y0, x1, y1 = rect
         return ((x0 + x1) / 2, (y0 + y1) / 2)
 
-    nodes: List[Rect] = [rect_of(x, y, w, d) for _, _, x, y, w, d, _min_w, _min_d in placed]
+    nodes: list[Rect] = [rect_of(x, y, w, d) for _, _, x, y, w, d, _min_w, _min_d in placed]
     nodes += [rect_of(x, y, w, d) for x, y, w, d in corridors]
     centers = [center_of(rect) for rect in nodes]
 
     visited = [False] * len(nodes)
     visited[entry_index] = True
     queue = [entry_index]
-    edges: List[Tuple[Point, Point]] = []
+    edges: list[tuple[Point, Point]] = []
 
     while queue:
         current = queue.pop(0)

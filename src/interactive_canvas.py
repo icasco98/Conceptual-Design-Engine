@@ -254,7 +254,6 @@ from __future__ import annotations
 import html as html_module
 from functools import lru_cache
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 from src.geometry import BuildableEnvelope
 from src.layout import LayoutResult
@@ -335,14 +334,14 @@ def _polygon_clipping_js() -> str:
     return (Path(__file__).parent / "vendor" / "polygon-clipping.umd.min.js").read_text()
 
 
-def canvas_size_px(site: Site) -> Tuple[int, int]:
+def canvas_size_px(site: Site) -> tuple[int, int]:
     return (
         int(site.width_m * PX_PER_METER + 2 * MARGIN_PX),
         int(site.depth_m * PX_PER_METER + 2 * MARGIN_PX + STREET_LABEL_HEADROOM_PX),
     )
 
 
-def _to_canvas_point(x_m: float, y_m: float, site_depth_m: float) -> Tuple[float, float]:
+def _to_canvas_point(x_m: float, y_m: float, site_depth_m: float) -> tuple[float, float]:
     """Site-frame meters -> canvas pixels for a single point. Canvas y
     grows downward; site y grows toward the front, so this flips y to
     keep front-at-top, matching the static diagram's orientation."""
@@ -352,7 +351,7 @@ def _to_canvas_point(x_m: float, y_m: float, site_depth_m: float) -> Tuple[float
     )
 
 
-def _to_canvas_rect(x_m: float, y_m: float, w_m: float, d_m: float, site_depth_m: float) -> Tuple[float, float, float, float]:
+def _to_canvas_rect(x_m: float, y_m: float, w_m: float, d_m: float, site_depth_m: float) -> tuple[float, float, float, float]:
     """Site-frame meters -> canvas pixels for a rectangle's top-left + size."""
     left, bottom = _to_canvas_point(x_m, y_m, site_depth_m)
     return left, bottom - d_m * PX_PER_METER, w_m * PX_PER_METER, d_m * PX_PER_METER
@@ -376,7 +375,7 @@ def _esc(text: str) -> str:
     return html_module.escape(text, quote=True)
 
 
-def _path_d(canvas_points: List[Tuple[float, float]]) -> str:
+def _path_d(canvas_points: list[tuple[float, float]]) -> str:
     """Ordered polygon vertices (canvas px) -> an SVG path `d` string. Used
     for the footprint outline both on first render (from `result.footprint`)
     and — in the same format — by the client-side JS that recomputes it as
@@ -388,7 +387,7 @@ def _path_d(canvas_points: List[Tuple[float, float]]) -> str:
     return f"M {body} Z"
 
 
-def _envelope_canvas_rect(project: Project, envelope: BuildableEnvelope) -> Tuple[float, float, float, float]:
+def _envelope_canvas_rect(project: Project, envelope: BuildableEnvelope) -> tuple[float, float, float, float]:
     return _to_canvas_rect(
         envelope.left_setback_m, envelope.back_setback_m, envelope.width_m, envelope.depth_m, project.site.depth_m
     )
@@ -475,7 +474,7 @@ def _corridor_divs(project: Project, result: LayoutResult) -> str:
     on both axes is the fixed code hallway width itself — see
     `CorridorSegment.min_width_m`/`min_depth_m`."""
     divs = []
-    for i, corridor in enumerate(result.corridors):
+    for corridor in result.corridors:
         left, top, w, h = _to_canvas_rect(corridor.x_m, corridor.y_m, corridor.width_m, corridor.depth_m, project.site.depth_m)
         min_w_px = corridor.min_width_m * PX_PER_METER
         min_h_px = corridor.min_depth_m * PX_PER_METER
@@ -493,7 +492,7 @@ def _corridor_divs(project: Project, result: LayoutResult) -> str:
     return "".join(divs)
 
 
-def _room_divs(project: Project, result: LayoutResult, assignments: Dict[str, str]) -> str:
+def _room_divs(project: Project, result: LayoutResult, assignments: dict[str, str]) -> str:
     divs = []
     for room in result.rooms:
         left, top, w, h = _to_canvas_rect(room.x_m, room.y_m, room.width_m, room.depth_m, project.site.depth_m)
@@ -535,7 +534,7 @@ def render_canvas_html(
     project: Project,
     envelope: BuildableEnvelope,
     result: LayoutResult,
-    assignments: Dict[str, str],
+    assignments: dict[str, str],
     layout_plan: LayoutPlan,
 ) -> str:
     width_px, height_px = canvas_size_px(project.site)

@@ -10,11 +10,11 @@ src.layout turns that ordering into an actual non-overlapping arrangement.
 from __future__ import annotations
 
 import json
-from typing import List, Literal
+from typing import Literal
 
 from pydantic import BaseModel
 
-from src.claude_client import MODEL, get_client
+from src.claude_client import EFFORT, MODEL, cached_system, get_client
 from src.models import Project
 from src.palette import CATEGORY_KEYS
 
@@ -35,8 +35,8 @@ class RoomAssignment(BaseModel):
 class LayoutPlan(BaseModel):
     grouping_label: str
     category_labels: CategoryLabels
-    assignments: List[RoomAssignment]
-    placement_order: List[str]
+    assignments: list[RoomAssignment]
+    placement_order: list[str]
     rationale: str
 
 
@@ -90,7 +90,8 @@ def plan_layout(project: Project) -> LayoutPlan:
     response = get_client().messages.parse(
         model=MODEL,
         max_tokens=2048,
-        system=SYSTEM_PROMPT,
+        system=cached_system(SYSTEM_PROMPT),
+        output_config={"effort": EFFORT},
         messages=[{"role": "user", "content": user_content}],
         output_format=LayoutPlan,
     )

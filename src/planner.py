@@ -29,7 +29,8 @@ Two rules do most of the work:
 
 from __future__ import annotations
 
-from typing import List, NamedTuple, Optional, Sequence, Tuple
+from collections.abc import Sequence
+from typing import NamedTuple
 
 from src.access import access_problems_for, zone_of
 from src.defaults import resolve_footprint
@@ -54,7 +55,7 @@ MAX_CANDIDATES = 12
 
 class ScoredLayout(NamedTuple):
     result: LayoutResult
-    placement_order: List[str]
+    placement_order: list[str]
     score: float
     access_problems: int
     circulation_ratio: float
@@ -126,7 +127,7 @@ def _privacy_penalty(result: LayoutResult) -> float:
     return max(0.0, sum(public) / len(public) - sum(private) / len(private))
 
 
-def score_layout(result: LayoutResult) -> Tuple[float, int, float]:
+def score_layout(result: LayoutResult) -> tuple[float, int, float]:
     """Lower is better. Returns (score, access problem count, circulation
     ratio).
 
@@ -158,7 +159,7 @@ def thin_corridors(
     project: Project,
     envelope: BuildableEnvelope,
     order: Sequence[str],
-) -> Tuple[LayoutResult, List[bool]]:
+) -> tuple[LayoutResult, list[bool]]:
     """Drop every corridor the plan doesn't actually need.
 
     Starts from one corridor in every gap -- the most circulation, and the
@@ -192,7 +193,7 @@ def thin_corridors(
     return best, keep
 
 
-def _candidate_orders(project: Project, plan: Optional[LayoutPlan]) -> List[List[str]]:
+def _candidate_orders(project: Project, plan: LayoutPlan | None) -> list[list[str]]:
     """Orderings worth packing.
 
     The plan's own ordering is always first, so Claude's grouping is the
@@ -205,7 +206,7 @@ def _candidate_orders(project: Project, plan: Optional[LayoutPlan]) -> List[List
     if not names:
         return []
 
-    def dedupe(order: Sequence[str]) -> List[str]:
+    def dedupe(order: Sequence[str]) -> list[str]:
         seen, out = set(), []
         for name in order:
             if name in names and name not in seen:
@@ -216,7 +217,7 @@ def _candidate_orders(project: Project, plan: Optional[LayoutPlan]) -> List[List
                 out.append(name)
         return out
 
-    candidates: List[List[str]] = []
+    candidates: list[list[str]] = []
     if plan is not None and plan.placement_order:
         candidates.append(dedupe(plan.placement_order))
     candidates.append(dedupe(names))
@@ -255,7 +256,7 @@ def _candidate_orders(project: Project, plan: Optional[LayoutPlan]) -> List[List
     candidates.append(sorted(base, key=lambda n: (zone_key(n) != 0, -area_of(n))))
     candidates.append(sorted(base, key=lambda n: (zone_key(n) != 0, area_of(n))))
 
-    unique: List[List[str]] = []
+    unique: list[list[str]] = []
     seen = set()
     for order in candidates:
         key = tuple(order)
@@ -268,7 +269,7 @@ def _candidate_orders(project: Project, plan: Optional[LayoutPlan]) -> List[List
 def best_layout(
     project: Project,
     envelope: BuildableEnvelope,
-    plan: Optional[LayoutPlan] = None,
+    plan: LayoutPlan | None = None,
 ) -> ScoredLayout:
     """Pack several candidate arrangements, thin each one's corridors, score
     them all, and return the best.
@@ -283,7 +284,7 @@ def best_layout(
         score, problems, ratio = score_layout(result)
         return ScoredLayout(result, [], score, problems, ratio, "no rooms to arrange")
 
-    best: Optional[ScoredLayout] = None
+    best: ScoredLayout | None = None
     for order in orders:
         result, _keep = thin_corridors(project, envelope, order)
         score, problems, ratio = score_layout(result)

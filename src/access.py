@@ -33,7 +33,8 @@ actually walk through.
 
 from __future__ import annotations
 
-from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple
+from collections.abc import Sequence
+from typing import NamedTuple
 
 Zone = str  # "public" | "private" | "service"
 
@@ -47,7 +48,7 @@ class RoomAccess(NamedTuple):
 # Defaults chosen so that the rooms you would never route through -- sleeping,
 # bathing, parking, storage -- are impassable, and the rooms a plan naturally
 # flows through are not.
-ROOM_ACCESS: Dict[str, RoomAccess] = {
+ROOM_ACCESS: dict[str, RoomAccess] = {
     "entry": RoomAccess("public", True),
     "hallway": RoomAccess("public", True),
     "mudroom": RoomAccess("public", True),
@@ -93,7 +94,7 @@ class AccessProblem(NamedTuple):
 
     room_name: str
     kind: str
-    via: Tuple[str, ...] = ()
+    via: tuple[str, ...] = ()
 
     @property
     def message(self) -> str:
@@ -107,14 +108,14 @@ class Node(NamedTuple):
     """One rectangle in the plan's touching graph."""
 
     name: str
-    rect: Tuple[float, float, float, float]  # x0, y0, x1, y1
+    rect: tuple[float, float, float, float]  # x0, y0, x1, y1
     passable: bool
     is_entry: bool
     street_access: bool = False
 
 
-def rects_touch(a: Tuple[float, float, float, float],
-                b: Tuple[float, float, float, float],
+def rects_touch(a: tuple[float, float, float, float],
+                b: tuple[float, float, float, float],
                 tol: float = 1e-6) -> bool:
     """True when two rectangles share a length of boundary -- not merely a
     corner, which you can't put a door on."""
@@ -127,7 +128,7 @@ def rects_touch(a: Tuple[float, float, float, float],
     return False
 
 
-def find_access_problems(nodes: Sequence[Node]) -> List[AccessProblem]:
+def find_access_problems(nodes: Sequence[Node]) -> list[AccessProblem]:
     """Every room the plan fails to serve, walking out from the entry.
 
     The walk may only pass THROUGH a passable node. A room that is only
@@ -144,7 +145,7 @@ def find_access_problems(nodes: Sequence[Node]) -> List[AccessProblem]:
     if entry is None:
         return []
 
-    adjacency: List[List[int]] = [[] for _ in nodes]
+    adjacency: list[list[int]] = [[] for _ in nodes]
     for i in range(len(nodes)):
         for j in range(i + 1, len(nodes)):
             if rects_touch(nodes[i].rect, nodes[j].rect):
@@ -167,7 +168,7 @@ def find_access_problems(nodes: Sequence[Node]) -> List[AccessProblem]:
             reached[other] = True
             queue.append(other)
 
-    problems: List[AccessProblem] = []
+    problems: list[AccessProblem] = []
     for i, node in enumerate(nodes):
         if reached[i] or node.is_entry or node.street_access:
             continue
@@ -182,11 +183,11 @@ def find_access_problems(nodes: Sequence[Node]) -> List[AccessProblem]:
     return problems
 
 
-def nodes_from_layout(placed_rooms, corridors) -> List[Node]:
+def nodes_from_layout(placed_rooms, corridors) -> list[Node]:
     """Build the touching graph's nodes from a `src.layout.LayoutResult`'s
     rooms and corridors. Corridors are always passable; a room's passability
     comes from its type."""
-    nodes: List[Node] = []
+    nodes: list[Node] = []
     for room in placed_rooms:
         acc = access_for(room.room_type)
         nodes.append(Node(
@@ -207,6 +208,6 @@ def nodes_from_layout(placed_rooms, corridors) -> List[Node]:
     return nodes
 
 
-def access_problems_for(result) -> List[AccessProblem]:
+def access_problems_for(result) -> list[AccessProblem]:
     """Convenience wrapper: the access problems in a packed layout."""
     return find_access_problems(nodes_from_layout(result.rooms, result.corridors))

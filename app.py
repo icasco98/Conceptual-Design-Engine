@@ -61,13 +61,16 @@ def load_api_key_from_cloud_secrets() -> None:
 
 load_api_key_from_cloud_secrets()
 
-if not os.environ.get("ANTHROPIC_API_KEY"):
-    st.error(
-        "No Anthropic API key found. Locally: add it to a `.env` file. "
-        "On Streamlit Community Cloud: add it under your app's Settings → Secrets "
-        "as `ANTHROPIC_API_KEY = \"sk-ant-...\"`."
+# The key only gates the chat. The worked example, the packer, validation
+# and the interactive canvas need no API call, so they keep working without
+# one -- a visitor without a key still gets a live diagram to explore.
+HAS_API_KEY = bool(os.environ.get("ANTHROPIC_API_KEY"))
+if not HAS_API_KEY:
+    st.warning(
+        "No Anthropic API key found, so the chat is disabled. Everything else works. "
+        "Locally: add the key to a `.env` file. On Streamlit Community Cloud: add it "
+        "under your app's Settings → Secrets as `ANTHROPIC_API_KEY = \"sk-ant-...\"`."
     )
-    st.stop()
 
 
 def init_state() -> None:
@@ -248,12 +251,16 @@ def render_chat(history: list[dict]) -> str | None:
     below the fold, which defeats the point of opening on one. It still
     stays a container rather than a bare input, so the input doesn't jump
     to a different place on the page after the first message."""
-    placeholder = "Describe your project — site, rooms, priorities..."
+    placeholder = (
+        "Describe your project — site, rooms, priorities..."
+        if HAS_API_KEY
+        else "Chat disabled — add an ANTHROPIC_API_KEY to enable it"
+    )
     with st.container(height=CHAT_HEIGHT_PX if history else EMPTY_CHAT_HEIGHT_PX):
         for msg in history:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
-        return st.chat_input(placeholder)
+        return st.chat_input(placeholder, disabled=not HAS_API_KEY)
 
 
 def process_new_message(prompt: str) -> None:
@@ -274,7 +281,9 @@ def process_new_message(prompt: str) -> None:
 
     new_envelope = compute_envelope(result.project)
     new_issues = validate_room_program(result.project, new_envelope)
-    if new_issues:
+    # Warnings already show in the sidebar; only spend an API call explaining
+    # when something is actually blocking (an error-severity issue).
+    if any(issue.severity == "error" for issue in new_issues):
         try:
             explanation = explain_issues(
                 json.dumps(result.project.model_dump(mode="json"), indent=2),

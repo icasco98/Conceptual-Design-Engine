@@ -1,0 +1,28 @@
+[project]
+name = "conceptual-design-engine"
+version = "0.1.0"
+description = "Conversational zoning-diagram generator for the conceptual design phase of a house."
+requires-python = ">=3.10"
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+extend-exclude = ["src/vendor"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = [
+  "E501",  # long lines: prompts and messages are prose; the formatter handles code
+  "B008",  # pydantic Field() in defaults is the idiom
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src", "tests"]

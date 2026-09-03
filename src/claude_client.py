@@ -10,13 +10,27 @@ below). Claude never computes the geometry itself.
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import List
 
 import anthropic
 
 from src.validation import Issue
 
 MODEL = "claude-opus-5"
+
+# Every call here is a small, well-specified task (extract a form, explain a
+# list, group a dozen rooms). Low effort keeps latency and cost down without
+# changing what the model is asked to do.
+EFFORT = "low"
+
+
+def cached_system(text: str) -> list:
+    """A system prompt block marked for prompt caching.
+
+    Each prompt here is identical from one turn to the next (the room catalog
+    never changes mid-conversation), so after the first call the prefix is
+    served from cache at a fraction of the input price.
+    """
+    return [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]
 
 
 @lru_cache(maxsize=1)
@@ -45,8 +59,8 @@ compute new ones."""
 
 def explain_issues(
     project_summary: str,
-    priorities: List[str],
-    issues: List[Issue],
+    priorities: list[str],
+    issues: list[Issue],
 ) -> str:
     """Ask Claude to explain deterministic validation issues in plain language."""
     issues_text = "\n".join(f"- [{issue.severity}] {issue.message}" for issue in issues)
@@ -61,7 +75,8 @@ def explain_issues(
     response = get_client().messages.create(
         model=MODEL,
         max_tokens=1024,
-        system=EXPLAIN_SYSTEM_PROMPT,
+        system=cached_system(EXPLAIN_SYSTEM_PROMPT),
+        output_config={"effort": EFFORT},
         messages=[{"role": "user", "content": user_content}],
     )
     return next((b.text for b in response.content if b.type == "text"), "").strip()

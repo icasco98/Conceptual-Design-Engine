@@ -8,7 +8,7 @@ turned into plain-language explanation for the owner.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Literal
+from typing import Literal
 
 from src.defaults import resolve_footprint
 from src.geometry import BuildableEnvelope
@@ -24,14 +24,14 @@ class Issue:
     message: str
 
 
-def _room_footprints(rooms: List[Room]):
+def _room_footprints(rooms: list[Room]):
     for room in rooms:
         footprint = resolve_footprint(room.room_type, room.explicit_width_m, room.explicit_depth_m)
         yield room, footprint
 
 
-def validate_room_program(project: Project, envelope: BuildableEnvelope | None) -> List[Issue]:
-    issues: List[Issue] = []
+def validate_room_program(project: Project, envelope: BuildableEnvelope | None) -> list[Issue]:
+    issues: list[Issue] = []
 
     if envelope is None:
         return issues

@@ -12,15 +12,13 @@ from the model's arithmetic.
 
 from __future__ import annotations
 
-from typing import Dict, List
-
 from pydantic import BaseModel
 
-from src.claude_client import MODEL, get_client
+from src.claude_client import EFFORT, MODEL, cached_system, get_client
 from src.defaults import ROOM_DEFAULTS
 from src.models import Project
 
-ChatMessage = Dict[str, str]
+ChatMessage = dict[str, str]
 
 
 class ExtractionResult(BaseModel):
@@ -91,8 +89,9 @@ in `assistant_message` — the diagram never shows them. Circulation \
 room groups; if the owner mentions wanting a hallway, acknowledge it but \
 don't ask them to size it or promise a specific hallway box — say \
 circulation between the room groups is handled automatically instead. \
-Dragging rooms to rearrange them by hand isn't built yet — if asked, say \
-so plainly.
+The owner can drag, resize and rotate rooms by hand on the diagram below \
+the chat — if asked, say so plainly; their manual arrangement is theirs to \
+explore, you don't need to describe positions.
 - Do not fabricate site dimensions, setbacks, or room counts the owner \
 never mentioned. Leave fields null/empty until they're actually stated.
 """
@@ -102,7 +101,7 @@ def build_system_prompt() -> str:
     return SYSTEM_PROMPT_TEMPLATE.format(room_catalog=_room_catalog_text())
 
 
-def extract_project(history: List[ChatMessage]) -> ExtractionResult:
+def extract_project(history: list[ChatMessage]) -> ExtractionResult:
     """Run extraction over the full conversation so far.
 
     `history` is the chat transcript as a list of {"role": "user"|"assistant",
@@ -111,7 +110,8 @@ def extract_project(history: List[ChatMessage]) -> ExtractionResult:
     response = get_client().messages.parse(
         model=MODEL,
         max_tokens=4096,
-        system=build_system_prompt(),
+        system=cached_system(build_system_prompt()),
+        output_config={"effort": EFFORT},
         messages=history,
         output_format=ExtractionResult,
     )
