@@ -395,6 +395,11 @@ typecheck, unit tests and build.
 
 ## Roadmap
 
+See [HANDOFF.md](HANDOFF.md) for where the work stands, the gotchas worth
+knowing before touching the geometry, and the ordered list of what to
+build next.
+
+
 - Feedback loop: owner comments in chat → Claude revises the layout,
   informed by whatever the owner dragged, resized, rotated, or deleted.
 - Phase 2 (massing) and Phase 3 (optimization), out of scope for now.
