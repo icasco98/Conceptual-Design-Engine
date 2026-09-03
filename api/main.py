@@ -11,10 +11,13 @@ so one process is the whole tool on the owner's computer.
 from __future__ import annotations
 
 import json
+import logging
 import os
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
+import anthropic
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -63,6 +66,58 @@ def has_api_key() -> bool:
     """A real key, not the placeholder an untouched .env still carries."""
     key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     return bool(key) and not key.endswith("...")
+
+
+log = logging.getLogger("cde")
+
+T = TypeVar("T")
+
+
+def call_claude(step: str, fn: Callable[[], T]) -> T:
+    """Run one Claude call and turn any failure into something the owner can
+    act on.
+
+    Without this every API problem reached the browser as "Internal Server
+    Error", which says nothing about the thing that actually needs fixing --
+    a mistyped key, an account with no credit, a dropped connection. The
+    full traceback still goes to the terminal for anything unexpected.
+    """
+    try:
+        return fn()
+    except anthropic.AuthenticationError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Anthropic rejected the API key. Check ANTHROPIC_API_KEY in your .env file "
+            "(no quotes, no spaces), then restart the app. Keys start with 'sk-ant-'.",
+        ) from exc
+    except anthropic.PermissionDeniedError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="That API key isn't allowed to use this model. Check the key's permissions at "
+            "console.anthropic.com.",
+        ) from exc
+    except anthropic.RateLimitError as exc:
+        raise HTTPException(
+            status_code=502, detail="Anthropic is rate-limiting this key. Wait a moment and try again."
+        ) from exc
+    except anthropic.APIConnectionError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Couldn't reach Anthropic. Check your internet connection and try again.",
+        ) from exc
+    except anthropic.APIStatusError as exc:
+        message = getattr(exc, "message", "") or str(exc)
+        if "credit balance" in message.lower() or "billing" in message.lower():
+            detail = (
+                "Your Anthropic account has no credit left, so Claude declined the request. "
+                "Add credit at console.anthropic.com under Billing, then try again."
+            )
+        else:
+            detail = f"Anthropic returned an error ({exc.status_code}): {message}"
+        raise HTTPException(status_code=502, detail=detail) from exc
+    except Exception as exc:
+        log.exception("%s failed", step)
+        raise HTTPException(status_code=500, detail=f"{step} failed: {type(exc).__name__}: {exc}") from exc
 
 
 def envelope_for(project: Project) -> BuildableEnvelope | None:
@@ -225,20 +280,23 @@ def chat(body: ChatIn) -> ChatOut:
     if not has_api_key():
         raise HTTPException(status_code=503, detail="No ANTHROPIC_API_KEY configured; the chat is disabled.")
     history = [m.model_dump() for m in body.history]
-    result = extract_project(history)
+    result = call_claude("Reading your description", lambda: extract_project(history))
     project = assign_default_levels(result.project)
 
     envelope = envelope_for(project)
     issues = validate_room_program(project, envelope)
     explanation = None
     if any(issue.severity == "error" for issue in issues):
-        explanation = explain_issues(
-            json.dumps(project.model_dump(mode="json"), indent=2), project.priorities, issues
+        explanation = call_claude(
+            "Explaining the issues",
+            lambda: explain_issues(
+                json.dumps(project.model_dump(mode="json"), indent=2), project.priorities, issues
+            ),
         )
 
     plan = None
     if envelope is not None and envelope.is_valid and project.rooms:
-        plan = plan_layout(project)
+        plan = call_claude("Grouping the rooms", lambda: plan_layout(project))
 
     return ChatOut(
         assistant_message=result.assistant_message, explanation=explanation, project=project, layout_plan=plan

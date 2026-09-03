@@ -2,6 +2,7 @@
 wrapping -- shapes, status codes, persistence -- not the geometry, which
 has its own tests."""
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -148,3 +149,41 @@ def test_projects_are_saved_listed_updated_and_deleted(client):
     assert client.delete(f"/api/projects/{pid}").status_code == 204
     assert client.get(f"/api/projects/{pid}").status_code == 404
     assert store.list_projects() == []
+
+
+def test_a_bad_key_reaches_the_owner_as_an_actionable_message(client, monkeypatch):
+    """Every Claude failure used to arrive as a bare "Internal Server Error",
+    which named nothing the owner could fix."""
+    import anthropic
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-nope")
+
+    def refuse(_history):
+        raise anthropic.AuthenticationError(
+            "invalid x-api-key",
+            response=httpx.Response(401, request=httpx.Request("POST", "https://api.anthropic.com")),
+            body=None,
+        )
+
+    monkeypatch.setattr(api_main, "extract_project", refuse)
+    response = client.post("/api/chat", json={"history": [{"role": "user", "content": "hi"}]})
+    assert response.status_code == 502
+    assert "API key" in response.json()["detail"]
+
+
+def test_no_credit_is_explained_in_plain_language(client, monkeypatch):
+    import anthropic
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+
+    def broke(_history):
+        raise anthropic.BadRequestError(
+            "Your credit balance is too low to access the Anthropic API.",
+            response=httpx.Response(400, request=httpx.Request("POST", "https://api.anthropic.com")),
+            body=None,
+        )
+
+    monkeypatch.setattr(api_main, "extract_project", broke)
+    detail = client.post("/api/chat", json={"history": [{"role": "user", "content": "hi"}]}).json()["detail"]
+    assert "credit" in detail.lower()
+    assert "console.anthropic.com" in detail
