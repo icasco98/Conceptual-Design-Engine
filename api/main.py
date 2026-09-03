@@ -60,7 +60,9 @@ app.add_middleware(
 
 
 def has_api_key() -> bool:
-    return bool(os.environ.get("ANTHROPIC_API_KEY"))
+    """A real key, not the placeholder an untouched .env still carries."""
+    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    return bool(key) and not key.endswith("...")
 
 
 def envelope_for(project: Project) -> BuildableEnvelope | None:

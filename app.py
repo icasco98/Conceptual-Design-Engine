@@ -66,7 +66,9 @@ load_api_key_from_cloud_secrets()
 # The key only gates the chat. The worked example, the packer, validation
 # and the interactive canvas need no API call, so they keep working without
 # one -- a visitor without a key still gets a live diagram to explore.
-HAS_API_KEY = bool(os.environ.get("ANTHROPIC_API_KEY"))
+HAS_API_KEY = bool(os.environ.get("ANTHROPIC_API_KEY", "").strip()) and not os.environ.get(
+    "ANTHROPIC_API_KEY", ""
+).strip().endswith("...")
 if not HAS_API_KEY:
     st.warning(
         "No Anthropic API key found, so the chat is disabled. Everything else works. "

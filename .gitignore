@@ -7,3 +7,7 @@ venv/
 .pytest_cache/
 *.egg-info/
 data/
+
+# frontend
+frontend/node_modules/
+frontend/dist/

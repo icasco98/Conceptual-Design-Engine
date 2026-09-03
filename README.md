@@ -295,17 +295,54 @@ Roadmap below.
   the canvas can put the geometry in a state "Reset to recommended
   layout" can't cleanly undo.
 
-## Setup
+## Run it on your computer
+
+The tool runs as a small local web app: a Python server for the numbers
+and the Claude chat, and a browser page for the plan, the 3D view and the
+schedule. Nothing is hosted anywhere; only chat messages leave your
+machine, to Claude, through your own API key.
+
+**Install once** (all free):
+
+1. **Python 3.10 or newer** — <https://www.python.org/downloads/>. On
+   Windows, tick *"Add python.exe to PATH"* in the installer.
+2. **Node.js (LTS)** — <https://nodejs.org/>. This builds the browser page.
+3. **GitHub Desktop** — <https://desktop.github.com/>. Sign in, choose
+   *File → Clone repository*, pick this repository, and choose a folder
+   such as `Documents`. Later, *Fetch origin* pulls in updates.
+4. **An Anthropic API key** — <https://console.anthropic.com/settings/keys>.
+   Only the chat needs it; everything else works without one.
+
+**Then, every time:**
+
+- Windows: double-click `start.bat`.
+- macOS / Linux: double-click `start.sh` (or run `./start.sh`).
+
+The first run takes a few minutes while it installs what it needs into the
+project folder (`.venv/` and `frontend/node_modules/`). It creates a
+`.env` file from `.env.example`; open that in a text editor and paste your
+key after `ANTHROPIC_API_KEY=`. A browser tab opens at
+<http://localhost:8000>. Closing the terminal window stops the app.
+
+Your saved projects live in `data/projects.db` inside the folder.
+
+## Setup (developers)
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate       # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-cp .env.example .env            # then paste your key into .env
-streamlit run app.py
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt -r requirements-dev.txt
+cp .env.example .env            # add ANTHROPIC_API_KEY
+(cd frontend && npm install && npm run build)
+uvicorn api.main:app --reload   # http://localhost:8000
 ```
 
-Get an API key at <https://console.anthropic.com/settings/keys>.
+For frontend work with hot reload, run `npm run dev` in `frontend/`
+alongside the API; the Vite dev server on port 5173 proxies `/api`.
+
+The original Streamlit interface still runs (`streamlit run app.py`) and
+uses the same domain layer, but it is single-view and read-only from the
+canvas's point of view: it is kept as a demo until the new interface has
+fully replaced it.
 
 ## Running the tests
 
@@ -316,10 +353,12 @@ call the API:
 pip install -r requirements-dev.txt
 ruff check .
 pytest
+(cd frontend && npm run typecheck && npm test)
 ```
 
-The same two commands run in GitHub Actions on every push
-(`.github/workflows/ci.yml`).
+The same commands run in GitHub Actions on every push
+(`.github/workflows/ci.yml`): Python lint and tests, then the frontend's
+typecheck, unit tests and build.
 
 ## Project layout
 
@@ -331,7 +370,10 @@ The same two commands run in GitHub Actions on every push
 | `src/levels.py` | The default storey split for a multi-storey house the owner hasn't split themselves. |
 | `src/vendor/` | Vendored third-party code — polygon-clipping (MIT) for boolean polygon geometry, inlined into the diagram rather than loaded from a CDN. |
 | `src/sample_project.py` | The worked example the app opens on — a complete, validating project plus the layout plan Claude would have returned for it, so the first paint needs no API call. |
-| `app.py` | Streamlit UI — chat (fixed-height, scrollable) + interactive zoning diagram below it (schedule panel left of the drawing), sidebar summary of captured site/setback/envelope/priority state. |
+| `api/` | FastAPI server: `/api/layout` packs and scores, `/api/check` runs access and stacking on a hand-made arrangement, `/api/chat` is one conversational turn, `/api/projects` saves to SQLite. Serves `frontend/dist` at `/`. `serialize.py` is the wire contract between Python's site frame and the canvas. |
+| `frontend/` | The browser app (Vite, React, TypeScript). `src/geometry/` is the canvas's movement rules — carve, protect the minimum, push last; SAT overlap on rotated shapes; door arrows; footprint union — as pure functions with their own unit tests. `src/state/store.ts` is the single source of truth for the arrangement; `Canvas2D.tsx` (SVG plan), `View3D.tsx` (Three.js) and `Schedule.tsx` all render from it. |
+| `start.sh` / `start.bat` | One-click local start: installs into the folder on first run, builds the frontend, starts the server, opens the browser. |
+| `app.py` | The original Streamlit UI, kept as a demo. Same domain layer, one canvas per storey behind a selector, no round trip from the canvas back to Python. |
 | `src/models.py` | The shared data shapes (`Project`, `Site`, `Room`, ...). |
 | `src/defaults.py` | Room-sizing defaults table (widths/depths per room type). |
 | `src/geometry.py` | Buildable envelope from site + setbacks. |
