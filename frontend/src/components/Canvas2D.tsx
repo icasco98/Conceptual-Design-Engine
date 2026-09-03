@@ -190,6 +190,13 @@ export function Canvas2D() {
       if (!rotationIsAllowed(turned.filter((b) => targets.has(b.id)), turned)) {
         turned = g.lastGood;
       } else {
+        // Resolve, exactly as move and resize do. rotationIsAllowed only
+        // asks, pair by pair, whether *some* victim could be chosen; the
+        // drawing asks carvePlanFor whether a room survives all of its cuts
+        // at once, and can refuse where the pairwise question said yes.
+        // Without this the turn is approved and the overlap simply stands --
+        // the two-questions-at-once trap the carve module warns about.
+        turned = resolveOverlaps(turned, g.ids.length === 1 ? g.ids[0] : null, envelope);
         g.lastGood = turned;
       }
       setBoxes(mergeRef.current(turned));

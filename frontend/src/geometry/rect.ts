@@ -79,7 +79,11 @@ export function obbPenetration(a: Obb, b: Obb): Point | null {
   for (const axis of [a.ax, a.ay, b.ax, b.ay]) {
     const dist = Math.abs(dx * axis[0] + dy * axis[1]);
     const depth = projection(a, axis) + projection(b, axis) - dist;
-    if (depth <= 0) return null;
+    // Answer the same question obbsSeparated answers, on the same side of
+    // the tolerance. It calls a pair separated only once the gap exceeds
+    // OVERLAP_EPS, so anything short of that still counts as penetrating
+    // here -- otherwise the two functions disagree inside the band.
+    if (depth < -OVERLAP_EPS) return null;
     if (depth < best) {
       best = depth;
       bestAxis = axis;
@@ -88,7 +92,14 @@ export function obbPenetration(a: Obb, b: Obb): Point | null {
   if (!bestAxis) return null;
   const along = dx * bestAxis[0] + dy * bestAxis[1];
   const sign = along > 0 ? -1 : 1;
-  return [bestAxis[0] * best * sign, bestAxis[1] * best * sign];
+  // Clear the tolerance band rather than landing inside it. Moving by the
+  // bare depth leaves the pair exactly touching, which obbPenetration then
+  // reads as separated and obbsSeparated reads as overlapping: the caller
+  // is told to push, pushes, and is told to push again with no distance
+  // left to move. That deadlock is what leaves rooms drawn on top of each
+  // other after a rotation. Four millimetres costs nothing on a house.
+  const clear = best + 2 * OVERLAP_EPS;
+  return [bestAxis[0] * clear * sign, bestAxis[1] * clear * sign];
 }
 
 export function rectsOverlap(a: Rect, b: Rect): boolean {

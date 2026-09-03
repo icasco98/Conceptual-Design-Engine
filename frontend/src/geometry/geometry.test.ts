@@ -43,8 +43,11 @@ describe("oriented boxes", () => {
     const a = box({ id: "a", left: 0, top: 0, width: 4, height: 4 });
     const b = box({ id: "b", left: 3.5, top: 0.2, width: 4, height: 4 });
     const mtv = obbPenetration(obbOf(a), obbOf(b))!;
-    expect(mtv[0]).toBeCloseTo(-0.5, 5);
+    // 0.5 of overlap, plus enough to clear the tolerance obbsSeparated uses.
+    expect(mtv[0]).toBeCloseTo(-0.504, 5);
     expect(mtv[1]).toBeCloseTo(0, 5);
+    const moved = { ...a, left: a.left + mtv[0], top: a.top + mtv[1] };
+    expect(obbsSeparated(obbOf(moved), obbOf(b))).toBe(true);
   });
 });
 
@@ -91,6 +94,32 @@ describe("carving", () => {
     const bedShape = shapes.find((s) => s.id === "bed")!;
     expect(bedShape.carved).toBe(true);
     expect(polyArea(bedShape.page)).toBeCloseTo(3.3 * 3.6 - 3.3 * 0.5, 3);
+  });
+
+  it("a permitted rotation still has to be resolved, or the overlap just stands", () => {
+    // The reported case: a living room turned 45 degrees onto two neighbours
+    // that cannot both give way. rotationIsAllowed asks pair by pair whether
+    // SOME victim could be chosen and says yes; carvePlanFor, which the
+    // drawing uses, weighs all of a room's cuts together and refuses. The
+    // rotate gesture used to trust the first answer and skip resolveOverlaps,
+    // leaving rooms drawn on top of each other.
+    const living = box({ id: "living", left: 6, top: 6, width: 4.7, height: 4.7, rotation: 45 });
+    const driver = box({ id: "driver", left: 4.2, top: 8.2, width: 3.0, height: 3.2, minWidth: 2.8, minHeight: 3.0 });
+    const laundry = box({ id: "laundry", left: 4.4, top: 5.4, width: 2.8, height: 2.4, minWidth: 2.6, minHeight: 2.2 });
+    const live = [living, driver, laundry];
+
+    expect(rotationIsAllowed([living], live)).toBe(true);
+
+    const settled = resolveOverlaps(live, "living", ENV);
+    const turned = settled.find((b) => b.id === "living")!;
+    expect(turned.left).toBe(living.left);
+    expect(turned.top).toBe(living.top);
+
+    // Whatever could not be carved has been pushed clear: nothing is left
+    // sitting inside the turned room's true, rotated shape.
+    for (const other of settled.filter((b) => b.id !== "living")) {
+      expect(boxesTrulyIntersect(turned, other)).toBe(false);
+    }
   });
 
   it("a rotation that would need a refused bite is not allowed", () => {
