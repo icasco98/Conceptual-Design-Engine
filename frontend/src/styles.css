@@ -113,11 +113,25 @@ input { font: inherit; }
 
 /* status bar */
 .status {
-  display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
-  min-height: 38px; flex: none; padding: 4px 20px;
+  display: flex; flex-direction: column; flex: none;
   background: var(--panel); border-top: 1px solid var(--rule);
 }
+.status-line {
+  display: flex; align-items: center; gap: 14px;
+  min-height: 38px; padding: 0 20px;
+}
 .status-item { display: flex; align-items: center; gap: 7px; font-size: 12px; }
+.status-more {
+  padding: 3px 10px; flex: none; font-size: 11.5px; font-weight: 600;
+  border: 1px solid var(--rule); background: var(--panel); border-radius: 20px; color: var(--ink-2);
+}
+.status-more:hover { background: var(--sunk); }
+/* Capped so a badly broken plan cannot push the drawing off the screen. */
+.status-list {
+  list-style: none; margin: 0; padding: 0 20px 10px;
+  display: flex; flex-direction: column; gap: 5px;
+  max-height: 152px; overflow: auto;
+}
 .status-item.ok { color: var(--good); }
 .status-item.warning { color: var(--warn); }
 .status-item.error { color: var(--err); }
