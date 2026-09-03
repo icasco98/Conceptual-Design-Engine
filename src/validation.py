@@ -1,8 +1,8 @@
 """Deterministic constraint checks over a room program and buildable envelope.
 
 Every issue here is plain, checkable arithmetic — no LLM involved. The
-Streamlit app hands the resulting Issue list to src.claude_client to be
-turned into plain-language explanation for the owner.
+API hands the resulting Issue list to src.claude_client to be turned into
+plain-language explanation for the owner.
 """
 
 from __future__ import annotations

@@ -6,7 +6,7 @@ next. The README covers installation and the domain rules; this file
 covers *where the work stands*.
 
 Branch: `claude/design-engine-tool-access-92y89p`. Everything below is on
-it, six commits ahead of `main`. `main` still holds the old single-storey
+it, well ahead of `main`. `main` still holds the old single-storey
 Streamlit-only version; do not develop there.
 
 ---
@@ -93,9 +93,9 @@ coordinate frames meet** (see Gotchas).
   installs on first run, serves on `localhost:8000`.
 - **Verified end to end** in a browser: drag, resize, level switch, live
   re-check, 3D updating from the same state.
-- The **Streamlit app (`app.py`) still works** and uses the same domain
-  layer, kept as a demo. It is single-view and cannot send the owner's
-  arrangement back to Python. It should be deleted once nobody misses it.
+- The **old Streamlit app is gone** (`app.py`, `src/interactive_canvas.py`,
+  its tests and `src/vendor/` — 3,547 lines). The React frontend had
+  replaced all of it. It is in git history if it is ever wanted back.
 
 ### What was done in this session, in order
 
@@ -200,9 +200,6 @@ cancellation in the UI.
 
 ### Housekeeping, whenever
 
-- Delete `app.py` and `src/interactive_canvas.py` (2,458 lines of Python
-  wrapping JavaScript) once the new frontend has clearly replaced them.
-  Their tests go too. This is the largest dead-weight removal available.
 - Export the diagram to SVG or PDF. Nothing does this yet.
 - Code-split the frontend bundle; it is ~780 kB because of Three.js.
 - Lot coverage ratio check in `validation.py`.

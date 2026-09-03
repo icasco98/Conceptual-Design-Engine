@@ -73,7 +73,7 @@ with yours and never sent to Claude as context.
    placed, not the buildable envelope — so the diagram distinguishes
    "inside the building" from "buildable but unused site."
 4. **Interactive canvas — the diagram itself.** The recommendation above
-   is shown as a single interactive canvas (`src/interactive_canvas.py`):
+   is shown as a single interactive canvas (`frontend/src/components/`):
    title, color legend, rationale, and a live room schedule in a panel to
    its left, with every room *and* hallway as a draggable box (nothing
    here is a fixed zone) so you can explore a different arrangement by
@@ -164,10 +164,9 @@ with yours and never sent to Claude as context.
 
    The building outline is a true union of those shapes, so it follows a
    rotated room's diagonal walls exactly. All the boolean geometry —
-   carving, gap fill, the outline — is done by the vendored
+   carving, gap fill, the outline — is done by the
    [polygon-clipping](https://github.com/mfogel/polygon-clipping) library
-   (MIT, `src/vendor/`), inlined into the page so the diagram stays
-   self-contained and works offline.
+   (MIT), bundled with the frontend so the diagram works offline.
 
    **Room schedule.** In the column left of the canvas, a table lists
    every box's current width, depth, and rotation in meters/degrees. It
@@ -209,13 +208,10 @@ with yours and never sent to Claude as context.
    rather than an inflated bounding box, not a fixed shape from the
    initial layout.
 
-   It's a self-contained HTML/CSS/JS widget (`streamlit.components.v1.html`),
-   not a third-party Streamlit component: dragging happens entirely in the
-   browser with nothing sent back to Python, so there's no server round
-   trip for the two to fall out of sync over. The trade-off is that
-   dragging is local to that browser view — sending a new chat message
-   (or reloading the page) resets it back to Claude's recommended layout,
-   since Python was never told about any of it in the first place. A
+   Dragging happens entirely in the browser, against the store in
+   `frontend/src/state/store.ts`, so there's no server round trip for the
+   plan and the numbers to fall out of sync over. Python is asked to
+   re-check the arrangement, never to re-own it. A
    "Reset to recommended layout" button (also pure JS) restores position,
    size, rotation, selection, and any deleted spaces on demand.
 
@@ -346,11 +342,6 @@ uvicorn api.main:app --reload   # http://localhost:8000
 For frontend work with hot reload, run `npm run dev` in `frontend/`
 alongside the API; the Vite dev server on port 5173 proxies `/api`.
 
-The original Streamlit interface still runs (`streamlit run app.py`) and
-uses the same domain layer, but it is single-view and read-only from the
-canvas's point of view: it is kept as a demo until the new interface has
-fully replaced it.
-
 ## Running the tests
 
 The geometry, defaults, and validation logic is unit-tested and doesn't
@@ -375,12 +366,10 @@ typecheck, unit tests and build.
 | `src/access.py` | How each room type behaves in circulation — its zone, whether you may walk *through* it, whether it meets the street, whether it is plumbed — and the check that walks a packed building from the entry (across the stair, level to level) and reports rooms that can't be reached without passing through a bedroom, bathroom or garage. |
 | `src/stacking.py` | What one storey asks of the storey below it: wet-room stacking and cantilever checks, in shapely polygon arithmetic. Feeds both the planner's score and the owner's warnings. |
 | `src/levels.py` | The default storey split for a multi-storey house the owner hasn't split themselves. |
-| `src/vendor/` | Vendored third-party code — polygon-clipping (MIT) for boolean polygon geometry, inlined into the diagram rather than loaded from a CDN. |
 | `src/sample_project.py` | The worked example the app opens on — a complete, validating project plus the layout plan Claude would have returned for it, so the first paint needs no API call. |
 | `api/` | FastAPI server: `/api/layout` packs and scores, `/api/check` runs access and stacking on a hand-made arrangement, `/api/chat` is one conversational turn, `/api/projects` saves to SQLite. Serves `frontend/dist` at `/`. `serialize.py` is the wire contract between Python's site frame and the canvas. |
 | `frontend/` | The browser app (Vite, React, TypeScript). `src/geometry/` is the canvas's movement rules — carve, protect the minimum, push last; SAT overlap on rotated shapes; door arrows; footprint union — as pure functions with their own unit tests. `src/state/store.ts` is the single source of truth for the arrangement; `Canvas2D.tsx` (SVG plan), `View3D.tsx` (Three.js) and `Schedule.tsx` all render from it. |
 | `start.sh` / `start.bat` | One-click local start: installs into the folder on first run, builds the frontend, starts the server, opens the browser. |
-| `app.py` | The original Streamlit UI, kept as a demo. Same domain layer, one canvas per storey behind a selector, no round trip from the canvas back to Python. |
 | `src/models.py` | The shared data shapes (`Project`, `Site`, `Room`, ...). |
 | `src/defaults.py` | Room-sizing defaults table (widths/depths per room type). |
 | `src/geometry.py` | Buildable envelope from site + setbacks. |
@@ -389,9 +378,8 @@ typecheck, unit tests and build.
 | `src/claude_client.py` | Anthropic client + plain-language explanation of issues. |
 | `src/layout_plan.py` | Claude picks room categories + adjacency order (structured output). |
 | `src/layout.py` | Deterministic rectangle packing, footprint compaction, building footprint outline, and circulation graph — no LLM math, unit-tested. `pack_levels` packs every storey with the stair pinned to one rectangle on each. |
-| `src/interactive_canvas.py` | Renders the interactive zoning diagram (title, legend, live door arrows, a 0.25m snap grid, selection-gated draggable/resizable/rotatable/deletable rooms and hallways with multi-select group rotate/delete, a live-synced editable room schedule in a column left of the drawing, display-shape morphing around rotated neighbours, a true polygon-union footprint outline, gap-closing snap, true rotated-shape collision, live footprint outline, setback-constrained collision resolution with shrink-toward-minimum) as self-contained HTML/CSS/JS, unit-tested. |
 | `src/palette.py` | The 3 validated diagram colors (see dataviz notes in the module docstring). |
-| `tests/` | Unit tests for geometry/defaults/validation/layout/interactive canvas. |
+| `tests/` | Unit tests for the domain layer — geometry, defaults, validation, access, layout, planner, stacking. |
 
 ## Roadmap
 

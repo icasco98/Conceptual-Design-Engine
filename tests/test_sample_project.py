@@ -1,9 +1,8 @@
 """The sample is what every visitor sees before typing a word, so it has to
-render on the same code path a real project does — no special cases, no
+pack on the same code path a real project does — no special cases, no
 validation warnings, no API call."""
 
 from src.geometry import compute_buildable_envelope
-from src.interactive_canvas import render_canvas_html
 from src.layout import pack_levels
 from src.sample_project import sample_layout_plan, sample_project
 from src.validation import validate_room_program
@@ -41,7 +40,7 @@ def test_sample_plan_covers_every_room_exactly_once():
     assert len({a.room_name for a in plan.assignments}) == len(names)
 
 
-def test_sample_packs_and_renders_like_any_other_project():
+def test_sample_packs_like_any_other_project():
     project = sample_project()
     plan = sample_layout_plan()
     envelope = compute_buildable_envelope(project.site, project.setbacks)
@@ -53,12 +52,17 @@ def test_sample_packs_and_renders_like_any_other_project():
     assert len(building.level(1).rooms) == 6
     assert building.footprint
 
-    for result in building.levels:
-        html = render_canvas_html(
-            project, envelope, result,
-            {a.room_name: a.category for a in plan.assignments},
-            plan,
-        )
-        for room in result.rooms:
-            assert room.name in html
-        assert 'id="canvas-container"' in html
+
+def test_sample_places_every_room_it_promises():
+    """This used to be checked by looking for each room's name in the rendered
+    HTML. The drawing moved to the frontend, but the thing worth guarding did
+    not: a room in the program that never reaches a level is a room the owner
+    described and never sees."""
+    project = sample_project()
+    plan = sample_layout_plan()
+    envelope = compute_buildable_envelope(project.site, project.setbacks)
+    building = pack_levels(project, envelope, plan.placement_order)
+
+    placed = {room.name for result in building.levels for room in result.rooms}
+    for room in project.rooms:
+        assert any(name.startswith(room.name) for name in placed), room.name
