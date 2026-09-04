@@ -1,10 +1,24 @@
-"""Claude's role in Phase 1 step 3: propose color categories and an
-adjacency-aware placement order for the room program.
+"""Claude's role in Phase 1 step 3: colour categories and the adjacency
+graph for the room program.
 
-Claude never touches coordinates or sizes — it only decides which of three
-fixed categories each room belongs to (src.palette owns the actual colors)
-and a room ordering that expresses "these should end up near each other."
-src.layout turns that ordering into an actual non-overlapping arrangement.
+Claude never touches coordinates or sizes. It decides which of three fixed
+categories each room belongs to (src.palette owns the actual colours) and,
+more importantly, which rooms should share a wall and how strongly.
+
+That second output used to be `placement_order`, a flat list of room names
+that the packer read as a left-to-right sequence. It was the wrong shape for
+the job. A list gives every room exactly two neighbours and cannot say "the
+ensuite opens off the primary bedroom" about two rooms sitting four apart in
+it, so the brief was flattened before any geometry ran and the packer spent
+its effort guessing back what the list had dropped. Adjacency is a graph:
+any room may need to touch any other, and one rectangle can touch four at
+once.
+
+So Claude now returns `adjacency` -- unordered room pairs, each marked
+`must`, `should` or `avoid` (see src.adjacency). src.place arranges the
+rooms to satisfy as much of that graph as the geometry allows, and can
+report afterwards exactly which pairs it delivered. With an ordering there
+was never anything to check the result against.
 """
 
 from __future__ import annotations
@@ -14,6 +28,7 @@ from typing import List, Literal
 
 from pydantic import BaseModel
 
+from src.adjacency import AdjacencyRule
 from src.claude_client import MODEL, get_client
 from src.models import Project
 from src.palette import CATEGORY_KEYS
@@ -36,15 +51,15 @@ class LayoutPlan(BaseModel):
     grouping_label: str
     category_labels: CategoryLabels
     assignments: List[RoomAssignment]
-    placement_order: List[str]
+    adjacency: List[AdjacencyRule] = []
     rationale: str
 
 
 SYSTEM_PROMPT = """\
 You are the layout-planning layer of a conceptual house-design tool. You \
 are given a room program and the owner's stated priorities. You do not \
-compute any coordinates or sizes — a separate deterministic packer handles \
-that. Your job has three parts:
+compute any coordinates, sizes or positions — a separate deterministic \
+engine handles all geometry. Your job has three parts:
 
 1. Group every room into exactly one of three fixed categories \
 (category_a, category_b, category_c), based on whatever the owner's \
@@ -54,19 +69,41 @@ principle and apply it consistently to every room; name it in \
 `grouping_label` (e.g. "Grouped by privacy level") and give each category \
 a short plain-language label in `category_labels` (e.g. "Private", \
 "Shared", "Service").
-2. Propose a `placement_order`: the list of every room's exact `name` (as \
-given), ordered so that rooms which should end up spatially near each \
-other are adjacent in the list — the packer places rooms left-to-right, \
-wrapping row by row, in exactly this order, so this list IS how you \
-express adjacency. Typical logic: cluster private/rest rooms together and \
-away from the entry; put shared/gather rooms near the entry and near each \
-other; put service rooms and hallways where they can connect zones. Do \
-not include a room more than once even if its count > 1 — the packer \
-expands counted rooms on its own.
+
+2. State the `adjacency` graph: which rooms should share a wall, as \
+unordered pairs. This is the important output — it is the whole of what \
+the engine knows about how the plan should hang together. Each rule has \
+`room_a`, `room_b`, a `strength`, and a short `reason`:
+
+     must    the plan is WRONG without these two sharing a wall. An \
+             ensuite off its bedroom; a dining room off its kitchen. Use \
+             this sparingly — every `must` constrains the geometry hard, \
+             and a brief where everything must touch everything is \
+             impossible to build (a rectangular plan cannot give more \
+             than 3n-6 pairs a shared wall).
+     should  a real preference worth honouring if the geometry allows. \
+             Kitchen near the entry for carrying shopping in; living room \
+             near the entry for receiving guests.
+     avoid   these two should NOT share a wall. A bedroom opening off the \
+             garage; a bathroom door onto the dining room.
+
+Use the exact room `name` values from the program. Refer to a counted room \
+by its single program name ("Bedroom", not "Bedroom 1") — the engine \
+expands counts on its own, pairing `must` rules up by index and spreading \
+`should` and `avoid` across every instance. Do not state a rule between a \
+room and itself. Omit hallways entirely: circulation is generated to code \
+width and every room is connected to it automatically, so you never need \
+a rule saying a room touches a hallway.
+
+State only relationships you would actually defend to the owner. An empty \
+or near-empty graph is a perfectly good answer for a simple program — it \
+leaves the engine free to optimise for compactness and daylight instead. \
+Ten weak `should`s are worse than three real ones.
+
 3. Write a 1-3 sentence `rationale` in plain language explaining the \
-grouping and adjacency choices, referencing the owner's stated priorities \
-where relevant. Do not mention coordinates, exact positions, or numeric \
-dimensions.
+grouping and the adjacency choices, referencing the owner's stated \
+priorities where relevant. Do not mention coordinates, exact positions, or \
+numeric dimensions.
 """
 
 

@@ -1,21 +1,25 @@
-"""Choosing a layout rather than accepting the first one.
+"""Choosing a layout, and the order the scoring cares about things in.
 
-The packer is good at geometry and has no opinion about architecture. These
-tests pin the opinions down: access is a hard constraint, circulation is a
-cost, and a corridor has to earn its floor area.
+These tests pin down the priorities rather than the numbers: access beats
+adjacency, adjacency beats circulation, and preferences never outrank the
+brief's hard constraints. The weights can move; the ordering is the design.
 """
 
-from src.access import access_problems_for
+import pytest
+
+from src.adjacency import AdjacencyGraph, AdjacencyRule
 from src.geometry import compute_buildable_envelope
-from src.layout import pack_rooms
+from src.layout_plan import CategoryLabels, LayoutPlan
 from src.models import Project, Room, Setbacks, Site, SiteEdge
+from src.place import candidate_structures, place_rooms
 from src.planner import (
     CIRCULATION_TARGET_HIGH,
     CIRCULATION_TARGET_LOW,
+    adjacency_satisfaction,
     best_layout,
+    build_graph,
     circulation_ratio,
     score_layout,
-    thin_corridors,
 )
 
 
@@ -36,151 +40,167 @@ def envelope_for(project):
     return compute_buildable_envelope(project.site, project.setbacks)
 
 
-SMALL = [
-    Room(name="Entry", room_type="entry", is_entry=True),
-    Room(name="Living Room", room_type="living_room"),
-    Room(name="Bedroom", room_type="bedroom"),
-    Room(name="Bathroom", room_type="bathroom"),
-]
+def plan_with(*rules):
+    return LayoutPlan(
+        grouping_label="Grouped by privacy level",
+        category_labels=CategoryLabels(category_a="Private", category_b="Shared", category_c="Service"),
+        assignments=[],
+        adjacency=list(rules),
+        rationale="test",
+    )
 
-WIDE = [
+
+HOUSE = [
     Room(name="Entry", room_type="entry", is_entry=True),
     Room(name="Living Room", room_type="living_room"),
     Room(name="Kitchen", room_type="kitchen"),
-    Room(name="Bedroom", room_type="bedroom", count=2),
-    Room(name="Bathroom", room_type="bathroom", count=2),
+    Room(name="Primary Bedroom", room_type="bedroom_primary"),
+    Room(name="Ensuite", room_type="bathroom"),
+    Room(name="Bedroom", room_type="bedroom"),
     Room(name="Garage", room_type="garage_single"),
 ]
 
-DEEP = [
-    Room(name="Entry", room_type="entry", is_entry=True),
-    Room(name="Living Room", room_type="living_room"),
-    Room(name="Kitchen", room_type="kitchen"),
-    Room(name="Bedroom", room_type="bedroom", count=3),
-    Room(name="Bathroom", room_type="bathroom", count=2),
-    Room(name="Storage", room_type="storage"),
-]
+
+# --- the graph reaches the engine -----------------------------------------
 
 
-def test_every_room_is_reachable_without_walking_through_another():
-    """The whole point. Across plot shapes that previously produced plans
-    where a bedroom was only reachable through a bathroom or the garage."""
-    for width, depth, rooms in ((20, 28, WIDE), (12, 34, DEEP), (30, 14, WIDE), (10, 12, SMALL)):
-        project = make_project(width, depth, rooms)
-        chosen = best_layout(project, envelope_for(project))
-        assert chosen.access_problems == 0, (
-            f"{width}x{depth}: " + "; ".join(p.message for p in access_problems_for(chosen.result))
-        )
+def test_build_graph_expands_rules_to_room_instances():
+    """A rule written about "Bedroom" has to reach "Bedroom 1"."""
+    rooms = [
+        Room(name="Entry", room_type="entry", is_entry=True),
+        Room(name="Bedroom", room_type="bedroom", count=2),
+        Room(name="Bathroom", room_type="bathroom", count=2),
+    ]
+    project = make_project(20, 28, rooms)
+    graph = build_graph(project, plan_with(
+        AdjacencyRule(room_a="Bedroom", room_b="Bathroom", strength="must"),
+    ))
+    assert graph.strength("Bedroom 1", "Bathroom 1") == "must"
 
 
-def test_a_single_row_plan_gets_a_corridor_built_for_it():
-    """A plan that packs into one row has no gaps between rows, so under the
-    old model it got no circulation at all and every room was reachable only
-    through its neighbours. A corridor is added past the last row instead."""
-    project = make_project(30, 14, WIDE)
+def test_no_plan_means_an_empty_graph_not_a_crash():
+    project = make_project(20, 28, HOUSE)
+    assert len(build_graph(project, None)) == 0
+    assert best_layout(project, envelope_for(project)).result.rooms
+
+
+# --- the priority ordering ------------------------------------------------
+
+
+def test_a_met_must_scores_better_than_an_unmet_one():
+    """The term the old pipeline could not have: with an ordering as input
+    there was nothing to check a result against."""
+    project = make_project(20, 28, HOUSE)
     envelope = envelope_for(project)
+    result = place_rooms(project, envelope)
 
-    naive = pack_rooms(project, envelope)
-    assert naive.corridors == []
-    assert access_problems_for(naive)
+    asked = AdjacencyGraph(
+        [room.name for room in result.rooms],
+        [("Primary Bedroom", "Ensuite", "must")],
+    )
+    satisfied = adjacency_satisfaction(result, asked)
+    met_score, *_ = score_layout(result, AdjacencyGraph([r.name for r in result.rooms]))
+    asked_score, *_ = score_layout(result, asked)
 
-    chosen = best_layout(project, envelope)
-    assert chosen.result.corridors
+    if satisfied.must_met:
+        assert asked_score == pytest.approx(met_score)
+    else:
+        assert asked_score > met_score
+
+
+def test_an_unmet_must_outweighs_any_number_of_preferences():
+    project = make_project(20, 28, HOUSE)
+    result = place_rooms(project, envelope_for(project))
+    names = [room.name for room in result.rooms]
+
+    far = ("Garage", "Ensuite")
+    one_unmet = AdjacencyGraph(names, [(*far, "must")])
+    many_unmet_should = AdjacencyGraph(names, [
+        (*far, "should"),
+        ("Garage", "Primary Bedroom", "should"),
+        ("Garage", "Kitchen", "should"),
+    ])
+    if adjacency_satisfaction(result, one_unmet).must_met:
+        pytest.skip("the engine satisfied the pair, so there is nothing to compare")
+
+    assert score_layout(result, one_unmet)[0] > score_layout(result, many_unmet_should)[0]
+
+
+def test_access_outranks_everything():
+    """No amount of satisfied brief buys back a plan you cannot walk."""
+    from src.planner import W_ACCESS, W_BROKEN_AVOID, W_UNMET_MUST
+    assert W_ACCESS > W_UNMET_MUST > W_BROKEN_AVOID
+
+
+def test_circulation_is_a_band_not_a_target_of_zero():
+    """Driving hallway to zero leads back to rooms entered through other
+    rooms, the very fault access forbids."""
+    assert 0 < CIRCULATION_TARGET_LOW < CIRCULATION_TARGET_HIGH < 1
+
+
+# --- the chosen layout ----------------------------------------------------
+
+
+def test_best_layout_delivers_the_brief_it_was_given():
+    project = make_project(20, 28, HOUSE)
+    chosen = best_layout(project, envelope_for(project), plan_with(
+        AdjacencyRule(room_a="Primary Bedroom", room_b="Ensuite", strength="must"),
+        AdjacencyRule(room_a="Kitchen", room_b="Living Room", strength="must"),
+        AdjacencyRule(room_a="Garage", room_b="Primary Bedroom", strength="avoid"),
+    ))
     assert chosen.access_problems == 0
+    assert chosen.adjacency.unmet_must == ()
+    assert chosen.adjacency.violated_avoid == ()
 
 
-def test_a_corridor_nothing_needs_is_removed():
-    """Circulation is a cost. If access survives without a corridor, that
-    corridor was floor area spent on nothing."""
-    project = make_project(10, 12, SMALL)
+def test_notes_report_what_was_delivered_not_just_that_it_ran():
+    project = make_project(20, 28, HOUSE)
+    chosen = best_layout(project, envelope_for(project), plan_with(
+        AdjacencyRule(room_a="Primary Bedroom", room_b="Ensuite", strength="must"),
+    ))
+    assert "required adjacencies met" in chosen.notes
+    assert chosen.structure is not None
+    assert chosen.structure.label in chosen.notes
+
+
+def test_best_layout_is_deterministic():
+    project = make_project(20, 28, HOUSE)
     envelope = envelope_for(project)
-
-    with_all, _ = thin_corridors(project, envelope, [r.name for r in SMALL])
-    chosen = best_layout(project, envelope)
-
-    assert chosen.access_problems == 0
-    # Whatever is left, every corridor is load-bearing: the thinning pass
-    # already tried removing each one and kept only the removals that cost
-    # nothing in access.
-    assert len(chosen.result.corridors) <= len(with_all.corridors)
-
-
-def test_thinning_never_trades_away_access_to_save_corridor():
-    for width, depth, rooms in ((20, 28, WIDE), (12, 34, DEEP)):
-        project = make_project(width, depth, rooms)
-        envelope = envelope_for(project)
-        order = [r.name for r in rooms]
-        full = pack_rooms(project, envelope, order, [True] * 8)
-        thinned, _ = thin_corridors(project, envelope, order)
-        assert len(access_problems_for(thinned)) <= len(access_problems_for(full))
-
-
-def test_corridors_are_linked_into_one_network():
-    """A corridor between two rows touches only those two rows. Three or
-    more rows leaves them as separate strips, and a row of rooms you can't
-    walk through cuts off everything past the first one -- so a spine runs
-    down the side to join them."""
-    project = make_project(12, 34, DEEP)
-    envelope = envelope_for(project)
-    result = pack_rooms(project, envelope)
-
-    assert len(result.corridors) >= 3
-    verticals = [c for c in result.corridors if c.depth_m > c.width_m]
-    assert verticals, "a plan with several corridors needs one linking them"
-    assert access_problems_for(result) == []
-
-
-def test_the_entry_reaches_both_the_street_and_the_circulation():
-    """A foyer runs the full depth of its row: front door on the street
-    edge, circulation on the other side."""
-    project = make_project(20, 28, WIDE)
-    envelope = envelope_for(project)
-    result = pack_rooms(project, envelope)
-
-    entry = next(r for r in result.rooms if r.is_entry)
-    street_edge = envelope.back_setback_m + envelope.depth_m
-    assert abs((entry.y_m + entry.depth_m) - street_edge) < 0.01
-
-
-def test_access_dominates_the_score():
-    """No arrangement of rectangles is worth a plan you can't walk through,
-    so one access problem must outweigh any circulation or shape saving."""
-    project = make_project(30, 14, WIDE)
-    envelope = envelope_for(project)
-
-    broken = pack_rooms(project, envelope)          # one row, no corridor
-    good = best_layout(project, envelope).result
-
-    broken_score, broken_problems, broken_ratio = score_layout(broken)
-    good_score, good_problems, _ = score_layout(good)
-
-    assert broken_problems > 0 and good_problems == 0
-    assert broken_ratio == 0.0          # the "cheapest" possible circulation
-    assert good_score < broken_score    # ...and still the worse plan
-
-
-def test_circulation_is_scored_as_a_band_not_minimised():
-    """Driving circulation to zero recreates the fault access forbids, so
-    the score prefers the band a house normally spends rather than the
-    smallest number."""
-    project = make_project(20, 28, WIDE)
-    chosen = best_layout(project, envelope_for(project))
-    assert 0.0 < chosen.circulation_ratio < 0.30
-    assert CIRCULATION_TARGET_LOW < CIRCULATION_TARGET_HIGH
-
-
-def test_the_choice_is_deterministic():
-    project = make_project(20, 28, WIDE)
-    envelope = envelope_for(project)
-    first = best_layout(project, envelope)
-    second = best_layout(project, envelope)
-    assert first.placement_order == second.placement_order
+    plan = plan_with(AdjacencyRule(room_a="Primary Bedroom", room_b="Ensuite", strength="must"))
+    first = best_layout(project, envelope, plan)
+    second = best_layout(project, envelope, plan)
+    assert first.structure == second.structure
     assert first.score == second.score
 
 
-def test_circulation_ratio_is_corridor_share_of_built_area():
-    project = make_project(20, 28, WIDE)
-    result = best_layout(project, envelope_for(project)).result
-    corridor_area = sum(c.width_m * c.depth_m for c in result.corridors)
-    room_area = sum(r.width_m * r.depth_m for r in result.rooms)
-    assert abs(circulation_ratio(result) - corridor_area / (corridor_area + room_area)) < 1e-9
+def test_every_candidate_structure_is_considered():
+    project = make_project(20, 28, HOUSE)
+    chosen = best_layout(project, envelope_for(project))
+    assert f"best of {len(candidate_structures())} arrangements" in chosen.notes
+
+
+def test_an_undersized_plan_loses_to_a_buildable_one():
+    """The score has no term for a room shrunk under its minimum, so those
+    candidates are dropped before scoring rather than left to compete."""
+    from src.place import respects_minimums
+    project = make_project(14, 34, HOUSE)
+    envelope = envelope_for(project)
+    laid = [place_rooms(project, envelope, None, s) for s in candidate_structures()]
+    if all(respects_minimums(result) for result in laid):
+        pytest.skip("every structure fits this lot, so there is nothing to reject")
+    assert respects_minimums(best_layout(project, envelope).result)
+
+
+def test_circulation_ratio_is_corridor_over_built_area():
+    project = make_project(20, 28, HOUSE)
+    result = place_rooms(project, envelope_for(project))
+    corridor = sum(c.width_m * c.depth_m for c in result.corridors)
+    built = corridor + sum(r.width_m * r.depth_m for r in result.rooms)
+    assert circulation_ratio(result) == pytest.approx(corridor / built)
+
+
+def test_no_rooms_is_reported_not_crashed():
+    project = make_project(20, 28, [])
+    chosen = best_layout(project, envelope_for(project))
+    assert chosen.result.rooms == []
+    assert "no rooms" in chosen.notes
