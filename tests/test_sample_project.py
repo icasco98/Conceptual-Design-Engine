@@ -46,9 +46,10 @@ def test_sample_packs_like_any_other_project():
     envelope = compute_buildable_envelope(project.site, project.setbacks)
     building = pack_levels(project, envelope, plan.placement_order)
 
-    # Two storeys. Ground: entry, stair, great room, kitchen, powder room,
-    # office, garage. Upstairs: stair again, primary, 2 bedrooms, 2 baths.
-    assert len(building.level(0).rooms) == 7
+    # Two storeys. Ground: entry, stair, kitchen, dining, living, utility,
+    # powder room, garage. Upstairs: stair again, primary, 2 bedrooms,
+    # bathroom, study.
+    assert len(building.level(0).rooms) == 8
     assert len(building.level(1).rooms) == 6
     assert building.footprint
 
@@ -66,3 +67,19 @@ def test_sample_places_every_room_it_promises():
     placed = {room.name for result in building.levels for room in result.rooms}
     for room in project.rooms:
         assert any(name.startswith(room.name) for name in placed), room.name
+
+
+def test_the_sample_opens_without_a_warning_of_any_kind():
+    """The example is the tool's argument for itself. A plumbing warning on
+    first paint reads as the tool being broken, not as the sample
+    demonstrating a check -- and nobody reads it charitably."""
+    from src.planner import best_layout
+    from src.stacking import stacking_issues
+
+    project = sample_project()
+    envelope = compute_buildable_envelope(project.site, project.setbacks)
+    best = best_layout(project, envelope, sample_layout_plan())
+
+    assert best.access_problems == 0
+    assert stacking_issues(best.result) == []
+    assert validate_room_program(project, envelope) == []

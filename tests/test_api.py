@@ -35,7 +35,9 @@ def test_sample_round_trips_through_the_layout_endpoint(client):
     levels = out["building"]["levels"]
     assert [level["level"] for level in levels] == [0, 1]
     names = {room["name"] for level in levels for room in level["rooms"]}
-    assert {"Front Entry", "Stair", "Primary Bedroom", "Bathroom 2"} <= names
+    # "Bedroom 2" rather than "Bedroom": counted rooms are expanded and
+    # numbered by the packer, and that is what this line is here to catch.
+    assert {"Front Entry", "Stair", "Primary Bedroom", "Bedroom 2"} <= names
     assert levels[0]["footprint"]
     assert 0.0 < out["circulation_ratio"] < 0.4
 

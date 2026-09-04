@@ -334,7 +334,9 @@ def test_a_strong_pairing_actually_changes_which_layout_is_chosen():
     project = sample_project()
     plan = sample_layout_plan()
     envelope = envelope_for(project)
-    wanted = [near("Double Garage", "Kitchen", "strong")]
+    # A pairing the sample does not already carry, so the test measures
+    # the term rather than the example agreeing with itself.
+    wanted = [near("Garage", "Powder Room", "strong")]
 
     without = best_layout(project, envelope, plan)
     with_pair = best_layout(project, envelope, plan.model_copy(update={"adjacencies": wanted}))

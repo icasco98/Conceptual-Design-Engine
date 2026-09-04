@@ -195,7 +195,13 @@ against the 8–12% band, privacy depth, compactness, and stacking. Missing:
    `site.rotation_deg`. Still unscored: "near the entry" (say it as an
    adjacency instead) and anything needing the hemisphere, which nothing
    in the project knows.
-3. **Stair and structure terms.** Reward a stair near the entry, and
+3. ~~**A second packing strategy.**~~ Done: `src/spine.py` packs a central
+   corridor with rooms in bays either side, and `best_layout` packs every
+   candidate ordering both ways and keeps the better. Rows still win on the
+   sample, on compactness, despite the spine's better circulation -- which
+   is the scorer working, not failing, but it does mean the weights now
+   arbitrate between two shapes rather than one and deserve a fresh look.
+4. **Stair and structure terms.** Reward a stair near the entry, and
    walls that line up between storeys.
 4. **A second packing strategy.** The row packer makes every plan a
    staircase of rows. Add a spine packer (central corridor first, rooms
