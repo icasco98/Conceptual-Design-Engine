@@ -62,12 +62,49 @@ class StackingReport:
     overhang: dict[str, float]
 
     @property
+    def wet_penalty(self) -> float:
+        """0 to 1: how much of the upstairs plumbing has nothing wet beneath
+        it. A real cost -- its own run down through the floor below -- but an
+        ordinary one that plenty of built houses carry."""
+        wet = [1.0 - share for share in self.wet_overlap.values()]
+        return sum(wet) / len(wet) if wet else 0.0
+
+    @property
+    def overhang_penalty(self) -> float:
+        """0 to 1: how much of the upper floor hangs past the one below it.
+
+        A different order of problem from plumbing. A bathroom over a
+        bedroom costs money; a bedroom over nothing at all has to be held up
+        by structure that this stage of design has not thought about, and at
+        73% -- which the spine packer produced on the sample project -- it
+        is barely a house. `planner` prices the two apart for that reason.
+        """
+        hang = list(self.overhang.values())
+        return sum(hang) / len(hang) if hang else 0.0
+
+    @property
     def penalty(self) -> float:
-        """Lower is better. Unstacked wet rooms and overhangs both cost,
-        each in proportion to how far off they are."""
-        wet = sum(1.0 - share for share in self.wet_overlap.values())
-        hang = sum(share for share in self.overhang.values())
-        return wet + hang
+        """Lower is better, 0 to 2: the two faults above added up.
+
+        Kept for readers who want one number for "how badly do these
+        storeys stack". `planner` weighs the two components separately,
+        because they are not equally severe.
+
+        Both are means over the rooms they apply to, not sums. Summing made
+        the term grow with the size of the house: a six-bedroom upper floor
+        could accumulate six points of overhang where a two-bedroom one
+        capped at two, so the same architectural fault was priced
+        differently depending on how many rooms happened to be upstairs, and
+        on a large enough house this term alone outweighed every stated
+        preference put together. Every other term the planner weighs is
+        normalised; these are too.
+
+        They are averaged over different populations on purpose -- plumbing
+        over the wet rooms, overhang over all of them -- so one unstacked
+        bathroom in a house with one bathroom reads as fully unstacked,
+        which is what it is.
+        """
+        return self.wet_penalty + self.overhang_penalty
 
     def issues(self) -> list[Issue]:
         out: list[Issue] = []

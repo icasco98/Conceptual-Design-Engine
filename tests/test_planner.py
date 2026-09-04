@@ -5,6 +5,8 @@ tests pin the opinions down: access is a hard constraint, circulation is a
 cost, and a corridor has to earn its floor area.
 """
 
+import math
+
 from src.access import access_problems_for
 from src.geometry import compute_buildable_envelope
 from src.layout import pack_levels, pack_rooms
@@ -13,9 +15,14 @@ from src.models import Project, Room, Setbacks, Site, SiteEdge
 from src.planner import (
     CIRCULATION_TARGET_HIGH,
     CIRCULATION_TARGET_LOW,
+    CIRCULATION_WEIGHT,
     _cluster_by_adjacency,
+    _compactness_penalty,
+    _privacy_penalty,
     adjacency_penalty,
     best_layout,
+    circulation_floor,
+    circulation_penalty,
     circulation_ratio,
     score_layout,
     thin_corridors,
@@ -37,6 +44,33 @@ def make_project(width, depth, rooms) -> Project:
 
 def envelope_for(project):
     return compute_buildable_envelope(project.site, project.setbacks)
+
+
+BAND_PROBE_BUILT_M2 = 200.0
+
+
+class _AtMultipleOfFloor:
+    """A stand-in layout spending a chosen multiple of its own one-corridor
+    floor on circulation, so the band can be probed at ratios the packer
+    does not happen to produce.
+
+    One level of `BAND_PROBE_BUILT_M2`, whose corridors carry
+    `multiple * hallway_width / sqrt(area)` of it -- the floor being
+    `hallway_width * sqrt(area) / area`.
+    """
+
+    def __init__(self, multiple, hallway_width_m=1.2, built=BAND_PROBE_BUILT_M2):
+        floor = hallway_width_m * math.sqrt(built) / built
+        corridor_area = multiple * floor * built
+        self.rooms = [_Box(built - corridor_area)]
+        self.corridors = [_Box(corridor_area)]
+        self.footprint = []
+
+
+class _Box:
+    def __init__(self, area):
+        self.width_m = 1.0
+        self.depth_m = area
 
 
 SMALL = [
@@ -172,6 +206,42 @@ def test_circulation_is_scored_as_a_band_not_minimised():
     assert CIRCULATION_TARGET_LOW < CIRCULATION_TARGET_HIGH
 
 
+def test_the_circulation_floor_falls_as_the_house_grows():
+    """A corridor has to cross the building, so it costs about
+    hallway_width * sqrt(area) -- and as a *share* of the floor that gets
+    cheaper the bigger the house.
+
+    This is why the band cannot be a fixed percentage. It used to be a flat
+    8-12%, which no plan the tool produced ever reached: every candidate on
+    the sample project sat at 18-21%, all of them were charged for it, and
+    the term separated nothing.
+    """
+    small = pack_rooms(make_project(14, 20, SMALL), envelope_for(make_project(14, 20, SMALL)))
+    large = pack_rooms(make_project(30, 40, DEEP), envelope_for(make_project(30, 40, DEEP)))
+    assert circulation_floor(small, 1.2) > circulation_floor(large, 1.2)
+
+
+def test_a_plan_inside_the_band_is_charged_nothing_for_circulation():
+    """The band has to be reachable, or the term is decoration. A plan
+    sitting at the one-corridor floor is exactly what the module is trying
+    to produce, and must cost zero."""
+    assert circulation_penalty(_AtMultipleOfFloor(1.0), 1.2) == 0.0
+    assert circulation_penalty(_AtMultipleOfFloor(1.3), 1.2) == 0.0
+    assert circulation_penalty(_AtMultipleOfFloor(3.0), 1.2) > 0.0
+
+
+def test_circulation_costs_more_the_further_past_the_band_it_goes():
+    """The old term was `30 * (ratio - 0.12)`, which capped it at about
+    three points against terms worth ten to twenty-five, so however much
+    corridor a plan wasted it never changed which plan won."""
+    twice = circulation_penalty(_AtMultipleOfFloor(2.0), 1.2)
+    four_times = circulation_penalty(_AtMultipleOfFloor(4.0), 1.2)
+    assert four_times > twice * 2
+    # And enough of it to matter: two corridors' worth of waste has to be
+    # able to argue with a stated preference, not just register.
+    assert CIRCULATION_WEIGHT * four_times > 20.0
+
+
 def test_the_choice_is_deterministic():
     project = make_project(20, 28, WIDE)
     envelope = envelope_for(project)
@@ -187,6 +257,117 @@ def test_circulation_ratio_is_corridor_share_of_built_area():
     corridor_area = sum(c.width_m * c.depth_m for c in result.corridors)
     room_area = sum(r.width_m * r.depth_m for r in result.rooms)
     assert abs(circulation_ratio(result) - corridor_area / (corridor_area + room_area)) < 1e-9
+
+
+# ------------------------------------------------------------- compactness
+
+
+class _Outline:
+    """A stand-in level: one room of a given area, and whatever outline you
+    want to claim traces it."""
+
+    def __init__(self, footprint, area):
+        self.rooms = [_Box(area)]
+        self.corridors = []
+        self.footprint = footprint
+
+
+def test_compactness_measures_the_building_not_the_packers_tracing():
+    """Two outlines around the same 100 m2 of floor: a clean square, and a
+    comb with the same enclosed area but far more wall.
+
+    The old measure compared the traced footprint's *area* against built
+    area, which measured how finely each packer traced its outline rather
+    than how compact its building was. The spine packer follows every jog of
+    every bay -- 25 points on the sample's ground floor -- so its traced
+    area equalled its built area exactly and it scored a free 0.000 however
+    ragged it was, while the row packer's coarse 7-point outline swallowed
+    its own gaps and was charged 0.122 for the same sprawl. Finer tracing
+    paid, and the two strategies were never compared on the same terms.
+    """
+    square = _Outline([(0, 0), (10, 0), (10, 10), (0, 10)], 100.0)
+    # A comb: same enclosed area, teeth that add wall without adding floor.
+    comb = _Outline(
+        [(0, 0), (10, 0), (10, 10), (8, 10), (8, 2), (6, 2), (6, 10),
+         (4, 10), (4, 2), (2, 2), (2, 10), (0, 10)],
+        100.0,
+    )
+    assert _compactness_penalty(square) == 0.0
+    assert _compactness_penalty(comb) > _compactness_penalty(square)
+
+
+def test_a_finely_traced_outline_is_not_rewarded_for_being_finely_traced():
+    """The same square, traced with four points and with forty. Subdividing
+    an edge changes nothing about the building, so it must change nothing
+    about the score."""
+    coarse = _Outline([(0, 0), (10, 0), (10, 10), (0, 10)], 100.0)
+    fine_pts = (
+        [(x, 0) for x in range(11)]
+        + [(10, y) for y in range(1, 11)]
+        + [(x, 10) for x in range(9, -1, -1)]
+        + [(0, y) for y in range(9, 0, -1)]
+    )
+    fine = _Outline(fine_pts, 100.0)
+    assert abs(_compactness_penalty(coarse) - _compactness_penalty(fine)) < 1e-9
+
+
+# ----------------------------------------------------------------- privacy
+
+
+def _two_storey(rooms):
+    project = make_project(20, 28, rooms)
+    project.storeys = 2
+    return project
+
+
+UPSIDE_DOWN = [
+    Room(name="Entry", room_type="entry", is_entry=True),
+    Room(name="Stair", room_type="stair", levels=[0, 1]),
+    Room(name="Bedroom", room_type="bedroom", count=2, levels=[0]),
+    Room(name="Living Room", room_type="living_room", levels=[1]),
+    Room(name="Kitchen", room_type="kitchen", levels=[1]),
+]
+
+RIGHT_WAY_UP = [
+    Room(name="Entry", room_type="entry", is_entry=True),
+    Room(name="Stair", room_type="stair", levels=[0, 1]),
+    Room(name="Living Room", room_type="living_room", levels=[0]),
+    Room(name="Kitchen", room_type="kitchen", levels=[0]),
+    Room(name="Bedroom", room_type="bedroom", count=2, levels=[1]),
+]
+
+
+def test_privacy_is_scored_across_the_building_not_one_level_at_a_time():
+    """Bedrooms at the front door with the living space upstairs is the
+    wrong way round, and has to cost something.
+
+    This term used to be scored one level at a time, and a level was scored
+    only if it held the entry *and* public rooms *and* private ones. No
+    level of a two-storey house satisfies that: the ground floor has the
+    entry, the upper floor has the bedrooms, and neither has both. Every
+    multi-storey plan the tool ever produced scored zero here -- this one
+    included -- so a twelve-point term was inert on exactly the houses it
+    was meant to judge.
+    """
+    project = _two_storey(UPSIDE_DOWN)
+    wrong_way, _ = thin_corridors(project, envelope_for(project),
+                                  ["Entry", "Bedroom", "Stair", "Living Room", "Kitchen"])
+    assert _privacy_penalty(wrong_way) > 0.5
+
+
+def test_a_storey_counts_as_privacy():
+    """Bedrooms upstairs are private by being upstairs, so the ordinary
+    house costs nothing.
+
+    Without storeys counting as depth this would not hold: a bedroom
+    directly above the front door has almost the same plan coordinates as
+    one beside it, and the stair between them is most of what privacy
+    upstairs means.
+    """
+    project = _two_storey(RIGHT_WAY_UP)
+    ordinary, _ = thin_corridors(project, envelope_for(project),
+                                 ["Entry", "Living Room", "Kitchen", "Stair", "Bedroom"])
+    assert _privacy_penalty(ordinary) == 0.0
 
 
 # --------------------------------------------------------------- adjacency

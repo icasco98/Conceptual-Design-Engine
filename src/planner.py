@@ -23,16 +23,32 @@ Two rules do most of the work:
   CIRCULATION is a cost, not something to eliminate. Minimizing hallway on
   its own drives straight back to rooms entered through other rooms -- the
   very fault access forbids. So corridors are thinned only as far as access
-  survives, and the score prefers plans landing in the band a house normally
-  spends on circulation rather than the smallest number.
+  survives, and the score prefers plans landing in a band rather than the
+  smallest number. The band is measured against what one corridor crossing
+  a plan of this size would cost, not as a fixed percentage, because that
+  share falls as a house grows.
 
 A multi-storey plan is scored as one building: every level's circulation
-and compactness count, access is walked across the stair, and
+and compactness count, privacy is read across the whole house with a
+storey counting as depth, access is walked across the stair, and
 `src.stacking` adds what one floor asks of the floor below it.
+
+Every term below access is normalised so that 1.0 means "one whole unit
+wrong", and the weights are gathered at the top of this module so they can
+be read against each other. That is not decoration. Three of them were
+silently inert before it was done -- circulation capped at about three
+points against terms worth twenty-five, privacy structurally unable to fire
+on any two-storey house, and compactness measuring how finely each packer
+traced its outline rather than how compact its building was -- and the
+suite passed the whole time. A term that cannot change which plan wins is
+worse than no term at all, because it reads as judgement that is not
+happening. If you add one, prove it fires: `tests/test_planner.py` pins
+each of these to a case where the wrong answer and the right one differ.
 """
 
 from __future__ import annotations
 
+import math
 from typing import NamedTuple
 
 from src.access import access_problems_for, zone_of
@@ -45,13 +61,30 @@ from src.orientation import EAST, WEST, aspect_penalty, direction_for, street_pe
 from src.spine import pack_spine_levels
 from src.stacking import stacking_report
 
-# Share of built area a house normally spends on circulation. Below the
-# floor, rooms are usually being entered through other rooms; above the
-# ceiling, plan is being wasted on corridor. Scored as a band rather than
-# minimized, because "no hallway at all" is the failure mode this whole
-# module exists to prevent.
-CIRCULATION_TARGET_LOW = 0.08
-CIRCULATION_TARGET_HIGH = 0.12
+# What a house spends on circulation, as a multiple of what one corridor
+# across a compact plan of the same size would cost. Scored as a band
+# rather than minimized, because "no hallway at all" is the failure mode
+# this whole module exists to prevent.
+#
+# This used to be a fixed 8-12% of built area, and that band was
+# unreachable. A corridor has to cross the building to serve it, so it
+# costs about `hallway_width * sqrt(built_area)` at best -- roughly 11% of
+# a 116 m2 floor, 13% of an 84 m2 one, 7% of a 300 m2 one. The share a
+# corridor takes falls as a house grows, so a fixed percentage asks a small
+# house for something its geometry cannot supply. Every plan on the sample
+# project scored 18-21% against a 12% ceiling, every candidate was equally
+# guilty, and the term decided nothing.
+#
+# Measuring against the one-corridor floor instead makes the number mean
+# "how much more corridor than this plan strictly needs", which is the
+# question worth asking and is comparable between a cottage and a villa.
+CIRCULATION_TARGET_LOW = 1.0
+CIRCULATION_TARGET_HIGH = 1.6
+
+# Fallback corridor width for scoring a layout handed over without its
+# project (the `project=None` path). The real width comes from
+# `Project.hallway_width_m`; this only has to keep the floor finite.
+DEFAULT_HALLWAY_WIDTH_M = 1.2
 
 # How many candidate orderings to pack and score. Every candidate is a full
 # pack plus a corridor-thinning pass, so this is the knob to turn if the
@@ -72,6 +105,46 @@ MAX_CANDIDATES = 12
 # how this number was found.
 ADJACENCY_WEIGHT = 40.0
 STRENGTH_FACTOR = {"strong": 2.0, "mild": 1.0}
+
+# What the tool's own preferences are worth, against the owner's stated
+# ones above. All three are penalties normalised so that 1.0 means "one
+# whole unit wrong" -- a circulation budget missed by 100%, a house whose
+# private rooms sit a full plan-length nearer the door than its public
+# ones, a floor with double the external wall of the square that would
+# hold it -- so the weights can be read against each other directly.
+#
+# They sit below adjacency (40) and orientation (24) on purpose: what the
+# owner asked for outranks what the tool would have preferred. And all of
+# them sit far below access (100 each), which nothing buys back.
+#
+# Circulation leads them because it is the term this module exists for.
+# It was previously scored as `30 * (ratio - 0.12)` -- an overshoot of a
+# few hundredths of a ratio -- which capped the term at about 3 points
+# against terms worth 10 to 25, and it never once changed which plan won.
+CIRCULATION_WEIGHT = 20.0
+PRIVACY_WEIGHT = 12.0
+COMPACTNESS_WEIGHT = 8.0
+
+# What it costs to stack storeys badly. Two faults, priced apart, because
+# they are not the same kind of wrong.
+#
+# Plumbing that does not stack is an ordinary cost: the bathroom needs its
+# own run down through the floor below. Worth moving a room for, not worth
+# overruling what the owner asked for, so it sits with privacy -- which is
+# where this term's original comment always said it belonged.
+#
+# A floor that does not land on the floor beneath it is a different order
+# of problem. It has to be held up by structure this stage of design has
+# not thought about, and the spine packer produced a study 73% out over
+# nothing on the sample project. That outranks every preference, stated or
+# otherwise, and still costs less than half of one room you cannot reach.
+#
+# Both read against means in 0..1, so neither grows just because a house
+# has more bedrooms in it. Together they used to be one sum at weight 10,
+# which reached 24 points on the sample and was quietly the largest term
+# in the scorer -- larger than every pairing and sun wish combined.
+UNSTACKED_PLUMBING_WEIGHT = 12.0
+OVERHANG_WEIGHT = 35.0
 
 # What a stated preference about sun or street is worth. Below adjacency:
 # "put the kitchen next to the dining room" is a harder requirement than
@@ -116,44 +189,100 @@ def circulation_ratio(result: LayoutResult | MultiLevelLayout) -> float:
     return corridor / total
 
 
-def _footprint_area(result: LayoutResult) -> float:
-    """Shoelace area of the building outline -- includes the gaps between
-    wings, so a sprawling plan scores worse than a compact one of the same
-    room area."""
-    pts = result.footprint
-    if len(pts) < 3:
+def circulation_floor(result: LayoutResult | MultiLevelLayout, hallway_width_m: float) -> float:
+    """The least circulation this much house can have, as a share of built
+    area.
+
+    A corridor has to cross the building to serve it. On a compact floor of
+    area A that crossing is about sqrt(A) long, so it costs roughly
+    `hallway_width * sqrt(A)` -- and as a *share* of A that falls as the
+    house grows. This is why a fixed percentage band was the wrong shape:
+    11% is the floor for a 116 m2 storey and 7% for a 300 m2 one, so one
+    number cannot describe both.
+    """
+    levels = result.levels if isinstance(result, MultiLevelLayout) else [result]
+    areas = [_built_area(level) for level in levels]
+    built = sum(areas)
+    if built <= 0:
         return 0.0
-    total = 0.0
-    for i in range(len(pts)):
-        x0, y0 = pts[i]
-        x1, y1 = pts[(i + 1) % len(pts)]
-        total += x0 * y1 - x1 * y0
-    return abs(total) / 2
+    ideal = sum(hallway_width_m * math.sqrt(area) for area in areas if area > 0)
+    return ideal / built
 
 
-def _privacy_penalty(result: LayoutResult) -> float:
-    """Private rooms should sit deeper into the plan than public ones.
+def circulation_penalty(result: LayoutResult | MultiLevelLayout, hallway_width_m: float) -> float:
+    """How far outside the band this plan sits, in multiples of the floor.
+
+    0.0 anywhere inside the band. Above it the number is "how many extra
+    corridors' worth of plan is being spent", which is a thing you can
+    picture; below it, how far short of serving the house the corridors
+    fall. Unlike the old fixed percentages this is comparable between a
+    cottage and a villa, and unlike them it is reachable -- so it can
+    actually separate two candidates instead of condemning all of them
+    equally.
+    """
+    floor = circulation_floor(result, hallway_width_m)
+    if floor <= 0:
+        return 0.0
+    multiple = circulation_ratio(result) / floor
+    if multiple < CIRCULATION_TARGET_LOW:
+        return CIRCULATION_TARGET_LOW - multiple
+    if multiple > CIRCULATION_TARGET_HIGH:
+        return multiple - CIRCULATION_TARGET_HIGH
+    return 0.0
+
+
+# What one storey is worth as privacy, in units of plan distance. Climbing
+# a flight of stairs separates a bedroom from the front door about as well
+# as putting it at the far end of the house does, and plan distances here
+# are normalised so that the far end is 1.0.
+STOREY_DEPTH = 1.0
+
+
+def _privacy_penalty(multi: MultiLevelLayout) -> float:
+    """Private rooms should sit deeper into the house than public ones.
 
     Measured as distance from the entry: a bedroom nearer the front door
     than the living room is the wrong way round. Scaled by the plan's own
-    size so it means the same on any plot. An upper level has no entry and
-    is already private by being upstairs, so it scores zero here.
-    """
-    entry = next((r for r in result.rooms if r.is_entry), None)
-    if entry is None or not result.rooms:
-        return 0.0
-    ex, ey = entry.x_m + entry.width_m / 2, entry.y_m + entry.depth_m / 2
+    size so it means the same on any plot.
 
-    spans = [abs(r.x_m - ex) + abs(r.y_m - ey) for r in result.rooms]
-    scale = max(spans) if spans else 1.0
+    Scored across the whole building rather than a level at a time, which
+    is what this used to do and the reason it never once fired. A level was
+    scored only if it held an entry *and* public rooms *and* private ones.
+    The ordinary house -- bedrooms upstairs, front door and living rooms
+    down -- satisfies that on no level at all: the ground floor has the
+    entry and the public rooms but no private ones, and the upper floor has
+    the private rooms but no entry. Both returned zero, so a 12-point term
+    contributed nothing to any multi-storey plan the tool has ever scored,
+    and a plan that put a bedroom beside the front door was charged
+    nothing for it.
+
+    Reading the building as one thing fixes that, and it needs storeys to
+    count as depth -- otherwise a bedroom directly above the front door
+    looks as exposed as one beside it, when in fact the stair between them
+    is most of what privacy upstairs means.
+    """
+    rooms = [(level_index, room) for level_index, level in enumerate(multi.levels) for room in level.rooms]
+    entry = next(((i, r) for i, r in rooms if r.is_entry), None)
+    if entry is None or not rooms:
+        return 0.0
+    entry_level, entry_room = entry
+    ex = entry_room.x_m + entry_room.width_m / 2
+    ey = entry_room.y_m + entry_room.depth_m / 2
+
+    spans = [abs(r.x_m - ex) + abs(r.y_m - ey) for _, r in rooms]
+    scale = max(spans) if spans else 0.0
     if scale <= 0:
         return 0.0
 
-    public, private = [], []
-    for room in result.rooms:
+    public: list[float] = []
+    private: list[float] = []
+    for level_index, room in rooms:
         if room.is_entry or room.room_type == "stair":
             continue
-        distance = (abs(room.x_m + room.width_m / 2 - ex) + abs(room.y_m + room.depth_m / 2 - ey)) / scale
+        plan_distance = (
+            abs(room.x_m + room.width_m / 2 - ex) + abs(room.y_m + room.depth_m / 2 - ey)
+        ) / scale
+        distance = plan_distance + STOREY_DEPTH * abs(level_index - entry_level)
         zone = zone_of(room.room_type)
         if zone == "public":
             public.append(distance)
@@ -262,12 +391,43 @@ def orientation_penalty(
     return sum(penalties) / len(penalties)
 
 
+def _perimeter(pts: list[tuple[float, float]]) -> float:
+    if len(pts) < 3:
+        return 0.0
+    return sum(math.dist(pts[i], pts[(i + 1) % len(pts)]) for i in range(len(pts)))
+
+
 def _compactness_penalty(result: LayoutResult) -> float:
+    """How much external wall this floor buys per unit of floor area.
+
+    Zero for a perfect square; grows as the plan sprawls, wings out, or
+    leaves notches between bays. External wall is what a compact plan is
+    actually saving -- it is the cost to build and the surface to heat --
+    so measuring it directly says what "compact" was always meant to mean.
+
+    This replaces a measure that compared the traced footprint's *area*
+    against the built area, which turned out to be measuring the packers
+    rather than the buildings. The spine packer traces its outline around
+    every jog of every bay -- 25 points on the sample's ground floor -- so
+    its footprint area equalled its built area exactly and the penalty came
+    out 0.000 however ragged the plan was. The row packer traces a coarse
+    7-point outline that swallows its own gaps, so it was charged 0.122 for
+    the same sprawl. Finer tracing was rewarded and the two strategies were
+    never compared on the same terms.
+
+    Perimeter inverts that by construction: a ragged outline has *more*
+    perimeter, not less, so following every jog costs rather than pays. On
+    the sample the spine ground floor goes from a free 0.000 to 0.585 --
+    the worst of the four floors, which is what its bays deserve.
+
+    Normalised against the square of equal area (perimeter 4*sqrt(A)), the
+    most compact shape there is, so the number means the same on any plot.
+    """
     built = _built_area(result)
-    footprint = _footprint_area(result)
-    if built > 0 and footprint > built:
-        return (footprint - built) / built
-    return 0.0
+    perimeter = _perimeter(result.footprint)
+    if built <= 0 or perimeter <= 0:
+        return 0.0
+    return max(0.0, perimeter / (4.0 * math.sqrt(built)) - 1.0)
 
 
 def score_layout(
@@ -289,14 +449,12 @@ def score_layout(
 
     score = 100.0 * problems
 
-    if ratio < CIRCULATION_TARGET_LOW:
-        score += 30.0 * (CIRCULATION_TARGET_LOW - ratio)
-    elif ratio > CIRCULATION_TARGET_HIGH:
-        score += 30.0 * (ratio - CIRCULATION_TARGET_HIGH)
+    hallway = project.hallway_width_m if project is not None else DEFAULT_HALLWAY_WIDTH_M
+    score += CIRCULATION_WEIGHT * circulation_penalty(multi, hallway)
 
+    score += PRIVACY_WEIGHT * _privacy_penalty(multi)
     for level in multi.levels:
-        score += 12.0 * _privacy_penalty(level)
-        score += 8.0 * _compactness_penalty(level)
+        score += COMPACTNESS_WEIGHT * _compactness_penalty(level)
 
     if adjacencies:
         score += ADJACENCY_WEIGHT * adjacency_penalty(multi, adjacencies)
@@ -305,10 +463,9 @@ def score_layout(
         score += ORIENTATION_WEIGHT * orientation_penalty(multi, project, orientations)
 
     if len(multi.levels) > 1:
-        # An unstacked bathroom or a room hanging off the floor below costs
-        # about as much as a badly placed private room: worth moving for,
-        # never worth an access problem.
-        score += 10.0 * stacking_report(multi).penalty
+        stacking = stacking_report(multi)
+        score += UNSTACKED_PLUMBING_WEIGHT * stacking.wet_penalty
+        score += OVERHANG_WEIGHT * stacking.overhang_penalty
 
     return score, problems, ratio
 

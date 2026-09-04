@@ -9,7 +9,7 @@ from src.geometry import compute_buildable_envelope
 from src.layout import MultiLevelLayout, pack_levels, pack_rooms
 from src.levels import assign_default_levels
 from src.models import Project, Room, Setbacks, Site, SiteEdge
-from src.planner import best_layout
+from src.planner import OVERHANG_WEIGHT, UNSTACKED_PLUMBING_WEIGHT, best_layout
 from src.stacking import CANTILEVER_TOLERANCE, stacking_issues, stacking_report
 from src.validation import validate_room_program
 
@@ -154,6 +154,48 @@ def test_a_room_hanging_off_the_floor_below_is_flagged():
     report = stacking_report(building)
     assert any(share > CANTILEVER_TOLERANCE for share in report.overhang.values())
     assert any(i.code == "cantilever" for i in stacking_issues(building))
+
+
+def test_the_stacking_penalty_does_not_grow_just_because_there_are_more_rooms():
+    """Two houses with the same fault -- every upper room unstacked -- one
+    with three bedrooms and one with six. The fault is the same, so the
+    penalty must be.
+
+    Both components used to be sums, so the six-bedroom house was charged
+    twice the six-bedroom house's worth of the identical problem. On a
+    large enough plan the term outweighed every stated preference put
+    together, and it did so purely because of the room count. Every other
+    term the planner weighs is normalised; these are now too.
+    """
+    def unstacked(bedrooms):
+        rooms = [
+            Room(name="Entry", room_type="entry", is_entry=True),
+            Room(name="Stair", room_type="stair", levels=[0, 1]),
+            Room(name="Living", room_type="living_room", levels=[0]),
+            Room(name="Bath", room_type="bathroom", count=bedrooms, levels=[1]),
+        ]
+        project = make_project(rooms=rooms)
+        return stacking_report(pack_levels(project, envelope_for(project)))
+
+    few = unstacked(2)
+    many = unstacked(5)
+    assert few.wet_penalty == many.wet_penalty == 1.0
+    assert len(many.wet_overlap) > len(few.wet_overlap)
+
+
+def test_plumbing_and_overhang_are_priced_apart():
+    """They are not the same order of problem. A bathroom without a wet
+    room beneath it needs its own plumbing run -- a cost, and one plenty of
+    built houses carry. A bedroom hanging off the floor plate needs
+    structure this stage of design has not thought about.
+
+    They used to be added together at one weight, so the scorer treated
+    'pay the plumber more' and 'this floor lands on nothing' as equally
+    wrong.
+    """
+    assert OVERHANG_WEIGHT > UNSTACKED_PLUMBING_WEIGHT
+    # ...and neither, at its worst, buys back a room you cannot reach.
+    assert OVERHANG_WEIGHT + UNSTACKED_PLUMBING_WEIGHT < 100.0
 
 
 def test_validation_demands_a_stair_and_keeps_rooms_within_the_storeys():

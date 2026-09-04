@@ -113,7 +113,7 @@ both bundled rather than fetched so the app works offline.
 
 ## Current state
 
-- **Tests:** 122 Python, 25 TypeScript. All passing.
+- **Tests:** 131 Python, 25 TypeScript. All passing.
 - **CI:** `.github/workflows/ci.yml` runs ruff, pytest, then the
   frontend's typecheck, tests and build on every push.
 - **Runs locally** via `start.bat` / `start.sh`: one double-click.
@@ -126,24 +126,36 @@ both bundled rather than fetched so the app works offline.
 
 ### What was done in the most recent session
 
-1. Deleted the old Streamlit interface (3,547 lines) the React frontend
-   had replaced.
-2. Rebuilt the interface around the drawing: the layout above, a real
-   type system, pan and zoom, a solid-massing mode beside the zone one.
-3. Fixed rooms left drawn on top of each other after a rotation — two
-   functions answering "do these overlap?" disagreed by their own
-   tolerance, so a pushed pair landed in the band where one said
-   "separated" and the other said "overlapping", and could never be pushed
-   again.
-4. Drew the stair as one shaft through every storey it connects, with the
-   floor plates cut around it.
-5. Let the owner ask for a rotation in words.
-6. Scored the room pairings Claude proposes (`adjacencies`), and the
-   owner's stated sun and street preferences (`orientations`), and made
-   the intake ask for the site's bearing now that something reads it.
-7. Added the spine packer as a second strategy, and made the north arrow
-   turn with the site.
-8. Replaced the sample project with one that exercises all of it.
+Rebuilt the scoring function so that all of it works. Three of its six
+terms could not affect which plan won — see next step 1 for the full
+account, which is worth reading before touching `planner.py`.
+
+1. **Circulation** is measured against the one-corridor floor
+   (`hallway_width * sqrt(area)`) rather than a fixed 8–12% of built area,
+   because that share falls as a house grows and the old band was
+   unreachable at any size. It now separates candidates instead of
+   condemning all of them equally.
+2. **Privacy** is read across the whole building with a storey counting as
+   depth, instead of one level at a time — which required a level to hold
+   the entry, public rooms and private rooms all at once, something no
+   ordinary two-storey house does.
+3. **Compactness** is perimeter-based: external wall per unit of floor,
+   against the square of equal area. The old area-based measure rewarded
+   whichever packer traced its outline more finely, which handed the spine
+   packer a free 0.000 however ragged its bays were.
+4. **Stacking** is split in two and normalised. Unstacked plumbing (12)
+   and a floor that does not land on the one below (35) are no longer
+   added at one weight, and neither grows just because a house has more
+   bedrooms — both used to be sums, which made the term reach 24 points on
+   the sample and quietly outweigh every stated preference combined.
+5. Every weight is now gathered at the top of `planner.py` with its
+   reasoning, on a common scale where 1.0 means "one whole unit wrong".
+6. Nine tests added, each pinning a term to a case where the right and
+   wrong answers differ — the old suite passed at full green with three
+   terms inert.
+
+Verified in the browser: the sample opens on a sound plan, both levels,
+no access or stacking warnings, no console errors.
 
 ---
 
@@ -190,6 +202,20 @@ score computed from it.
 `best_layout` can only choose among the arrangements it generates. Adding
 a scoring term usually means adding a candidate ordering too.
 
+**Every scoring term must be normalised, and you must prove it fires.**
+Penalties are scaled so 1.0 means "one whole unit wrong", and the weights
+live together at the top of `planner.py` so they can be read against each
+other. A term on its own scale is not a term with an unusual weight — it
+is a term that either dominates or does nothing, and which of those it
+does is an accident. Three terms were inert for a whole session behind a
+fully green suite. A test that only checks the plan came out valid cannot
+see this; write one where the right and wrong answers differ.
+
+**A sum grows with the size of the house; a mean does not.** Adjacency and
+orientation are means for this reason, and stacking was changed to match.
+Sum a per-room penalty and you price the same architectural fault
+differently depending on how many bedrooms happen to be upstairs.
+
 **The API key check treats a trailing `...` as absent**, so an untouched
 `.env.example` does not look configured.
 
@@ -203,26 +229,55 @@ and every subsequent pull was refused.
 
 Ordered. Each leaves the app working.
 
-### 1. Re-weigh the scoring function, now that it arbitrates two shapes
+### 1. Widen the search — the scorer can only pick what it is shown
 
-The most concrete finding of the last session: on the sample project the
-row packer wins at **21% circulation** while the spine plan sits at 19%
-and loses on compactness. Both are well above the 8–12% band the scorer
-claims to want, and it picks the worse one on that measure. That is the
-scorer working as written, not a bug — but the weights were tuned when
-rows were the only shape, and they now decide between two very different
-plans.
+`MAX_CANDIDATES` is 12, and only six orderings are actually generated for
+the sample project. Every candidate is now two full packs, so the clock
+matters, but seeded random perturbations would widen the search
+considerably. This is the remaining half of the "scoring a preference is
+worthless if no candidate ever satisfies it" gotcha below: the weights are
+now sound, so what limits the recommendation is the shortlist.
 
-Worth doing first because everything below is easier to judge once the
-planner reliably picks the better plan:
+The previous session's next-step list opened with "re-weigh the scoring
+function" on the strength of a finding that the row packer won at 21%
+circulation while the spine plan sat at 19%. **That diagnosis was wrong in
+its particulars, and the truth was worse.** It guessed compactness was
+over-weighted against circulation. Compactness was in fact scoring the
+spine plan at exactly 0.000 — not over-weighting it, not measuring it at
+all. Three of the six terms could not affect the outcome:
 
-- Check whether the compactness term is over-weighted against
-  circulation. A spine plan's bays leave a ragged footprint by nature.
-- The circulation band may need to scale with program size; one corridor
-  through a small house is a bigger share than through a large one.
-- `MAX_CANDIDATES` is 12 and only a handful of orderings are generated.
-  Seeded random perturbations would widen the search — watch the clock,
-  every candidate is now two full packs.
+- **Circulation** was `30 * (ratio - 0.12)`, an overshoot of a few
+  hundredths, so the term capped at about 3 points against terms worth 10
+  to 25. And the 8–12% band was unreachable at any size — a corridor has
+  to cross the building, which costs about `hallway_width * sqrt(area)`,
+  or 11% of a 116 m² floor. Every candidate was 18–21%, all equally
+  guilty, and the term separated nothing.
+- **Privacy** was scored one level at a time, and only counted a level
+  holding the entry *and* public rooms *and* private ones. No level of an
+  ordinary two-storey house qualifies. It returned zero on every
+  multi-storey plan the tool had ever produced.
+- **Compactness** compared the traced footprint's *area* to built area,
+  which measured how finely each packer traced its outline rather than how
+  compact its building was. The spine packer follows every jog of every bay
+  — 25 points on the sample's ground floor — so its traced area equalled
+  its built area and it scored 0.000 however ragged it was, while the row
+  packer's coarse 7-point outline was charged 0.122 for the same sprawl.
+
+All 122 tests passed throughout. That is the lesson worth carrying: **a
+scoring term that cannot change the outcome is invisible to a test suite
+that only checks the plan is valid.** The tests added for these pin each
+term to a case where the right and wrong answers differ — copy that
+pattern for any term you add.
+
+The fix, now in place: every term below access is normalised so 1.0 means
+"one whole unit wrong", the weights are gathered at the top of `planner.py`
+to be read against each other, circulation is measured against the
+one-corridor floor rather than a fixed percentage, privacy is read across
+the whole building with a storey counting as depth, compactness is
+perimeter-based (a ragged outline has *more* wall, so raggedness now costs
+instead of paying), and stacking is split — unstacked plumbing at 12,
+a floor that does not land on the one below at 35, where before they were
+one sum at 10 that grew with the number of bedrooms.
 
 ### 2. Stair and structure terms
 
