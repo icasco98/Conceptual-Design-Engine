@@ -32,11 +32,28 @@ class RoomAssignment(BaseModel):
     category: CategoryKey
 
 
+class Adjacency(BaseModel):
+    """Two rooms that should end up near each other, or well apart.
+
+    `placement_order` could only ever say this by putting two names next to
+    each other in a list, which is a weak and lossy channel: it cannot say
+    how much a pairing matters, it cannot say two rooms should be kept
+    apart at all, and a room can only be adjacent to two others in a list
+    however many it actually wants to touch. This says it directly.
+    """
+
+    room_a: str
+    room_b: str
+    relation: Literal["near", "apart"]
+    strength: Literal["strong", "mild"] = "mild"
+
+
 class LayoutPlan(BaseModel):
     grouping_label: str
     category_labels: CategoryLabels
     assignments: list[RoomAssignment]
     placement_order: list[str]
+    adjacencies: list[Adjacency] = []
     rationale: str
 
 
@@ -63,7 +80,20 @@ away from the entry; put shared/gather rooms near the entry and near each \
 other; put service rooms and hallways where they can connect zones. Do \
 not include a room more than once even if its count > 1 — the packer \
 expands counted rooms on its own.
-3. Write a 1-3 sentence `rationale` in plain language explaining the \
+3. List the pairings that actually matter in `adjacencies`. Each entry \
+names two rooms by their exact `name` and says whether they should end up \
+"near" each other or "apart", and whether that is "strong" (the plan is \
+wrong without it) or "mild" (better with it). This is where a real \
+requirement belongs — `placement_order` can only hint at one by putting \
+two names side by side, and cannot express keeping rooms apart at all. \
+Draw them from what the owner said and from ordinary domestic sense: \
+kitchen near dining, kitchen near the entry when they ask for it, \
+bedrooms apart from the garage and from living spaces, a bathroom near \
+the bedrooms it serves, laundry near the service zone. Only list pairings \
+you would defend — six to ten is plenty for a house, and an empty list is \
+better than an invented one. Do not pair a room with itself, and do not \
+repeat a pair.
+4. Write a 1-3 sentence `rationale` in plain language explaining the \
 grouping and adjacency choices, referencing the owner's stated priorities \
 where relevant. Do not mention coordinates, exact positions, or numeric \
 dimensions.

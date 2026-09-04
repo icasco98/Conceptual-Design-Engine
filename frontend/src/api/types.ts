@@ -41,11 +41,21 @@ export interface Project {
 
 export type CategoryKey = "category_a" | "category_b" | "category_c";
 
+export interface Adjacency {
+  room_a: string;
+  room_b: string;
+  relation: "near" | "apart";
+  strength: "strong" | "mild";
+}
+
 export interface LayoutPlan {
   grouping_label: string;
   category_labels: Record<CategoryKey, string>;
   assignments: { room_name: string; category: CategoryKey }[];
   placement_order: string[];
+  /** Pairings the packer scores against. Carried back to /api/layout
+   *  verbatim, so a plan keeps the reasoning it was built from. */
+  adjacencies: Adjacency[];
   rationale: string;
 }
 

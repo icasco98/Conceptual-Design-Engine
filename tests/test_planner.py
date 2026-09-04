@@ -7,11 +7,14 @@ cost, and a corridor has to earn its floor area.
 
 from src.access import access_problems_for
 from src.geometry import compute_buildable_envelope
-from src.layout import pack_rooms
+from src.layout import pack_levels, pack_rooms
+from src.layout_plan import Adjacency, CategoryLabels, LayoutPlan, RoomAssignment
 from src.models import Project, Room, Setbacks, Site, SiteEdge
 from src.planner import (
     CIRCULATION_TARGET_HIGH,
     CIRCULATION_TARGET_LOW,
+    _cluster_by_adjacency,
+    adjacency_penalty,
     best_layout,
     circulation_ratio,
     score_layout,
@@ -184,3 +187,146 @@ def test_circulation_ratio_is_corridor_share_of_built_area():
     corridor_area = sum(c.width_m * c.depth_m for c in result.corridors)
     room_area = sum(r.width_m * r.depth_m for r in result.rooms)
     assert abs(circulation_ratio(result) - corridor_area / (corridor_area + room_area)) < 1e-9
+
+
+# --------------------------------------------------------------- adjacency
+
+
+def near(a, b, strength="mild"):
+    return Adjacency(room_a=a, room_b=b, relation="near", strength=strength)
+
+
+def apart(a, b, strength="mild"):
+    return Adjacency(room_a=a, room_b=b, relation="apart", strength=strength)
+
+
+PAIR_ROOMS = [
+    Room(name="Entry", room_type="entry", is_entry=True),
+    Room(name="Kitchen", room_type="kitchen"),
+    Room(name="Dining", room_type="dining_room"),
+    Room(name="Garage", room_type="garage_single"),
+]
+
+
+def packed(order):
+    project = make_project(24, 30, PAIR_ROOMS)
+    return pack_levels(project, envelope_for(project), order)
+
+
+def test_a_pairing_the_plan_honours_costs_less_than_one_it_ignores():
+    """The whole point: the same rooms, ordered two ways, and the scorer can
+    tell which arrangement did what was asked."""
+    together = packed(["Entry", "Kitchen", "Dining", "Garage"])
+    apart_plan = packed(["Entry", "Kitchen", "Garage", "Dining"])
+    pairs = [near("Kitchen", "Dining", "strong")]
+    assert adjacency_penalty(together, pairs) < adjacency_penalty(apart_plan, pairs)
+
+
+def test_no_pairings_is_no_penalty():
+    assert adjacency_penalty(packed(["Entry", "Kitchen", "Dining", "Garage"]), []) == 0.0
+
+
+def test_a_pairing_naming_a_room_that_was_never_placed_is_ignored():
+    """Claude names rooms from the program; a typo or a room the packer
+    dropped must not quietly score as a violation."""
+    result = packed(["Entry", "Kitchen", "Dining", "Garage"])
+    assert adjacency_penalty(result, [near("Kitchen", "Ballroom")]) == 0.0
+    assert adjacency_penalty(result, [near("Kitchen", "Kitchen")]) == 0.0
+
+
+def test_keeping_rooms_apart_is_satisfied_by_distance():
+    """`apart` stops pulling once the rooms are far enough apart, so the
+    scorer cannot wreck a plan chasing another metre of separation."""
+    result = packed(["Entry", "Kitchen", "Dining", "Garage"])
+    close = adjacency_penalty(packed(["Entry", "Kitchen", "Garage", "Dining"]), [apart("Kitchen", "Garage")])
+    far = adjacency_penalty(result, [apart("Entry", "Garage")])
+    assert far <= close
+
+
+def test_strong_pairings_outweigh_mild_ones():
+    ignored = packed(["Entry", "Kitchen", "Garage", "Dining"])
+    mild = adjacency_penalty(ignored, [near("Kitchen", "Dining", "mild")])
+    strong = adjacency_penalty(ignored, [near("Kitchen", "Dining", "strong")])
+    assert strong > mild
+
+
+def test_rooms_on_different_storeys_are_as_far_apart_as_the_plan_allows():
+    """Two rooms asked to be near each other on different floors are not
+    near each other, whatever their plan coordinates happen to say."""
+    rooms = [
+        Room(name="Entry", room_type="entry", is_entry=True, levels=[0]),
+        Room(name="Kitchen", room_type="kitchen", levels=[0]),
+        Room(name="Study", room_type="office", levels=[1]),
+        Room(name="Stair", room_type="stair", levels=[0, 1]),
+    ]
+    project = make_project(24, 30, rooms)
+    project.storeys = 2
+    multi = pack_levels(project, envelope_for(project), ["Entry", "Kitchen", "Stair", "Study"])
+    assert adjacency_penalty(multi, [near("Kitchen", "Study", "strong")]) > 0
+    # ...and the stair alone is enough separation for a pairing that wanted it.
+    assert adjacency_penalty(multi, [apart("Kitchen", "Study")]) == 0.0
+
+
+def test_adjacency_never_outweighs_a_room_you_cannot_reach():
+    """Access is the hard constraint. The worst possible adjacency score
+    must still cost less than a single unreachable room."""
+    result = packed(["Entry", "Kitchen", "Garage", "Dining"])
+    worst = [near("Kitchen", "Garage", "strong"), near("Entry", "Dining", "strong")]
+    plain, _, _ = score_layout(result)
+    with_pairs, _, _ = score_layout(result, worst)
+    assert with_pairs - plain < 100.0
+
+
+def test_clustering_keeps_every_room_exactly_once():
+    order = ["Entry", "Garage", "Kitchen", "Bedroom", "Dining"]
+    pairs = [near("Kitchen", "Dining", "strong"), near("Bedroom", "Entry")]
+    out = _cluster_by_adjacency(order, pairs)
+    assert sorted(out) == sorted(order)
+    assert len(out) == len(order)
+
+
+def test_clustering_puts_paired_rooms_side_by_side():
+    order = ["Entry", "Garage", "Kitchen", "Bedroom", "Dining"]
+    out = _cluster_by_adjacency(order, [near("Kitchen", "Dining", "strong")])
+    assert abs(out.index("Kitchen") - out.index("Dining")) == 1
+
+
+def test_the_planner_offers_an_arrangement_built_from_the_pairings():
+    """best_layout can only choose among the orderings it generates, so a
+    pairing must reach candidate generation, not just scoring."""
+    project = make_project(24, 30, PAIR_ROOMS)
+    plan = LayoutPlan(
+        grouping_label="Grouped by function",
+        category_labels=CategoryLabels(category_a="Private", category_b="Shared", category_c="Service"),
+        assignments=[RoomAssignment(room_name=r.name, category="category_b") for r in PAIR_ROOMS],
+        placement_order=["Entry", "Kitchen", "Garage", "Dining"],
+        adjacencies=[near("Kitchen", "Dining", "strong")],
+        rationale="Kitchen and dining belong together.",
+    )
+    best = best_layout(project, envelope_for(project), plan)
+    order = best.placement_order
+    assert abs(order.index("Kitchen") - order.index("Dining")) == 1
+
+
+def test_a_strong_pairing_actually_changes_which_layout_is_chosen():
+    """The weight has to be big enough to matter, not just present.
+
+    Scoring a pairing correctly is worthless if the term is too small to
+    ever outvote the tool's own preferences. At the first weight tried, the
+    arrangement that honoured a strong pairing lost to one that ignored it
+    by a couple of points of compactness -- correct arithmetic, no effect.
+    """
+    from src.sample_project import sample_layout_plan, sample_project
+
+    project = sample_project()
+    plan = sample_layout_plan()
+    envelope = envelope_for(project)
+
+    without = best_layout(project, envelope, plan).placement_order
+    paired = plan.model_copy(
+        update={"adjacencies": [near("Double Garage", "Kitchen", "strong")]}
+    )
+    with_pair = best_layout(project, envelope, paired).placement_order
+
+    assert with_pair != without
+    assert abs(with_pair.index("Double Garage") - with_pair.index("Kitchen")) == 1

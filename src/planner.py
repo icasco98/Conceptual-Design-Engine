@@ -39,7 +39,7 @@ from src.access import access_problems_for, zone_of
 from src.defaults import resolve_footprint
 from src.geometry import BuildableEnvelope
 from src.layout import LayoutResult, MultiLevelLayout, pack_levels, row_count
-from src.layout_plan import LayoutPlan
+from src.layout_plan import Adjacency, LayoutPlan
 from src.models import Project
 from src.stacking import stacking_report
 
@@ -55,6 +55,27 @@ CIRCULATION_TARGET_HIGH = 0.12
 # pack plus a corridor-thinning pass, so this is the knob to turn if the
 # recommendation ever feels slow.
 MAX_CANDIDATES = 12
+
+# What a room pairing is worth. Scored as a mean rather than a sum, so ten
+# mild wishes cannot add up to more than one emphatic one.
+#
+# The size is chosen against the other terms, not in isolation. A strong
+# pairing has to be able to overrule compactness and privacy -- those are
+# the tool's own preferences, and a pairing is something the owner actually
+# asked for -- while never approaching access. At this weight the worst
+# possible adjacency score is 80, so a plan can be dragged a long way out of
+# its neatest shape to honour a request, and still never far enough to buy a
+# room you cannot reach (100 each). Set it lower and the term is decorative:
+# at 16 it lost to a 7-point compactness gap on the sample project, which is
+# how this number was found.
+ADJACENCY_WEIGHT = 40.0
+STRENGTH_FACTOR = {"strong": 2.0, "mild": 1.0}
+
+# How far apart "apart" means, as a share of the plan's own reach. Beyond
+# this the pairing is satisfied and stops pulling; without a ceiling, a
+# scorer would happily wreck a plan to push two rooms one metre further
+# from each other.
+APART_TARGET = 0.5
 
 
 class ScoredLayout(NamedTuple):
@@ -134,6 +155,70 @@ def _privacy_penalty(result: LayoutResult) -> float:
     return max(0.0, sum(public) / len(public) - sum(private) / len(private))
 
 
+def _room_centres(multi: MultiLevelLayout) -> dict[str, tuple[float, float, int]]:
+    """Every placed room's centre, by base name, with the level it sits on.
+
+    Counted rooms ("Bedroom 1", "Bedroom 2") are placed under numbered
+    names but asked for under the base one, so a pairing that names
+    "Bedroom" should find them. The first placement wins: pairing a
+    three-bedroom cluster against the kitchen means the cluster, and any of
+    them stands for it well enough to score.
+    """
+    centres: dict[str, tuple[float, float, int]] = {}
+    for level_index, level in enumerate(multi.levels):
+        for room in level.rooms:
+            centre = (room.x_m + room.width_m / 2, room.y_m + room.depth_m / 2, level_index)
+            centres.setdefault(room.name, centre)
+            centres.setdefault(room.base_name, centre)
+    return centres
+
+
+def _plan_reach(multi: MultiLevelLayout) -> float:
+    """The plan's own diagonal, so a distance means the same on any plot."""
+    reach = 0.0
+    for level in multi.levels:
+        for room in level.rooms:
+            reach = max(reach, abs(room.x_m) + room.width_m, abs(room.y_m) + room.depth_m)
+    return reach or 1.0
+
+
+def adjacency_penalty(multi: MultiLevelLayout, adjacencies: list[Adjacency]) -> float:
+    """How badly this arrangement ignores the pairings that were asked for.
+
+    Zero when every pairing is honoured. Distance is measured between room
+    centres and scaled by the plan's own reach, so the number means the
+    same on a small plot as a large one.
+
+    Storeys count. Two rooms asked to be near each other on different
+    floors are as far apart as this plan can put them, whatever their plan
+    coordinates say; two asked to be apart are satisfied by the stair alone.
+    """
+    if not adjacencies:
+        return 0.0
+    centres = _room_centres(multi)
+    reach = _plan_reach(multi)
+
+    penalties: list[float] = []
+    for pair in adjacencies:
+        a = centres.get(pair.room_a)
+        b = centres.get(pair.room_b)
+        if a is None or b is None or pair.room_a == pair.room_b:
+            continue  # A room that was never placed cannot be scored.
+        factor = STRENGTH_FACTOR.get(pair.strength, 1.0)
+        if a[2] != b[2]:
+            penalties.append(factor if pair.relation == "near" else 0.0)
+            continue
+        distance = min(1.0, (abs(a[0] - b[0]) + abs(a[1] - b[1])) / reach)
+        if pair.relation == "near":
+            penalties.append(factor * distance)
+        else:
+            penalties.append(factor * max(0.0, APART_TARGET - distance) / APART_TARGET)
+
+    if not penalties:
+        return 0.0
+    return sum(penalties) / len(penalties)
+
+
 def _compactness_penalty(result: LayoutResult) -> float:
     built = _built_area(result)
     footprint = _footprint_area(result)
@@ -142,7 +227,10 @@ def _compactness_penalty(result: LayoutResult) -> float:
     return 0.0
 
 
-def score_layout(result: LayoutResult | MultiLevelLayout) -> tuple[float, int, float]:
+def score_layout(
+    result: LayoutResult | MultiLevelLayout,
+    adjacencies: list[Adjacency] | None = None,
+) -> tuple[float, int, float]:
     """Lower is better. Returns (score, access problem count, circulation
     ratio).
 
@@ -164,6 +252,9 @@ def score_layout(result: LayoutResult | MultiLevelLayout) -> tuple[float, int, f
     for level in multi.levels:
         score += 12.0 * _privacy_penalty(level)
         score += 8.0 * _compactness_penalty(level)
+
+    if adjacencies:
+        score += ADJACENCY_WEIGHT * adjacency_penalty(multi, adjacencies)
 
     if len(multi.levels) > 1:
         # An unstacked bathroom or a room hanging off the floor below costs
@@ -272,6 +363,15 @@ def _candidate_orders(project: Project, plan: LayoutPlan | None) -> list[list[st
     candidates.append(sorted(base, key=lambda n: (zone_key(n) != 0, -area_of(n))))
     candidates.append(sorted(base, key=lambda n: (zone_key(n) != 0, area_of(n))))
 
+    # Scoring a pairing is worth nothing if no candidate ever puts the pair
+    # together: the scorer can only choose between the arrangements it is
+    # shown. So build one that does, by walking the "near" pairings as a
+    # graph and laying each connected cluster down in one run.
+    if plan is not None and plan.adjacencies:
+        clustered = _cluster_by_adjacency(base, plan.adjacencies)
+        candidates.append(clustered)
+        candidates.append(sorted(clustered, key=lambda n: zone_key(n) != 0))
+
     unique: list[list[str]] = []
     seen = set()
     for order in candidates:
@@ -280,6 +380,47 @@ def _candidate_orders(project: Project, plan: LayoutPlan | None) -> list[list[st
             seen.add(key)
             unique.append(order)
     return unique[:MAX_CANDIDATES]
+
+
+def _cluster_by_adjacency(order: list[str], adjacencies: list[Adjacency]) -> list[str]:
+    """The same rooms, reordered so rooms asked to be near each other are
+    consecutive.
+
+    Union-find over the "near" pairings, strong ones first so that when a
+    room is wanted next to two different clusters the stronger claim wins.
+    Rooms nobody paired keep their original position relative to the
+    clusters, and the entry stays wherever the incoming order had it.
+    """
+    parent = {name: name for name in order}
+
+    def find(name: str) -> str:
+        while parent[name] != name:
+            parent[name] = parent[parent[name]]
+            name = parent[name]
+        return name
+
+    def union(a: str, b: str) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    near = [p for p in adjacencies if p.relation == "near"]
+    for pair in sorted(near, key=lambda p: 0 if p.strength == "strong" else 1):
+        if pair.room_a in parent and pair.room_b in parent and pair.room_a != pair.room_b:
+            union(pair.room_a, pair.room_b)
+
+    # Clusters come out in the order their first member appears, and members
+    # keep their original order inside a cluster: this reorders the plan as
+    # little as clustering allows.
+    clusters: dict[str, list[str]] = {}
+    for name in order:
+        clusters.setdefault(find(name), []).append(name)
+    out: list[str] = []
+    for name in order:
+        root = find(name)
+        if root in clusters:
+            out.extend(clusters.pop(root))
+    return out
 
 
 def best_layout(
@@ -297,13 +438,14 @@ def best_layout(
     orders = _candidate_orders(project, plan)
     if not orders:
         result = pack_levels(project, envelope, plan.placement_order if plan else None)
-        score, problems, ratio = score_layout(result)
+        score, problems, ratio = score_layout(result, plan.adjacencies if plan else [])
         return ScoredLayout(result, [], score, problems, ratio, "no rooms to arrange")
 
+    adjacencies = plan.adjacencies if plan else []
     best: ScoredLayout | None = None
     for order in orders:
         result, _keep = thin_corridors(project, envelope, order)
-        score, problems, ratio = score_layout(result)
+        score, problems, ratio = score_layout(result, adjacencies)
         if best is None or score < best.score:
             best = ScoredLayout(
                 result=result,
