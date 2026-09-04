@@ -58,6 +58,15 @@ what the owner actually describes). Tag each edge's adjacency as "street" \
 or "neighbor" — a corner lot can have two street-facing edges. Only fill \
 in an edge once the owner has actually described that side; leave the \
 `edges` list partial otherwise.
+- Site bearing: set `site.rotation_deg` to the compass bearing the FRONT \
+edge faces, clockwise from true north — front facing north is 0, east 90, \
+south 180, west 270. Fill it whenever the owner says which way the house, \
+the street or the front faces ("the street is on the south side" means \
+the front faces south, so 180). Leave it null if they never say; the \
+planner treats an unstated bearing as front-facing-north rather than \
+guessing. This is what lets "morning light in the kitchen" mean an actual \
+side of this particular plot, so it is worth one question if the owner \
+has stated a sun or daylight preference and no orientation.
 - Room sizing: only set explicit_width_m / explicit_depth_m when the owner \
 states an actual number for that room. Otherwise leave them null — a \
 typical default will be applied automatically. Match each room the owner \
