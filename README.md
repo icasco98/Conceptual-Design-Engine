@@ -42,36 +42,58 @@ with yours and never sent to Claude as context.
    Bedroom 2 is through the Garage". The packer's own guarantee is purely
    geometric, so this used to go unsaid.
 3. **Layout recommendation.** Once the site and at least one room are
-   described, plain Python packs several candidate arrangements and draws
-   the best one (`src/planner.py`) rather than accepting the first the
-   packer produces. Candidates are scored on rules written down in code,
-   not in a prompt: **access is a hard constraint** (a plan where the only
-   way to a bedroom is through the garage is not a cheaper plan, it's a
-   wrong one), circulation is scored against the 8–12% of floor area a
-   house normally spends on it, private rooms should sit deeper than public
-   ones, and a compact footprint beats a sprawling one.
+   described, plain Python arranges the rooms and draws the best result
+   (`src/planner.py`).
 
-   **Corridors are earned, not automatic.** Every gap starts with one, then
-   each is removed if access survives without it — so a corridor keeps its
-   floor area only where a room depends on it to be reachable. Conversely a
-   plan that packs into a single row, which used to get no circulation at
-   all, has one built for it. And because a corridor between two rows only
-   touches those two rows, a plan with several of them gets a spine down
-   one side linking them into one network — without it, a row of bedrooms
-   between two corridors cut off everything beyond.
+   **The brief is a graph, not a list.** Claude's job here
+   (`src/layout_plan.py`) is to say which rooms should share a wall, as
+   unordered pairs marked `must`, `should` or `avoid` (`src/adjacency.py`).
+   This replaced a flat `placement_order` list, which was the root problem
+   with everything downstream of it: a list gives every room exactly two
+   neighbours and cannot express "the ensuite opens off the primary
+   bedroom" about two rooms sitting four apart in it. The brief was being
+   flattened before any geometry ran, and the packer spent its effort
+   guessing back what the list had dropped. Adjacency is a graph — any room
+   may need to touch any other, and one rectangle can touch four at once.
 
-   Underneath, the packer (`src/layout.py`): rooms grouped into 3
-   categories Claude picks based on your stated priorities (e.g. privacy
-   level), the entry marked, corridors generated automatically between room
-   clusters, and a circulation graph showing how to get from the entry to
-   any room one hop at a time. Claude only decides the *grouping and
-   adjacency* (which rooms belong together, which should sit near each
-   other); the packer does the actual arithmetic, so it's always
-   geometrically valid — no overlaps, everything fits inside the buildable
-   envelope, every room reachable. The packer also traces the building's
-   own footprint — the outline around the actual rooms and corridors it
-   placed, not the buildable envelope — so the diagram distinguishes
-   "inside the building" from "buildable but unused site."
+   Claude still decides nothing geometric: no coordinates, no sizes, no
+   orientation. It states relationships; `src/place.py` does the
+   arithmetic.
+
+   **Placement honours the graph.** Must-edges are contracted into clusters
+   first, so a hard constraint cannot be split by a later decision. Clusters
+   are then assigned to the two sides of a circulation spine and ordered
+   along it to maximise the weight of satisfied relationships, and each
+   cluster is internally arranged the same way. Rooms sit in up to two ranks
+   per side — the second only where the room in front may be walked through,
+   so a study behind a living room is buildable and a study behind a bedroom
+   is never built. Two ranks is what lets a room touch four neighbours, and
+   therefore what makes a graph satisfiable at all.
+
+   **The result can be checked against the brief.** Because the input is a
+   graph, the engine can report exactly which pairs it delivered
+   (`AdjacencyGraph.satisfaction`) — and that is a fact about the
+   rectangles, not a guess. With an ordering there was nothing to compare a
+   result against, which is why every earlier scoring term was measuring the
+   wrong thing well.
+
+   **An impossible brief is rejected before any geometry runs.** A plan of
+   rectangular rooms is the rectangular dual of its adjacency graph, and a
+   rectangular dual only exists for a planar graph — so five rooms all
+   required to touch one another is a plausible request and an impossible
+   one, at any size, for any amount of effort. `feasibility_problems()`
+   catches it and names the rooms to drop.
+
+   Candidates are scored on rules written down in code, not in a prompt, in
+   a deliberate order: **access is a hard constraint** (a plan where the
+   only way to a bedroom is through the garage is not a cheaper plan, it's a
+   wrong one), then required adjacency, then stated separations, then
+   circulation against the 5–12% of floor area a house normally spends on
+   it, then preferences, privacy depth and compactness as tie-breakers.
+   Candidates are structures — which axis the spine runs along, which zone
+   claims the street end — not room orderings, so the choice can be named in
+   the rationale.
+
 4. **Interactive canvas — the diagram itself.** The recommendation above
    is shown as a single interactive canvas (`src/interactive_canvas.py`):
    title, color legend, rationale, and a live room schedule in a panel to
@@ -306,8 +328,10 @@ pytest
 | `src/validation.py` | Deterministic constraint checks against the envelope. |
 | `src/extraction.py` | Conversation → structured `Project` (Claude, structured output). |
 | `src/claude_client.py` | Anthropic client + plain-language explanation of issues. |
-| `src/layout_plan.py` | Claude picks room categories + adjacency order (structured output). |
-| `src/layout.py` | Deterministic rectangle packing, footprint compaction, building footprint outline, and circulation graph — no LLM math, unit-tested. |
+| `src/layout_plan.py` | Claude picks room categories + the adjacency graph (structured output). |
+| `src/adjacency.py` | The must/should/avoid contract: clustering, feasibility, satisfaction. |
+| `src/place.py` | Turns the adjacency graph into rectangles. |
+| `src/layout.py` | Shared layout primitives: the shape of a finished layout, room expansion, and the touching/circulation graph. |
 | `src/interactive_canvas.py` | Renders the interactive zoning diagram (title, legend, live door arrows, a 0.25m snap grid, selection-gated draggable/resizable/rotatable/deletable rooms and hallways with multi-select group rotate/delete, a live-synced editable room schedule in a column left of the drawing, display-shape morphing around rotated neighbours, a true polygon-union footprint outline, gap-closing snap, true rotated-shape collision, live footprint outline, setback-constrained collision resolution with shrink-toward-minimum) as self-contained HTML/CSS/JS, unit-tested. |
 | `src/palette.py` | The 3 validated diagram colors (see dataviz notes in the module docstring). |
 | `tests/` | Unit tests for geometry/defaults/validation/layout/interactive canvas. |

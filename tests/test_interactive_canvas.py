@@ -6,7 +6,7 @@ from src.interactive_canvas import (
     canvas_size_px,
     render_canvas_html,
 )
-from src.layout import pack_rooms
+from src.place import place_rooms
 from src.layout_plan import CategoryLabels, LayoutPlan
 from src.models import Project, Room, Setbacks, Site, SiteEdge
 
@@ -35,7 +35,7 @@ def make_layout_plan(rooms) -> LayoutPlan:
 def _render(rooms, assignments=None):
     project = make_project(rooms=rooms)
     envelope = compute_buildable_envelope(project.site, project.setbacks)
-    result = pack_rooms(project, envelope)
+    result = place_rooms(project, envelope)
     layout_plan = make_layout_plan(rooms)
     return render_canvas_html(project, envelope, result, assignments or {}, layout_plan), result
 
@@ -76,7 +76,7 @@ def test_corridors_render_when_present_none_when_not():
     ]
     project = make_project(width=6.0, depth=40.0, rooms=multi_row)
     envelope = compute_buildable_envelope(project.site, project.setbacks)
-    result = pack_rooms(project, envelope)
+    result = place_rooms(project, envelope)
     html = render_canvas_html(project, envelope, result, {}, make_layout_plan(multi_row))
     assert result.corridors
     assert html.count('class="corridor draggable"') == len(result.corridors)
@@ -91,7 +91,7 @@ def test_corridors_are_draggable_like_rooms_not_fixed():
     ]
     project = make_project(width=6.0, depth=40.0, rooms=rooms)
     envelope = compute_buildable_envelope(project.site, project.setbacks)
-    result = pack_rooms(project, envelope)
+    result = place_rooms(project, envelope)
     html = render_canvas_html(project, envelope, result, {}, make_layout_plan(rooms))
     assert result.corridors
 

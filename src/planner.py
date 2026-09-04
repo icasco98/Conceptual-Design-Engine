@@ -1,64 +1,99 @@
-"""Choosing a layout, rather than accepting the first one the packer makes.
+"""Choosing a layout, and saying how well it answered the brief.
 
-`src.layout` packs rectangles. It is good at geometry and has no opinion
-about architecture: rooms go left-to-right in the order given, wrapping when
-the next one doesn't fit, and until now a corridor was dropped into every
-gap between rows whether or not anything needed it. Four rows bought you
-three hallways; the count was decided by width arithmetic, never by need.
+`src.place` arranges rooms against the adjacency graph. This module decides
+which arrangement to show and scores it against rules written down here,
+where they can be read, tested and argued with -- not in a prompt, and not
+buried in the geometry.
 
-This module puts the judgement somewhere it can be checked. It packs many
-candidate arrangements, thins the corridors out of each one, scores them all
-against rules written down in `score_layout`, and returns the best. Claude
-still decides which rooms belong together (`src.layout_plan`); nothing here
-asks it anything. The architectural knowledge lives in a scoring function
-that can be read, tested and argued with -- not in a prompt, and not buried
-in the packer's arithmetic.
-
-Two rules do most of the work:
+The scoring order is the architecture, and it is deliberate:
 
   ACCESS is a hard constraint. A plan where the only way to a bedroom is
   through the garage is not a cheaper plan, it is a wrong one, and no amount
-  of compactness buys it back (see `src.access`).
+  of compactness or satisfied preference buys it back (see `src.access`).
 
-  CIRCULATION is a cost, not something to eliminate. Minimizing hallway on
-  its own drives straight back to rooms entered through other rooms -- the
-  very fault access forbids. So corridors are thinned only as far as access
-  survives, and the score prefers plans landing in the band a house normally
-  spends on circulation rather than the smallest number.
+  REQUIRED ADJACENCY is next. A brief that says the ensuite opens off the
+  primary bedroom has not been answered by a plan that puts them on opposite
+  sides of the house, however tidy the rectangles are. This is the term the
+  old pipeline could not have: with a room ordering as its only input there
+  was nothing to check a result against, so "did it do what was asked" was
+  unanswerable and every other score was measuring the wrong thing well.
+
+  SEPARATION comes with it -- an `avoid` pair sharing a wall is a stated
+  objection ignored, weighted below a missing `must` but above any
+  preference.
+
+  CIRCULATION is a cost, not something to eliminate. Driving hallway to zero
+  leads straight back to rooms entered through other rooms, the very fault
+  access forbids, so it is scored against the band a house normally spends
+  rather than minimised.
+
+  PREFERENCE, PRIVACY DEPTH and COMPACTNESS are tie-breakers, in that order.
+  They decide between plans that already answer the brief; they never
+  outrank it.
+
+Candidates are structures -- which axis the spine runs along, which zone
+claims the street end -- not room orderings. A structure is a decision that
+can be named in the rationale; an ordering never was.
 """
 
 from __future__ import annotations
 
-from typing import List, NamedTuple, Optional, Sequence, Tuple
+from typing import Dict, List, NamedTuple, Optional, Tuple
 
 from src.access import access_problems_for, zone_of
-from src.defaults import resolve_footprint
+from src.adjacency import AdjacencyGraph, AdjacencySatisfaction, touching_pairs
 from src.geometry import BuildableEnvelope
-from src.layout import LayoutResult, pack_rooms, row_count
+from src.layout import LayoutResult
 from src.layout_plan import LayoutPlan
 from src.models import Project
+from src.place import (
+    Structure,
+    build_cells,
+    candidate_structures,
+    instances_by_base,
+    place_rooms,
+    respects_minimums,
+)
 
 # Share of built area a house normally spends on circulation. Below the
 # floor, rooms are usually being entered through other rooms; above the
-# ceiling, plan is being wasted on corridor. Scored as a band rather than
-# minimized, because "no hallway at all" is the failure mode this whole
-# module exists to prevent.
-CIRCULATION_TARGET_LOW = 0.08
+# ceiling, plan is being wasted on corridor.
+CIRCULATION_TARGET_LOW = 0.05
 CIRCULATION_TARGET_HIGH = 0.12
 
-# How many candidate orderings to pack and score. Every candidate is a full
-# pack plus a corridor-thinning pass, so this is the knob to turn if the
-# recommendation ever feels slow.
-MAX_CANDIDATES = 12
+# Weights. All in one place, all blunt on purpose. The ordering between them
+# matters far more than the exact values, and the ordering is the one set out
+# in the module docstring.
+W_ACCESS = 100.0
+W_UNMET_MUST = 25.0
+W_BROKEN_AVOID = 10.0
+W_CIRCULATION = 30.0
+W_UNMET_SHOULD = 3.0
+W_PRIVACY = 12.0
+W_SPRAWL = 8.0
 
 
 class ScoredLayout(NamedTuple):
     result: LayoutResult
-    placement_order: List[str]
     score: float
     access_problems: int
     circulation_ratio: float
+    adjacency: AdjacencySatisfaction
+    structure: Optional[Structure]
     notes: str
+
+
+def build_graph(project: Project, plan: Optional[LayoutPlan] = None) -> AdjacencyGraph:
+    """The adjacency graph for a project, as stated by Claude.
+
+    Room instances, not program names: a rule about "Bedroom" reaches
+    "Bedroom 1" and "Bedroom 2" through `instances_by_base`. An absent or
+    empty plan gives an empty graph, which is a legitimate brief -- it just
+    leaves the engine free to optimise for everything else.
+    """
+    names = [cell.name for cell in build_cells(project)]
+    rules = plan.adjacency if plan is not None else []
+    return AdjacencyGraph.from_rules(names, rules, instances_by_base(project))
 
 
 def _built_area(result: LayoutResult) -> float:
@@ -68,8 +103,7 @@ def _built_area(result: LayoutResult) -> float:
 
 
 def circulation_ratio(result: LayoutResult) -> float:
-    """Corridor area as a share of everything built. The number to judge
-    'is there too much hallway here' by."""
+    """Corridor area as a share of everything built."""
     total = _built_area(result)
     if total <= 0:
         return 0.0
@@ -91,13 +125,22 @@ def _footprint_area(result: LayoutResult) -> float:
     return abs(total) / 2
 
 
-def _privacy_penalty(result: LayoutResult) -> float:
-    """Private rooms should sit deeper into the plan than public ones.
+def room_rects(result: LayoutResult) -> Dict[str, Tuple[float, float, float, float]]:
+    return {
+        room.name: (room.x_m, room.y_m, room.x_m + room.width_m, room.y_m + room.depth_m)
+        for room in result.rooms
+    }
 
-    Measured as distance from the entry: a bedroom nearer the front door
-    than the living room is the wrong way round. Scaled by the plan's own
-    size so it means the same on any plot.
-    """
+
+def adjacency_satisfaction(result: LayoutResult, graph: AdjacencyGraph) -> AdjacencySatisfaction:
+    """Which of the brief's stated adjacencies the layout actually built."""
+    return graph.satisfaction(touching_pairs(room_rects(result)))
+
+
+def _privacy_penalty(result: LayoutResult) -> float:
+    """Private rooms should sit deeper into the plan than public ones,
+    measured from the entry. Scaled by the plan's own size so it means the
+    same on any plot."""
     entry = next((r for r in result.rooms if r.is_entry), None)
     if entry is None or not result.rooms:
         return 0.0
@@ -121,148 +164,37 @@ def _privacy_penalty(result: LayoutResult) -> float:
 
     if not public or not private:
         return 0.0
-    # Zero when the private rooms sit deeper than the public ones on
-    # average; grows as that ordering inverts.
     return max(0.0, sum(public) / len(public) - sum(private) / len(private))
 
 
-def score_layout(result: LayoutResult) -> Tuple[float, int, float]:
-    """Lower is better. Returns (score, access problem count, circulation
-    ratio).
-
-    The weights are deliberately in one place and deliberately blunt. Access
-    dominates everything: no arrangement of rectangles is worth a plan you
-    cannot walk through.
-    """
+def score_layout(
+    result: LayoutResult, graph: Optional[AdjacencyGraph] = None
+) -> Tuple[float, int, float, AdjacencySatisfaction]:
+    """Lower is better. Returns (score, access problems, circulation ratio,
+    adjacency satisfaction)."""
+    graph = graph or AdjacencyGraph([room.name for room in result.rooms])
+    satisfaction = adjacency_satisfaction(result, graph)
     problems = len(access_problems_for(result))
     ratio = circulation_ratio(result)
 
-    score = 100.0 * problems
+    score = W_ACCESS * problems
+    score += W_UNMET_MUST * (satisfaction.must_total - satisfaction.must_met)
+    score += W_BROKEN_AVOID * satisfaction.avoid_violated
 
     if ratio < CIRCULATION_TARGET_LOW:
-        score += 30.0 * (CIRCULATION_TARGET_LOW - ratio)
+        score += W_CIRCULATION * (CIRCULATION_TARGET_LOW - ratio)
     elif ratio > CIRCULATION_TARGET_HIGH:
-        score += 30.0 * (ratio - CIRCULATION_TARGET_HIGH)
+        score += W_CIRCULATION * (ratio - CIRCULATION_TARGET_HIGH)
 
-    score += 12.0 * _privacy_penalty(result)
+    score += W_UNMET_SHOULD * (satisfaction.should_total - satisfaction.should_met)
+    score += W_PRIVACY * _privacy_penalty(result)
 
     built = _built_area(result)
     footprint = _footprint_area(result)
     if built > 0 and footprint > built:
-        score += 8.0 * ((footprint - built) / built)
+        score += W_SPRAWL * ((footprint - built) / built)
 
-    return score, problems, ratio
-
-
-def thin_corridors(
-    project: Project,
-    envelope: BuildableEnvelope,
-    order: Sequence[str],
-) -> Tuple[LayoutResult, List[bool]]:
-    """Drop every corridor the plan doesn't actually need.
-
-    Starts from one corridor in every gap -- the most circulation, and the
-    best access -- then tries removing them one at a time, keeping a removal
-    only when the access check still comes back clean. What's left is the
-    least hallway that still serves every room, which is the honest reading
-    of "minimize circulation": corridors earn their floor area by being
-    load-bearing for access, not by being cheap.
-
-    Removals are tried widest-gap-first so that when two corridors are
-    interchangeable the more expensive one goes.
-    """
-    # One slot per row: the gap below it. The last slot sits past the final
-    # row, which is what lets a single-row plan have a corridor at all.
-    gaps = row_count(project, envelope, list(order))
-    if gaps <= 0:
-        return pack_rooms(project, envelope, list(order)), []
-
-    keep = [True] * gaps
-    best = pack_rooms(project, envelope, list(order), keep)
-    baseline_problems = len(access_problems_for(best))
-
-    for index in range(gaps):
-        trial = list(keep)
-        trial[index] = False
-        candidate = pack_rooms(project, envelope, list(order), trial)
-        if len(access_problems_for(candidate)) <= baseline_problems:
-            keep = trial
-            best = candidate
-
-    return best, keep
-
-
-def _candidate_orders(project: Project, plan: Optional[LayoutPlan]) -> List[List[str]]:
-    """Orderings worth packing.
-
-    The plan's own ordering is always first, so Claude's grouping is the
-    starting point rather than something this module overrides. The rest are
-    systematic variations on it -- there is no search over every permutation,
-    which for a dozen rooms would be millions of packs for a diagram nobody
-    is waiting on.
-    """
-    names = [room.name for room in project.rooms]
-    if not names:
-        return []
-
-    def dedupe(order: Sequence[str]) -> List[str]:
-        seen, out = set(), []
-        for name in order:
-            if name in names and name not in seen:
-                seen.add(name)
-                out.append(name)
-        for name in names:
-            if name not in seen:
-                out.append(name)
-        return out
-
-    candidates: List[List[str]] = []
-    if plan is not None and plan.placement_order:
-        candidates.append(dedupe(plan.placement_order))
-    candidates.append(dedupe(names))
-
-    by_name = {room.name: room for room in project.rooms}
-
-    def zone_key(name: str) -> int:
-        room = by_name.get(name)
-        if room is None:
-            return 3
-        if room.is_entry:
-            return 0
-        return {"public": 1, "private": 2, "service": 3}.get(zone_of(room.room_type), 3)
-
-    base = candidates[0]
-    # Entry, then public, then private, then service: the plain
-    # public-to-private gradient, which is the arrangement most houses take.
-    candidates.append(sorted(base, key=zone_key))
-    # Same gradient, but service rooms brought to the front so they sit on
-    # the street edge where a garage wants to be.
-    candidates.append(sorted(base, key=lambda n: (0 if zone_key(n) == 0 else (1 if zone_key(n) == 3 else zone_key(n) + 1))))
-    # Largest rooms first, then largest last: row wrapping is driven by
-    # width, so size order changes which rooms end up sharing a row -- and
-    # therefore what touches what.
-    def area_of(name: str) -> float:
-        room = by_name.get(name)
-        if room is None:
-            return 0.0
-        # Resolved footprint, not the owner's explicit numbers: most rooms
-        # never get an explicit size, so keying on those alone made every
-        # room the same notional area and collapsed these two candidates
-        # back onto the base ordering.
-        footprint = resolve_footprint(room.room_type, room.explicit_width_m, room.explicit_depth_m)
-        return footprint.width_m * footprint.depth_m
-
-    candidates.append(sorted(base, key=lambda n: (zone_key(n) != 0, -area_of(n))))
-    candidates.append(sorted(base, key=lambda n: (zone_key(n) != 0, area_of(n))))
-
-    unique: List[List[str]] = []
-    seen = set()
-    for order in candidates:
-        key = tuple(order)
-        if key not in seen:
-            seen.add(key)
-            unique.append(order)
-    return unique[:MAX_CANDIDATES]
+    return score, problems, ratio, satisfaction
 
 
 def best_layout(
@@ -270,41 +202,59 @@ def best_layout(
     envelope: BuildableEnvelope,
     plan: Optional[LayoutPlan] = None,
 ) -> ScoredLayout:
-    """Pack several candidate arrangements, thin each one's corridors, score
-    them all, and return the best.
+    """Lay the program out every way `src.place` offers and keep the best.
 
-    Deterministic: same project and plan in, same layout out. Ties break
-    toward the earlier candidate, so the plan's own ordering wins whenever
-    nothing scores better than it.
+    Deterministic: same project and plan in, same layout out. Structures
+    whose rooms had to be shrunk below their own minimums to fit are dropped
+    before scoring -- the score has no term for an undersized room, so they
+    would otherwise compete as though they were buildable -- and only used
+    if nothing fits at all, a case `src.validation` has already reported.
     """
-    orders = _candidate_orders(project, plan)
-    if not orders:
-        result = pack_rooms(project, envelope, plan.placement_order if plan else None)
-        score, problems, ratio = score_layout(result)
-        return ScoredLayout(result, [], score, problems, ratio, "no rooms to arrange")
+    graph = build_graph(project, plan)
+
+    laid: List[Tuple[Structure, LayoutResult]] = []
+    for structure in candidate_structures():
+        result = place_rooms(project, envelope, graph, structure)
+        if result.rooms:
+            laid.append((structure, result))
+
+    if not laid:
+        empty = place_rooms(project, envelope, graph)
+        score, problems, ratio, satisfaction = score_layout(empty, graph)
+        return ScoredLayout(empty, score, problems, ratio, satisfaction, None, "no rooms to arrange")
+
+    buildable = [pair for pair in laid if respects_minimums(pair[1])] or laid
 
     best: Optional[ScoredLayout] = None
-    for order in orders:
-        result, _keep = thin_corridors(project, envelope, order)
-        score, problems, ratio = score_layout(result)
+    for structure, result in buildable:
+        score, problems, ratio, satisfaction = score_layout(result, graph)
         if best is None or score < best.score:
             best = ScoredLayout(
                 result=result,
-                placement_order=list(order),
                 score=score,
                 access_problems=problems,
                 circulation_ratio=ratio,
-                notes=_notes_for(problems, ratio, len(orders)),
+                adjacency=satisfaction,
+                structure=structure,
+                notes=_notes_for(problems, ratio, satisfaction, len(buildable), structure),
             )
     assert best is not None
     return best
 
 
-def _notes_for(problems: int, ratio: float, candidates: int) -> str:
-    parts = [f"best of {candidates} arrangements"]
+def _notes_for(
+    problems: int,
+    ratio: float,
+    satisfaction: AdjacencySatisfaction,
+    candidates: int,
+    structure: Structure,
+) -> str:
+    parts = [f"best of {candidates} arrangements", structure.label]
     if problems:
         parts.append(f"{problems} room{'s' if problems != 1 else ''} still awkward to reach")
     else:
         parts.append("every room reachable without passing through another")
+    if satisfaction.must_total or satisfaction.should_total:
+        parts.append(satisfaction.summary())
     parts.append(f"circulation {ratio * 100:.0f}% of built area")
     return "; ".join(parts)

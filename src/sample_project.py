@@ -10,7 +10,7 @@ typing anything.
 Everything here is a plain literal. In particular `SAMPLE_LAYOUT_PLAN`
 stands in for `src.layout_plan.plan_layout`'s output *without* calling
 Claude, so the sample renders with no API round trip on first paint, and
-`src.layout.pack_rooms` computes its geometry the same way it does for a
+`src.place.place_rooms` computes its geometry the same way it does for a
 real project. Nothing about the sample is special-cased downstream.
 
 The sample is replaced wholesale by the owner's own project the moment
@@ -21,6 +21,7 @@ alone, which starts empty).
 
 from __future__ import annotations
 
+from src.adjacency import AdjacencyRule
 from src.layout_plan import CategoryLabels, LayoutPlan, RoomAssignment
 from src.models import Project, Room, Setbacks, Site, SiteEdge
 
@@ -30,16 +31,6 @@ from src.models import Project, Room, Setbacks, Site, SiteEdge
 SAMPLE_SITE_WIDTH_M = 20.0
 SAMPLE_SITE_DEPTH_M = 28.0
 
-_SAMPLE_ROOM_ORDER = [
-    "Front Entry",
-    "Great Room",
-    "Kitchen",
-    "Office",
-    "Primary Bedroom",
-    "Bedroom",
-    "Bathroom",
-    "Double Garage",
-]
 
 
 def sample_project() -> Project:
@@ -98,11 +89,24 @@ def sample_layout_plan() -> LayoutPlan:
             RoomAssignment(room_name=name, category=category)
             for name, category in categories.items()
         ],
-        placement_order=list(_SAMPLE_ROOM_ORDER),
+        adjacency=[
+            AdjacencyRule(room_a="Bathroom", room_b="Bedroom", strength="must",
+                          reason="each bedroom needs its own bathroom next door"),
+            AdjacencyRule(room_a="Great Room", room_b="Kitchen", strength="must",
+                          reason="open plan — the kitchen opens onto the great room"),
+            AdjacencyRule(room_a="Front Entry", room_b="Great Room", strength="should",
+                          reason="guests arrive into the shared space"),
+            AdjacencyRule(room_a="Office", room_b="Great Room", strength="should",
+                          reason="the study is worked in during the day, not slept beside"),
+            AdjacencyRule(room_a="Double Garage", room_b="Primary Bedroom", strength="avoid",
+                          reason="no bedroom wall against the garage"),
+            AdjacencyRule(room_a="Double Garage", room_b="Bedroom", strength="avoid",
+                          reason="no bedroom wall against the garage"),
+        ],
         rationale=(
-            "Shared rooms sit along the street edge with the kitchen next to the "
-            "entry, and the bedrooms are grouped together at the back, away from "
-            "the front door. This is a sample — describe your own project in the "
-            "chat and it will be replaced."
+            "Shared rooms sit along the street edge with the kitchen opening onto "
+            "the great room, and the bedrooms are grouped at the back with their "
+            "bathrooms, away from the front door and the garage. This is a sample "
+            "— describe your own project in the chat and it will be replaced."
         ),
     )
