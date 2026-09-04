@@ -256,6 +256,106 @@ def test_rooms_keep_their_own_minimum_size(structure):
     assert respects_minimums(result)
 
 
+# A ten-room program. Every sizing bug this engine has had needed roughly
+# this many rooms to show up -- the seven-room HOUSE above sailed through all
+# of them -- so this fixture is the one that has to stay honest.
+BIG_HOUSE = [
+    Room(name="Entry", room_type="entry", is_entry=True),
+    Room(name="Living Room", room_type="living_room"),
+    Room(name="Kitchen", room_type="kitchen"),
+    Room(name="Dining Room", room_type="dining_room"),
+    Room(name="Primary Bedroom", room_type="bedroom_primary"),
+    Room(name="Ensuite", room_type="bathroom"),
+    Room(name="Bedroom", room_type="bedroom", count=2),
+    Room(name="Bathroom", room_type="bathroom"),
+    Room(name="Garage", room_type="garage_double"),
+]
+
+BIG_RULES = [
+    AdjacencyRule(room_a="Primary Bedroom", room_b="Ensuite", strength="must"),
+    AdjacencyRule(room_a="Kitchen", room_b="Dining Room", strength="must"),
+    AdjacencyRule(room_a="Dining Room", room_b="Living Room", strength="must"),
+    AdjacencyRule(room_a="Entry", room_b="Living Room", strength="should"),
+    AdjacencyRule(room_a="Bedroom", room_b="Bathroom", strength="should"),
+    AdjacencyRule(room_a="Garage", room_b="Primary Bedroom", strength="avoid"),
+    AdjacencyRule(room_a="Garage", room_b="Bedroom", strength="avoid"),
+]
+
+
+def test_a_ten_room_program_still_gets_buildable_rooms():
+    """Regression. Distributing a cluster's depth by area share alone --
+    ignoring each room's own minimum -- squeezed a 1.75m ensuite into
+    1.16m, and solving width from depth and depth from width in turn
+    diverged until the plan walked off the site."""
+    project = make_project(20, 28, BIG_HOUSE)
+    envelope = envelope_for(project)
+    graph = graph_for(project, BIG_RULES)
+
+    ok = [s for s in ALL_STRUCTURES if respects_minimums(place_rooms(project, envelope, graph, s))]
+    assert ok, "no structure produced buildable rooms"
+    assert respects_minimums(best_layout(project, envelope, _plan_with(BIG_RULES)).result)
+
+
+def test_rooms_come_out_near_their_natural_proportions():
+    """Regression. Sizing a band from the site's leftover area rather than
+    from the rooms in it asked for 7-metre bands, at which point every
+    room's minimum depth took over from its area and the plan inflated into
+    a bar with a 7 x 1.5 metre bathroom in it."""
+    project = make_project(20, 28, BIG_HOUSE)
+    result = place_rooms(project, envelope_for(project), graph_for(project, BIG_RULES))
+    for room in result.rooms:
+        long_side = max(room.width_m, room.depth_m)
+        short_side = min(room.width_m, room.depth_m)
+        assert long_side / short_side < 5.0, f"{room.name} is a corridor, not a room"
+
+
+def test_neither_band_is_starved():
+    """Regression. Rewarding every `avoid` pair placed across the spine
+    bought three separations at once by exiling the garage to a band of its
+    own, leaving eight rooms in a single file down the other side."""
+    project = make_project(20, 28, BIG_HOUSE)
+    envelope = envelope_for(project)
+    result = best_layout(project, envelope, _plan_with(BIG_RULES)).result
+
+    corridor = result.corridors[0]
+    left = [r for r in result.rooms if r.x_m + r.width_m <= corridor.x_m + 1e-6]
+    right = [r for r in result.rooms if r.x_m >= corridor.x_m + corridor.width_m - 1e-6]
+    assert len(left) >= 2 and len(right) >= 2, "one side was left holding almost everything"
+
+    left_area = sum(r.width_m * r.depth_m for r in left)
+    right_area = sum(r.width_m * r.depth_m for r in right)
+    assert min(left_area, right_area) / max(left_area, right_area) > 0.4
+
+
+def test_the_building_does_not_stretch_to_fill_the_lot():
+    """A program smaller than its site gets a building smaller than its
+    site, rather than one padded out to the setback lines."""
+    project = make_project(20, 28, BIG_HOUSE)
+    envelope = envelope_for(project)
+    result = best_layout(project, envelope, _plan_with(BIG_RULES)).result
+
+    width = max(r.x_m + r.width_m for r in result.rooms) - min(r.x_m for r in result.rooms)
+    depth = max(r.y_m + r.depth_m for r in result.rooms) - min(r.y_m for r in result.rooms)
+    assert width < envelope.width_m
+    assert depth < envelope.depth_m
+
+
+def test_a_stack_never_takes_a_room_under_its_minimum_depth():
+    """The unit behind the ensuite bug: a band's rooms are sized by area at
+    the band's width, floored at their own minimum, and only the slack left
+    over is shared out."""
+    from src.place import _stack
+
+    project = make_project(20, 28, BIG_HOUSE)
+    cells = build_cells(project)
+    rank = [c for c in cells if c.name in ("Ensuite", "Living Room", "Kitchen")]
+    placed = _stack(rank, x=0.0, y=0.0, width=4.0, depth=30.0)
+
+    for cell, _x, _y, _w, depth in placed:
+        assert depth >= cell.min_depth_m - 1e-6, cell.name
+    assert sum(d for *_rest, d in placed) == pytest.approx(30.0), "the slack is shared, not lost"
+
+
 def test_transposed_minimums_rotate_with_the_rectangle():
     """A cross spine turns every room a quarter turn; the minimums describe
     the rectangle as drawn, because the canvas resizes against them."""

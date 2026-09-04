@@ -42,12 +42,22 @@ layout, not a guess.
 
 Sizing
 ------
-The building takes the envelope's proportions at the area the program needs,
-solving W/D = envelope W/D against W*D = room area + spine, so it neither
-stretches into a bar nor fills a lot the brief doesn't want. Rooms are never
-taken below the minimum `src.defaults` gives their type except by the final
-scale-to-fit, which only engages for a program that genuinely does not fit
-between the setbacks -- a case `src.validation` has already reported.
+Every room spans its band, so the band's width IS each room's width and its
+depth follows from the room's own area. That makes the band width the one
+number worth solving carefully: it is set from the rooms the band holds --
+the area-weighted mean of their square roots, the width at which they come
+out closest to square -- and the building's depth then falls out of it.
+
+Deriving that width from the site instead (total area over building depth,
+the usual slicing-floorplan move) reads well and behaves badly: on a ten-room
+program it asked for seven-metre bands, at which point every room's area was
+satisfied long before its minimum depth was, the minimums took over from the
+areas, and the plan inflated into a bar with a 7 x 1.5 metre bathroom in it.
+
+Rooms are never taken below the minimum `src.defaults` gives their type
+except by the final scale-to-fit, which only engages for a program that
+genuinely does not fit between the setbacks -- a case `src.validation` has
+already reported.
 """
 
 from __future__ import annotations
@@ -77,10 +87,24 @@ SPINE_MIN_ROOMS = 3
 # A band narrower than this is a slot, not a room.
 MIN_BAND_WIDTH_M = 1.5
 
-# Above this many items an exhaustive search stops being worth the wait, and
-# a greedy pass seeded by the same objective takes over. Chosen so a normal
-# house program (a dozen rooms, five or six clusters) is searched exactly.
+# Above this many rooms in one cluster an exhaustive search over their
+# orderings stops being worth the wait (6! = 720 arrangements, each scored),
+# and a greedy pass seeded by the same objective takes over.
 EXHAUSTIVE_LIMIT = 6
+
+# Above this many clusters the side assignment goes greedy. Far higher than
+# EXHAUSTIVE_LIMIT because the search is over subsets rather than orderings
+# -- 2^9 = 512 assignments, not 9! -- and because a greedy split is much
+# worse here than a greedy ordering: it lands rooms on one side and pads the
+# other, which is how a garage ends up stretched to 18 metres.
+SIDE_SEARCH_LIMIT = 10
+
+# How far a short side may be stretched to meet the building's depth. Some
+# stretch keeps the footprint rectangular and costs a room nothing it
+# minds -- rooms end up a little larger than typical. Past this the plan is
+# lying about its own balance, and it is better to leave the side short and
+# let the sprawl term in src.planner score the gap honestly.
+MAX_STRETCH = 1.25
 
 
 class Structure(NamedTuple):
@@ -323,15 +347,14 @@ def assign_clusters(
         for side in (left, right):
             for i in range(len(side) - 1):
                 score += graph.weight_between(side[i].names, side[i + 1].names)
-        # Facing clusters do not touch, so an `avoid` pair put on opposite
-        # sides is satisfied -- worth counting, or the search has no reason
-        # to separate them.
-        for cluster_a in left:
-            for cluster_b in right:
-                for name_a in cluster_a.names:
-                    for name_b in cluster_b.names:
-                        if graph.strength(name_a, name_b) == "avoid":
-                            score += -graph.weight(name_a, name_b)
+        # No reward for putting an `avoid` pair on opposite sides. It looks
+        # right -- facing clusters do not touch -- but it double-counts:
+        # most pairs do not touch anyway, and paying full `avoid` weight for
+        # each one bought three separations at once by exiling the garage to
+        # a band of its own, against a balance penalty an eighth the size.
+        # Not-touching is already the default; what needs weighing is a pair
+        # that WOULD touch, and `weight_between` above does that for the
+        # consecutive clusters where it can actually happen.
         return score
 
     def balance_penalty(left: List[_Cluster], right: List[_Cluster]) -> float:
@@ -341,13 +364,14 @@ def assign_clusters(
         if total <= 0:
             return 0.0
         # A wildly lopsided plan is a bad plan whatever the graph says: one
-        # band ends up a corridor-width strip. Mild, so it only breaks ties
-        # between arrangements the graph rates similarly.
-        return 3.0 * abs(left_area - right_area) / total
+        # band ends up a strip, and the other runs the length of the site.
+        # Weighted to outrank a couple of satisfied preferences, because it
+        # ruins the plan in a way no preference makes up for.
+        return 8.0 * abs(left_area - right_area) / total
 
     best: Optional[Tuple[float, List[_Cluster], List[_Cluster]]] = None
 
-    if len(ordered) <= EXHAUSTIVE_LIMIT:
+    if len(ordered) <= SIDE_SEARCH_LIMIT:
         # The entry's cluster anchors the left side, which removes the
         # mirror-image duplicate of every assignment.
         for mask in range(1 << (len(ordered) - 1)):
@@ -375,14 +399,6 @@ def assign_clusters(
 # --- geometry -------------------------------------------------------------
 
 
-def _building_depth(total_area: float, hallway_m: float, frame_w: float, frame_d: float) -> float:
-    """Solve W*D = area + hallway*D subject to W/D = frame proportions."""
-    if frame_d <= 0 or frame_w <= 0 or total_area <= 0:
-        return max(frame_d, 0.0)
-    k = frame_w / frame_d
-    return min((hallway_m + (hallway_m * hallway_m + 4.0 * k * total_area) ** 0.5) / (2.0 * k), frame_d)
-
-
 def _side_cells(side: Sequence[_Cluster]) -> List[_Cell]:
     out: List[_Cell] = []
     for cluster in side:
@@ -391,11 +407,13 @@ def _side_cells(side: Sequence[_Cluster]) -> List[_Cell]:
     return out
 
 
-def _side_width(side: Sequence[_Cluster], depth: float) -> float:
+def _side_floor(side: Sequence[_Cluster]) -> float:
+    """The narrowest this side may be: no room in it may end up under its
+    own minimum width, and a two-rank cluster has to hold both ranks side by
+    side."""
     cells = _side_cells(side)
     if not cells:
         return 0.0
-    ideal = sum(cell.area for cell in cells) / depth if depth > 0 else 0.0
     floor = max(cell.min_width_m for cell in cells)
     has_ranks = any(cluster.rank1 for cluster in side)
     if has_ranks:
@@ -413,7 +431,34 @@ def _side_width(side: Sequence[_Cluster], depth: float) -> float:
                 if cluster.rank1
             ),
         )
-    return max(ideal, floor, MIN_BAND_WIDTH_M)
+    return max(floor, MIN_BAND_WIDTH_M)
+
+
+def _band_width(side: Sequence[_Cluster]) -> float:
+    """How wide to make one side of the spine.
+
+    Sized from the rooms it holds, not from the site's leftover area. Every
+    room spans its band, so the band's width IS each room's width, and its
+    depth then follows from the room's own area. Deriving the width from
+    total area divided by building depth -- which is what a slicing
+    floorplan usually does -- gets that backwards on a real program: ten
+    rooms wanted 7-metre bands, at which point every room's area was
+    satisfied long before its minimum depth was, the minimums took over, and
+    the building inflated into a bar with a 7 x 1.5 metre bathroom in it.
+
+    The square root of a room's area is the width it would have if it were
+    square, so the mean of those over the band is the width at which its
+    rooms come out closest to their natural proportions. Weighted by area,
+    so the living room has more say than the closet next to it.
+    """
+    cells = _side_cells(side)
+    if not cells:
+        return 0.0
+    total_area = sum(cell.area for cell in cells)
+    if total_area <= 0:
+        return _side_floor(side)
+    natural = sum(cell.area * (cell.area ** 0.5) for cell in cells) / total_area
+    return max(natural, _side_floor(side), MIN_BAND_WIDTH_M)
 
 
 def _cluster_depth(cluster: _Cluster, rank0_width: float, rank1_width: float) -> float:
@@ -440,6 +485,36 @@ def _split_widths(cluster: _Cluster, side_width: float) -> Tuple[float, float]:
     return front, max(side_width - front, 0.0)
 
 
+def _stack(
+    rank: Sequence[_Cell], x: float, y: float, width: float, depth: float
+) -> List[Tuple[_Cell, float, float, float, float]]:
+    """Lay a single file of rooms down the spine.
+
+    Each gets the depth its area needs at this width, and never less than
+    its own minimum -- the rule `_cluster_depth` sized the cluster by. Any
+    slack left over is shared out in proportion to area, so the extra goes
+    where it is most useful rather than to whichever room happens to be
+    last. Splitting the cluster's depth by area share alone was the bug
+    that squeezed a 1.75m-minimum ensuite into 1.16m: the cluster was
+    allotted enough depth overall, and then handed out on a rule that had
+    never heard of a minimum.
+    """
+    base = [max(cell.area / width, cell.min_depth_m) for cell in rank]
+    slack = depth - sum(base)
+    if slack > 0:
+        total_area = sum(cell.area for cell in rank)
+        for index, cell in enumerate(rank):
+            share = (cell.area / total_area) if total_area > 0 else 1.0 / len(rank)
+            base[index] += slack * share
+
+    placed: List[Tuple[_Cell, float, float, float, float]] = []
+    top = y
+    for cell, cell_depth in zip(rank, base):
+        placed.append((cell, x, top, width, cell_depth))
+        top += cell_depth
+    return placed
+
+
 def _lay_out_side(
     side: Sequence[_Cluster], x0: float, side_width: float, target_depth: float
 ) -> List[Tuple[_Cell, float, float, float, float]]:
@@ -454,23 +529,15 @@ def _lay_out_side(
         for cluster, (front_w, back_w) in zip(side, widths)
     ]
     total = sum(depths)
-    scale = target_depth / total if total > 0 and target_depth > total else 1.0
+    scale = min(target_depth / total, MAX_STRETCH) if total > 0 and target_depth > total else 1.0
 
     placed: List[Tuple[_Cell, float, float, float, float]] = []
     y = 0.0
     for cluster, (front_w, back_w), cluster_depth in zip(side, widths, depths):
         cluster_depth *= scale
         for rank, width, offset in ((cluster.rank0, front_w, 0.0), (cluster.rank1, back_w, front_w)):
-            if not rank or width <= 0:
-                continue
-            rank_area = sum(cell.area for cell in rank)
-            inner_y = y
-            for index, cell in enumerate(rank):
-                share = (cell.area / rank_area) if rank_area > 0 else 1.0 / len(rank)
-                depth = cluster_depth * share if index < len(rank) - 1 else (y + cluster_depth) - inner_y
-                depth = max(depth, 0.0)
-                placed.append((cell, x0 + offset, inner_y, width, depth))
-                inner_y += depth
+            if rank and width > 0:
+                placed.extend(_stack(rank, x0 + offset, y, width, cluster_depth))
         y += cluster_depth
     return placed
 
@@ -509,18 +576,20 @@ def place_rooms(
     frame_d = envelope.width_m if transposed else envelope.depth_m
 
     hallway_m = project.hallway_width_m if len(cells) >= SPINE_MIN_ROOMS and left and right else 0.0
-    total_area = sum(cell.area for cell in cells)
-    depth = _building_depth(total_area, hallway_m, frame_w, frame_d)
-
-    for _ in range(2):
-        left_width = _side_width(left, depth)
-        right_width = _side_width(right, depth)
-        left_depth = sum(_cluster_depth(c, *_split_widths(c, left_width)) for c in left)
-        right_depth = sum(_cluster_depth(c, *_split_widths(c, right_width)) for c in right)
-        depth = max(left_depth, right_depth, 0.0)
-
-    left_width = _side_width(left, depth)
-    right_width = _side_width(right, depth)
+    # Width first, from the rooms each band holds; depth follows from it.
+    # The two are solved once, in that order, and never fed back into each
+    # other -- solving width from depth AND depth from width diverges rather
+    # than settling, because the moment a room's minimum depth binds, its
+    # band holds more depth than its area needs, so the next width comes out
+    # narrower, so the next depth comes out deeper, one iteration at a time
+    # until the building walks off the site.
+    left_width = _band_width(left)
+    right_width = _band_width(right)
+    depth = max(
+        sum(_cluster_depth(c, *_split_widths(c, left_width)) for c in left),
+        sum(_cluster_depth(c, *_split_widths(c, right_width)) for c in right),
+        0.0,
+    )
     width = left_width + hallway_m + right_width
 
     laid = _lay_out_side(left, 0.0, left_width, depth)
