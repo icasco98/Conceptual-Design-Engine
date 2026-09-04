@@ -39,8 +39,9 @@ from src.access import access_problems_for, zone_of
 from src.defaults import resolve_footprint
 from src.geometry import BuildableEnvelope
 from src.layout import LayoutResult, MultiLevelLayout, pack_levels, row_count
-from src.layout_plan import Adjacency, LayoutPlan
+from src.layout_plan import Adjacency, LayoutPlan, RoomAspect
 from src.models import Project
+from src.orientation import EAST, WEST, aspect_penalty, direction_for, street_penalty
 from src.stacking import stacking_report
 
 # Share of built area a house normally spends on circulation. Below the
@@ -70,6 +71,12 @@ MAX_CANDIDATES = 12
 # how this number was found.
 ADJACENCY_WEIGHT = 40.0
 STRENGTH_FACTOR = {"strong": 2.0, "mild": 1.0}
+
+# What a stated preference about sun or street is worth. Below adjacency:
+# "put the kitchen next to the dining room" is a harder requirement than
+# "some morning light would be nice", and an owner who means the second
+# more strongly than the first will say so and get an adjacency instead.
+ORIENTATION_WEIGHT = 24.0
 
 # How far apart "apart" means, as a share of the plan's own reach. Beyond
 # this the pairing is satisfied and stops pulling; without a ceiling, a
@@ -219,6 +226,37 @@ def adjacency_penalty(multi: MultiLevelLayout, adjacencies: list[Adjacency]) -> 
     return sum(penalties) / len(penalties)
 
 
+def orientation_penalty(
+    multi: MultiLevelLayout,
+    project: Project,
+    orientations: list[RoomAspect],
+) -> float:
+    """How badly this arrangement ignores what the owner said about sun and
+    street. Zero when every wish is as well served as the plan allows.
+
+    Each wish is scored on the level its room sits on: a room is east or
+    west of the rooms it shares a floor with, and comparing it to a floor
+    it is not on would be meaningless.
+    """
+    if not orientations:
+        return 0.0
+    rotation = project.site.rotation_deg
+    penalties: list[float] = []
+    for wish in orientations:
+        for level in multi.levels:
+            if not any(wish.room_name in (r.name, r.base_name) for r in level.rooms):
+                continue
+            if wish.wants == "off_the_street":
+                penalties.append(street_penalty(level, wish.room_name, project.site))
+            else:
+                bearing = EAST if wish.wants == "morning_sun" else WEST
+                penalties.append(aspect_penalty(level, wish.room_name, direction_for(rotation, bearing)))
+            break
+    if not penalties:
+        return 0.0
+    return sum(penalties) / len(penalties)
+
+
 def _compactness_penalty(result: LayoutResult) -> float:
     built = _built_area(result)
     footprint = _footprint_area(result)
@@ -230,6 +268,8 @@ def _compactness_penalty(result: LayoutResult) -> float:
 def score_layout(
     result: LayoutResult | MultiLevelLayout,
     adjacencies: list[Adjacency] | None = None,
+    project: Project | None = None,
+    orientations: list[RoomAspect] | None = None,
 ) -> tuple[float, int, float]:
     """Lower is better. Returns (score, access problem count, circulation
     ratio).
@@ -255,6 +295,9 @@ def score_layout(
 
     if adjacencies:
         score += ADJACENCY_WEIGHT * adjacency_penalty(multi, adjacencies)
+
+    if orientations and project is not None:
+        score += ORIENTATION_WEIGHT * orientation_penalty(multi, project, orientations)
 
     if len(multi.levels) > 1:
         # An unstacked bathroom or a room hanging off the floor below costs
@@ -438,14 +481,17 @@ def best_layout(
     orders = _candidate_orders(project, plan)
     if not orders:
         result = pack_levels(project, envelope, plan.placement_order if plan else None)
-        score, problems, ratio = score_layout(result, plan.adjacencies if plan else [])
+        score, problems, ratio = score_layout(
+            result, plan.adjacencies if plan else [], project, plan.orientations if plan else []
+        )
         return ScoredLayout(result, [], score, problems, ratio, "no rooms to arrange")
 
     adjacencies = plan.adjacencies if plan else []
+    orientations = plan.orientations if plan else []
     best: ScoredLayout | None = None
     for order in orders:
         result, _keep = thin_corridors(project, envelope, order)
-        score, problems, ratio = score_layout(result, adjacencies)
+        score, problems, ratio = score_layout(result, adjacencies, project, orientations)
         if best is None or score < best.score:
             best = ScoredLayout(
                 result=result,

@@ -48,12 +48,26 @@ class Adjacency(BaseModel):
     strength: Literal["strong", "mild"] = "mild"
 
 
+class RoomAspect(BaseModel):
+    """What a room wants from the sun or the street, in the owner's terms.
+
+    Named by intent rather than by compass point on purpose: "morning sun"
+    is the same wish in Oslo and in Auckland, while "north-facing" reverses
+    meaning between them. src.orientation turns the intent into a direction
+    using the site's own bearing.
+    """
+
+    room_name: str
+    wants: Literal["morning_sun", "evening_sun", "off_the_street"]
+
+
 class LayoutPlan(BaseModel):
     grouping_label: str
     category_labels: CategoryLabels
     assignments: list[RoomAssignment]
     placement_order: list[str]
     adjacencies: list[Adjacency] = []
+    orientations: list[RoomAspect] = []
     rationale: str
 
 
@@ -93,7 +107,17 @@ the bedrooms it serves, laundry near the service zone. Only list pairings \
 you would defend — six to ten is plenty for a house, and an empty list is \
 better than an invented one. Do not pair a room with itself, and do not \
 repeat a pair.
-4. Write a 1-3 sentence `rationale` in plain language explaining the \
+4. Fill `orientations` from what the owner said they cared about. Each \
+entry names a room and what it wants: "morning_sun", "evening_sun", or \
+"off_the_street". Take these from their stated priorities, not from \
+convention — "morning light in the kitchen" is a morning_sun entry for the \
+kitchen, "keep the bedrooms away from the road" is off_the_street for each \
+bedroom, "somewhere to sit in the evening" is evening_sun for wherever \
+they said it. Do not add one for a room they never mentioned in that way, \
+and leave the list empty when they stated no preferences of this kind. \
+You are naming what a room wants; the tool works out which way that is on \
+this particular site.
+5. Write a 1-3 sentence `rationale` in plain language explaining the \
 grouping and adjacency choices, referencing the owner's stated priorities \
 where relevant. Do not mention coordinates, exact positions, or numeric \
 dimensions.

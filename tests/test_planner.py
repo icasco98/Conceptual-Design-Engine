@@ -330,3 +330,41 @@ def test_a_strong_pairing_actually_changes_which_layout_is_chosen():
 
     assert with_pair != without
     assert abs(with_pair.index("Double Garage") - with_pair.index("Kitchen")) == 1
+
+
+def test_a_stated_preference_never_outweighs_a_room_you_cannot_reach():
+    """Sun is a preference; access is a constraint. The worst possible
+    orientation score must still cost less than one unreachable room."""
+    from src.layout_plan import RoomAspect
+
+    project = make_project(24, 30, PAIR_ROOMS)
+    project.site.rotation_deg = 0
+    result = packed(["Entry", "Kitchen", "Garage", "Dining"])
+    worst = [
+        RoomAspect(room_name=name, wants="morning_sun") for name in ("Entry", "Kitchen", "Garage", "Dining")
+    ]
+    plain, _, _ = score_layout(result)
+    with_wishes, _, _ = score_layout(result, [], project, worst)
+    assert with_wishes - plain < 100.0
+
+
+def test_the_site_bearing_changes_which_layout_is_chosen():
+    """The whole point of reading rotation_deg: the same house on the same
+    plot, turned around, should not get the same answer."""
+    from src.layout_plan import RoomAspect
+
+    plan_with_wish = LayoutPlan(
+        grouping_label="Grouped by function",
+        category_labels=CategoryLabels(category_a="Private", category_b="Shared", category_c="Service"),
+        assignments=[RoomAssignment(room_name=r.name, category="category_b") for r in PAIR_ROOMS],
+        placement_order=["Entry", "Kitchen", "Garage", "Dining"],
+        orientations=[RoomAspect(room_name="Kitchen", wants="morning_sun")],
+        rationale="The kitchen should catch the morning.",
+    )
+
+    def chosen(rotation):
+        project = make_project(24, 30, PAIR_ROOMS)
+        project.site.rotation_deg = rotation
+        return best_layout(project, envelope_for(project), plan_with_wish).placement_order
+
+    assert chosen(0) != chosen(180)

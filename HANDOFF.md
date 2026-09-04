@@ -57,6 +57,7 @@ replaceable.
 | `stacking.py` | What an upper storey owes the one below: wet rooms should overlap wet rooms, nothing should hang far past the floor below. Uses shapely. |
 | `planner.py` | Packs several candidate orderings, thins corridors to what access needs, scores them, returns the best. **The architectural judgement lives here, in code you can read and argue with.** |
 | `levels.py` | Default storey split when the owner has not said (bedrooms up, one bathroom down). |
+| `orientation.py` | Turns "morning sun" into a direction on this plan, using the site's bearing. Hemisphere-neutral on purpose: east and west are safe everywhere, north and south are not. |
 | `palette.py` | The zoning colours and the wash strength the canvas paints them at. |
 | `edits.py` | Edits the owner asks for in words. One model so far: a room and the angle it should end up at. Claude names the room and the angle and computes nothing; the canvas decides whether it fits. |
 
@@ -184,15 +185,16 @@ The scoring function in `planner.py` is where architectural knowledge
 goes. It currently weighs access (a hard constraint), circulation share
 against the 8–12% band, privacy depth, compactness, and stacking. Missing:
 
-1. **Explicit adjacency.** Extend `LayoutPlan` with `adjacencies`
-   (pairs plus a weight) and `avoid`, ask Claude for them in the prompt,
-   and score satisfied and violated pairs. Today adjacency is expressed
-   only through a single ordering list, which is a weak channel.
-2. **Score the owner's stated priorities.** They are captured
-   (`project.priorities`) and then never used by the packer. Map common
-   phrasings — "near the entry", "away from the street", "morning light"
-   — to scoring terms. `site.rotation_deg` is recorded and unused;
-   compute which edge faces east and south and reward accordingly.
+1. ~~**Explicit adjacency.**~~ Done: `LayoutPlan.adjacencies` carries
+   near/apart pairs at two strengths, `planner.adjacency_penalty` scores
+   them, and candidate generation builds an ordering from them — scoring a
+   pairing is worthless if no candidate ever puts the pair together.
+2. ~~**Score the owner's stated priorities.**~~ Done for sun and street:
+   `LayoutPlan.orientations` names what a room wants by intent and
+   `src/orientation.py` turns that into a direction using
+   `site.rotation_deg`. Still unscored: "near the entry" (say it as an
+   adjacency instead) and anything needing the hemisphere, which nothing
+   in the project knows.
 3. **Stair and structure terms.** Reward a stair near the entry, and
    walls that line up between storeys.
 4. **A second packing strategy.** The row packer makes every plan a

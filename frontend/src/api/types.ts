@@ -41,6 +41,11 @@ export interface Project {
 
 export type CategoryKey = "category_a" | "category_b" | "category_c";
 
+export interface RoomAspect {
+  room_name: string;
+  wants: "morning_sun" | "evening_sun" | "off_the_street";
+}
+
 export interface Adjacency {
   room_a: string;
   room_b: string;
@@ -56,6 +61,9 @@ export interface LayoutPlan {
   /** Pairings the packer scores against. Carried back to /api/layout
    *  verbatim, so a plan keeps the reasoning it was built from. */
   adjacencies: Adjacency[];
+  /** What a room wants from the sun or the street, named by intent — the
+   *  packer works out which way that is on this particular site. */
+  orientations: RoomAspect[];
   rationale: string;
 }
 
