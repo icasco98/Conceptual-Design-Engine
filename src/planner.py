@@ -37,6 +37,12 @@ from src.geometry import BuildableEnvelope
 from src.layout import LayoutResult, pack_rooms, row_count
 from src.layout_plan import LayoutPlan
 from src.models import Project
+from src.subdivide import (
+    Structure,
+    candidate_structures,
+    respects_minimums,
+    subdivide_rooms,
+)
 
 # Share of built area a house normally spends on circulation. Below the
 # floor, rooms are usually being entered through other rooms; above the
@@ -51,6 +57,20 @@ CIRCULATION_TARGET_HIGH = 0.12
 # recommendation ever feels slow.
 MAX_CANDIDATES = 12
 
+# Which placement strategy `best_layout` uses when the caller doesn't say.
+#
+#   "rows"       src.layout's row packer: rooms left-to-right, wrapping by
+#                width, corridors dropped into the gaps and then thinned.
+#   "subdivide"  src.subdivide's slicing tree: one spine, rooms stacked
+#                either side of it, every room touching the corridor by
+#                construction.
+#
+# Both are scored by `score_layout` below, so they can be compared directly
+# on the same project. The default stays on the row packer until the
+# comparison has been made.
+DEFAULT_STRATEGY = "rows"
+STRATEGIES = ("rows", "subdivide")
+
 
 class ScoredLayout(NamedTuple):
     result: LayoutResult
@@ -59,6 +79,11 @@ class ScoredLayout(NamedTuple):
     access_problems: int
     circulation_ratio: float
     notes: str
+    # Which strategy drew it, and -- for the slicing tree -- which of its
+    # structures won. None when the row packer produced the layout, since
+    # its candidates are orderings and `placement_order` already names one.
+    strategy: str = "rows"
+    structure: Optional[Structure] = None
 
 
 def _built_area(result: LayoutResult) -> float:
@@ -265,10 +290,59 @@ def _candidate_orders(project: Project, plan: Optional[LayoutPlan]) -> List[List
     return unique[:MAX_CANDIDATES]
 
 
+def _best_subdivided(project: Project, envelope: BuildableEnvelope) -> ScoredLayout:
+    """Slice the envelope every way `src.subdivide` offers and keep the best.
+
+    The candidates here are structures -- spine axis, zone order, side rule
+    -- not orderings. A structure is an architectural decision that can be
+    named in the rationale ("front-to-back spine, bedrooms on their own
+    side"), which an ordering never could.
+
+    No corridor thinning: the slicing tree emits exactly one spine and every
+    room depends on it, so there is nothing to take away. That is the point
+    of the strategy rather than an omission.
+    """
+    sliced = []
+    for structure in candidate_structures():
+        result = subdivide_rooms(project, envelope, structure)
+        if result.rooms:
+            sliced.append((structure, result))
+
+    # A structure that doesn't fit the envelope is scaled down until it
+    # does, which can take rooms under their minimum plan size -- a cross
+    # spine on a lot far deeper than it is wide, say. `score_layout` has no
+    # term for that, so such a candidate would compete on circulation and
+    # compactness as though it were buildable. Drop them, and only fall back
+    # to the whole set when nothing fits at all (a case src.validation has
+    # already reported to the owner).
+    buildable = [pair for pair in sliced if respects_minimums(pair[1])] or sliced
+
+    best: Optional[ScoredLayout] = None
+    for structure, result in buildable:
+        score, problems, ratio = score_layout(result)
+        if best is None or score < best.score:
+            best = ScoredLayout(
+                result=result,
+                placement_order=[room.name for room in result.rooms],
+                score=score,
+                access_problems=problems,
+                circulation_ratio=ratio,
+                notes=f"{_notes_for(problems, ratio, len(buildable))}; {structure.label}",
+                strategy="subdivide",
+                structure=structure,
+            )
+    if best is None:
+        empty = subdivide_rooms(project, envelope)
+        score, problems, ratio = score_layout(empty)
+        return ScoredLayout(empty, [], score, problems, ratio, "no rooms to arrange", "subdivide", None)
+    return best
+
+
 def best_layout(
     project: Project,
     envelope: BuildableEnvelope,
     plan: Optional[LayoutPlan] = None,
+    strategy: str = DEFAULT_STRATEGY,
 ) -> ScoredLayout:
     """Pack several candidate arrangements, thin each one's corridors, score
     them all, and return the best.
@@ -276,7 +350,16 @@ def best_layout(
     Deterministic: same project and plan in, same layout out. Ties break
     toward the earlier candidate, so the plan's own ordering wins whenever
     nothing scores better than it.
+
+    `strategy` picks the placement engine -- see DEFAULT_STRATEGY above.
+    Both are judged by the same `score_layout`, so switching it is a fair
+    comparison rather than a change of standard.
     """
+    if strategy not in STRATEGIES:
+        raise ValueError(f"unknown strategy {strategy!r}; expected one of {STRATEGIES}")
+    if strategy == "subdivide":
+        return _best_subdivided(project, envelope)
+
     orders = _candidate_orders(project, plan)
     if not orders:
         result = pack_rooms(project, envelope, plan.placement_order if plan else None)

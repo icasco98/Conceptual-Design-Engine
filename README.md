@@ -72,6 +72,27 @@ with yours and never sent to Claude as context.
    own footprint — the outline around the actual rooms and corridors it
    placed, not the buildable envelope — so the diagram distinguishes
    "inside the building" from "buildable but unused site."
+
+   **A second placement strategy, off by default.** The row packer decides
+   what ends up next to what by width arithmetic — rooms wrap when they
+   stop fitting — so adjacency is only ever expressed as position in a
+   list, and the spine corridor exists to reconnect rows the wrapping cut
+   apart. `src/subdivide.py` slices instead: one spine, rooms stacked
+   either side of it, each spanning its side's full width. Because a room
+   spans its whole side, it touches the corridor along its whole edge, so
+   **access is structural rather than checked-and-repaired** — there is no
+   arrangement of it where the only way to a bedroom is through the garage.
+   Its candidates are structures (which axis the spine runs along, the
+   front-to-back zone order, how rooms split between the sides) rather than
+   orderings, which means the choice it makes can be named in the
+   rationale. Pass `strategy="subdivide"` to `planner.best_layout`; both
+   strategies are judged by the same `score_layout`, so the comparison is
+   fair. Measured over six programs it wins five — chiefly on compactness
+   (the building is a rectangle, so no footprint sprawl at all) and on
+   circulation, where the row packer spent 26% of a tight lot on hallway
+   against 12% here. The row packer still wins on a narrow deep lot, where
+   a full-depth spine costs proportionally more than wrapped rows. The
+   default stays `"rows"` until that trade is settled.
 4. **Interactive canvas — the diagram itself.** The recommendation above
    is shown as a single interactive canvas (`src/interactive_canvas.py`):
    title, color legend, rationale, and a live room schedule in a panel to
