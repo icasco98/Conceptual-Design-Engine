@@ -42,6 +42,7 @@ from src.layout import LayoutResult, MultiLevelLayout, pack_levels, row_count
 from src.layout_plan import Adjacency, LayoutPlan, RoomAspect
 from src.models import Project
 from src.orientation import EAST, WEST, aspect_penalty, direction_for, street_penalty
+from src.spine import pack_spine_levels
 from src.stacking import stacking_report
 
 # Share of built area a house normally spends on circulation. Below the
@@ -92,6 +93,10 @@ class ScoredLayout(NamedTuple):
     access_problems: int
     circulation_ratio: float
     notes: str
+    # Which packing strategy produced it. Worth carrying: the two make
+    # visibly different houses, and 'why does this one look like that'
+    # deserves a better answer than silence.
+    strategy: str = "rows"
 
 
 def _built_area(result: LayoutResult) -> float:
@@ -489,24 +494,42 @@ def best_layout(
     adjacencies = plan.adjacencies if plan else []
     orientations = plan.orientations if plan else []
     best: ScoredLayout | None = None
+    attempts = 0
     for order in orders:
-        result, _keep = thin_corridors(project, envelope, order)
-        score, problems, ratio = score_layout(result, adjacencies, project, orientations)
-        if best is None or score < best.score:
-            best = ScoredLayout(
-                result=result,
-                placement_order=list(order),
-                score=score,
-                access_problems=problems,
-                circulation_ratio=ratio,
-                notes=_notes_for(problems, ratio, len(orders)),
-            )
+        # Both strategies, same ordering, same scoring rules. Rows vary a
+        # plan left to right and spines vary it front to back, so which one
+        # wins depends on what was actually asked for -- which is the whole
+        # point of having two.
+        rows_result, _keep = thin_corridors(project, envelope, order)
+        packings: list[tuple[str, MultiLevelLayout]] = [("rows", rows_result)]
+        spine_result = pack_spine_levels(project, envelope, order)
+        if spine_result is not None:
+            packings.append(("spine", spine_result))
+
+        for strategy, result in packings:
+            attempts += 1
+            score, problems, ratio = score_layout(result, adjacencies, project, orientations)
+            if best is None or score < best.score:
+                best = ScoredLayout(
+                    result=result,
+                    placement_order=list(order),
+                    score=score,
+                    access_problems=problems,
+                    circulation_ratio=ratio,
+                    notes="",
+                    strategy=strategy,
+                )
+    if best is not None:
+        best = best._replace(
+            notes=_notes_for(best.access_problems, best.circulation_ratio, attempts, best.strategy)
+        )
     assert best is not None
     return best
 
 
-def _notes_for(problems: int, ratio: float, candidates: int) -> str:
-    parts = [f"best of {candidates} arrangements"]
+def _notes_for(problems: int, ratio: float, candidates: int, strategy: str = "rows") -> str:
+    shape = "rooms either side of a central corridor" if strategy == "spine" else "rooms in rows"
+    parts = [f"best of {candidates} arrangements", shape]
     if problems:
         parts.append(f"{problems} room{'s' if problems != 1 else ''} still awkward to reach")
     else:

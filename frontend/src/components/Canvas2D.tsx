@@ -355,6 +355,11 @@ export function Canvas2D() {
 
   const scaleBarM = 5;
   const northX = width + 1.6;
+  // Screen-up is the direction the front edge faces, so north sits that
+  // many degrees back the other way. Nothing read the bearing while it
+  // scored nothing; now the planner places rooms by it, a drawing that
+  // always claimed north was up would be contradicting the plan it shows.
+  const northTurn = -(project.site.rotation_deg ?? 0);
 
   return (
     <div className={`plan-pane${panning ? " panning" : ""}`}>
@@ -570,10 +575,16 @@ export function Canvas2D() {
             <path
               d={`M ${northX} ${1.6 - 0.76} L ${northX + 0.34} ${1.6 + 0.48} L ${northX} ${1.6 + 0.18} L ${northX - 0.34} ${1.6 + 0.48} Z`}
               fill={INK.footprint}
+              transform={`rotate(${northTurn} ${northX} ${1.6})`}
             />
             <text x={northX} y={3.5} textAnchor="middle" className="anno" style={{ fontSize: 0.52 }}>
               North
             </text>
+            {project.site.rotation_deg != null && (
+              <text x={northX} y={4.3} textAnchor="middle" className="anno" style={{ fontSize: 0.42 }}>
+                front {Math.round(project.site.rotation_deg)}°
+              </text>
+            )}
           </g>
           <g pointerEvents="none" transform={`translate(0 ${depth + 1.3})`}>
             {[0, 1, 2, 3].map((i) => (

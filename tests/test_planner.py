@@ -291,21 +291,34 @@ def test_clustering_puts_paired_rooms_side_by_side():
     assert abs(out.index("Kitchen") - out.index("Dining")) == 1
 
 
-def test_the_planner_offers_an_arrangement_built_from_the_pairings():
-    """best_layout can only choose among the orderings it generates, so a
-    pairing must reach candidate generation, not just scoring."""
-    project = make_project(24, 30, PAIR_ROOMS)
-    plan = LayoutPlan(
+def pair_plan(adjacencies):
+    return LayoutPlan(
         grouping_label="Grouped by function",
         category_labels=CategoryLabels(category_a="Private", category_b="Shared", category_c="Service"),
         assignments=[RoomAssignment(room_name=r.name, category="category_b") for r in PAIR_ROOMS],
         placement_order=["Entry", "Kitchen", "Garage", "Dining"],
-        adjacencies=[near("Kitchen", "Dining", "strong")],
+        adjacencies=adjacencies,
         rationale="Kitchen and dining belong together.",
     )
-    best = best_layout(project, envelope_for(project), plan)
-    order = best.placement_order
-    assert abs(order.index("Kitchen") - order.index("Dining")) == 1
+
+
+def test_the_planner_offers_an_arrangement_built_from_the_pairings():
+    """best_layout can only choose among the arrangements it generates, so
+    a pairing has to reach candidate generation, not just scoring.
+
+    Asserted on where the rooms end up rather than on where their names sit
+    in the ordering. Those were the same thing while rows were the only way
+    to pack a plan; with a second strategy they are not, and the ordering
+    was only ever a proxy for the thing actually wanted.
+    """
+    project = make_project(24, 30, PAIR_ROOMS)
+    envelope = envelope_for(project)
+    wanted = [near("Kitchen", "Dining", "strong")]
+
+    ignored = best_layout(project, envelope, pair_plan([]))
+    honoured = best_layout(project, envelope, pair_plan(wanted))
+
+    assert adjacency_penalty(honoured.result, wanted) < adjacency_penalty(ignored.result, wanted)
 
 
 def test_a_strong_pairing_actually_changes_which_layout_is_chosen():
@@ -321,15 +334,12 @@ def test_a_strong_pairing_actually_changes_which_layout_is_chosen():
     project = sample_project()
     plan = sample_layout_plan()
     envelope = envelope_for(project)
+    wanted = [near("Double Garage", "Kitchen", "strong")]
 
-    without = best_layout(project, envelope, plan).placement_order
-    paired = plan.model_copy(
-        update={"adjacencies": [near("Double Garage", "Kitchen", "strong")]}
-    )
-    with_pair = best_layout(project, envelope, paired).placement_order
+    without = best_layout(project, envelope, plan)
+    with_pair = best_layout(project, envelope, plan.model_copy(update={"adjacencies": wanted}))
 
-    assert with_pair != without
-    assert abs(with_pair.index("Double Garage") - with_pair.index("Kitchen")) == 1
+    assert adjacency_penalty(with_pair.result, wanted) < adjacency_penalty(without.result, wanted)
 
 
 def test_a_stated_preference_never_outweighs_a_room_you_cannot_reach():
