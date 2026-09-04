@@ -1,14 +1,15 @@
+from src.engine import design
 from src.geometry import compute_buildable_envelope
 from src.interactive_canvas import (
     BITE_MAX_FRACTION,
     SCHEDULE_MIN_WIDTH_PX,
+    DiagramText,
     _polygon_clipping_js,
     canvas_size_px,
     render_canvas_html,
 )
-from src.layout import pack_rooms
-from src.layout_plan import CategoryLabels, LayoutPlan
 from src.models import Project, Room, Setbacks, Site, SiteEdge
+from src.zoning_spec import default_spec
 
 
 def make_project(width=18.0, depth=25.0, rooms=None) -> Project:
@@ -22,22 +23,19 @@ def make_project(width=18.0, depth=25.0, rooms=None) -> Project:
     return Project(site=site, setbacks=Setbacks(), rooms=rooms or [])
 
 
-def make_layout_plan(rooms) -> LayoutPlan:
-    return LayoutPlan(
-        grouping_label="Grouped by privacy level",
-        category_labels=CategoryLabels(category_a="Private", category_b="Shared", category_c="Service"),
-        assignments=[],
-        placement_order=[r.name for r in rooms],
-        rationale="Private rooms sit away from the entry; shared rooms cluster near it.",
-    )
-
-
-def _render(rooms, assignments=None):
-    project = make_project(rooms=rooms)
+def plan_for(project: Project):
+    """Run the real engine on a project, exactly as app.py does, and hand
+    back the packed result plus the diagram text."""
     envelope = compute_buildable_envelope(project.site, project.setbacks)
-    result = pack_rooms(project, envelope)
-    layout_plan = make_layout_plan(rooms)
-    return render_canvas_html(project, envelope, result, assignments or {}, layout_plan), result
+    outcome = design(project, envelope, default_spec(project))
+    assert outcome.plan is not None, outcome.messages
+    return envelope, outcome.plan.result, DiagramText(outcome.title, outcome.rationale)
+
+
+def _render(rooms):
+    project = make_project(rooms=rooms)
+    envelope, result, text = plan_for(project)
+    return render_canvas_html(project, envelope, result, text), result
 
 
 def test_every_room_appears_exactly_once_as_a_draggable_box():
@@ -74,10 +72,9 @@ def test_corridors_render_when_present_none_when_not():
         Room(name="Entry", room_type="entry", is_entry=True),
         Room(name="Bedroom", room_type="bedroom_primary", count=4),
     ]
-    project = make_project(width=6.0, depth=40.0, rooms=multi_row)
-    envelope = compute_buildable_envelope(project.site, project.setbacks)
-    result = pack_rooms(project, envelope)
-    html = render_canvas_html(project, envelope, result, {}, make_layout_plan(multi_row))
+    project = make_project(width=12.0, depth=30.0, rooms=multi_row)
+    envelope, result, text = plan_for(project)
+    html = render_canvas_html(project, envelope, result, text)
     assert result.corridors
     assert html.count('class="corridor draggable"') == len(result.corridors)
 
@@ -89,10 +86,9 @@ def test_corridors_are_draggable_like_rooms_not_fixed():
         Room(name="Entry", room_type="entry", is_entry=True),
         Room(name="Bedroom", room_type="bedroom_primary", count=4),
     ]
-    project = make_project(width=6.0, depth=40.0, rooms=rooms)
-    envelope = compute_buildable_envelope(project.site, project.setbacks)
-    result = pack_rooms(project, envelope)
-    html = render_canvas_html(project, envelope, result, {}, make_layout_plan(rooms))
+    project = make_project(width=12.0, depth=30.0, rooms=rooms)
+    envelope, result, text = plan_for(project)
+    html = render_canvas_html(project, envelope, result, text)
     assert result.corridors
 
     # Corridors carry the same reset-position data attributes as rooms,
@@ -230,10 +226,10 @@ def test_title_legend_and_rationale_are_rendered():
     rooms = [Room(name="Entry", room_type="entry", is_entry=True), Room(name="Kitchen", room_type="kitchen")]
     html, _ = _render(rooms)
 
-    assert "Grouped by privacy level" in html
-    assert "Private" in html and "Shared" in html and "Service" in html
-    assert "Private rooms sit away from the entry" in html
-    assert html.count('class="legend-item"') == 6  # 3 categories + Hallway + Entry + Door
+    assert "Zoned by privacy" in html
+    assert "Public" in html and "Private" in html and "Service" in html
+    assert "meets the street" in html
+    assert html.count('class="legend-item"') == 6  # 3 zones + Hallway + Entry + Door
 
 
 def test_html_is_escaped_against_untrusted_room_names():

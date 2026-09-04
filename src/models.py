@@ -31,9 +31,15 @@ class Site(BaseModel):
     )
     rotation_deg: Optional[float] = Field(
         default=None,
-        description="Rotation of the site's front edge relative to true north, "
-        "clockwise in degrees. Not used for Phase 1 geometry; recorded for "
-        "Phase 2 solar/orientation analysis.",
+        description="Compass bearing the site's front edge faces, clockwise "
+        "from true north in degrees: 0 means the front edge (and the street "
+        "beyond it) lies to the north, 180 means the front faces south. Used "
+        "by the site analysis to decide which edge gets sun.",
+    )
+    hemisphere: Literal["north", "south"] = Field(
+        default="north",
+        description="Which hemisphere the site is in -- decides whether the "
+        "sunny side is south (north hemisphere) or north (south hemisphere).",
     )
     edges: List[SiteEdge] = Field(default_factory=list)
 

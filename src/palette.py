@@ -1,27 +1,30 @@
-"""Color-by-category for the zoning diagram.
+"""Colour-by-zone for the zoning diagram.
 
-These three hex values are taken verbatim from the studio's validated
-categorical palette (dataviz skill, references/palette.md) — specifically
-the first three slots, which are the subset documented to pass color-vision
-and contrast checks even when many shapes sit adjacent to each other at
-once (a floor plan, unlike a bar chart, doesn't have a fixed left-to-right
-neighbor order, so it needs the stricter "any pair can touch" guarantee).
-Colors are never invented per-project; Claude only picks which category a
-room belongs to, not what color that category is.
+The residential split is public / private / service, and these three hex
+values are the validated categorical set (dataviz skill, references/
+palette.md, first three slots) documented to stay legible when any pair of
+shapes touch -- a plan, unlike a bar chart, has no fixed neighbour order.
+The mapping is fixed: public is always blue, private always orange,
+service always aqua, so a diagram reads the same from one project to the
+next. Circulation and the entry aren't a fourth colour; they get a hatch
+and a border instead.
 """
 
 from __future__ import annotations
 
-CATEGORY_KEYS = ("category_a", "category_b", "category_c")
+ZONE_KEYS = ("public", "private", "service")
 
-CATEGORY_COLORS: dict[str, str] = {
-    "category_a": "#2a78d6",  # blue
-    "category_b": "#eb6834",  # orange
-    "category_c": "#1baf7a",  # aqua
+ZONE_COLORS: dict[str, str] = {
+    "public": "#2a78d6",  # blue
+    "private": "#eb6834",  # orange
+    "service": "#1baf7a",  # aqua
 }
 
-# Circulation (hallways) and the marked entry aren't a 4th color — they get
-# a distinct pattern/border instead, so the diagram stays inside the
-# validated 3-hue set while still standing out.
+ZONE_LABELS: dict[str, str] = {
+    "public": "Public",
+    "private": "Private",
+    "service": "Service",
+}
+
 CIRCULATION_HATCH = "///"
 ENTRY_BORDER_COLOR = "#0b0b0b"

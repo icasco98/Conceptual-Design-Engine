@@ -1,7 +1,7 @@
 """Interactive drag canvas: the *only* zoning diagram this tool renders.
 
-It shows Claude's recommended room grouping and layout (src.layout,
-src.layout_plan) — title, color-coded legend, and rationale included — as
+It shows the engine's chosen plan (src.engine, src.zoning) — title,
+zone legend, and rationale included — as
 draggable, resizable, rotatable, deletable boxes the owner can rearrange by
 hand to explore a different arrangement, plus a live-synced room schedule
 in a panel to its left. Corridors are draggable exactly like rooms
@@ -213,7 +213,7 @@ Python):
    (whose true shape isn't axis-aligned) is translated instead, since
    shrinking its underlying rectangle while rotated would distort it.
 3. **Rooms may shrink, never below their minimum.** Same minimums as the
-   initial packer's own compaction (`src/layout.py`) — `data-min-width`/
+   packer's own compaction (`src/zoning.py`) — `data-min-width`/
    `data-min-height`, from `src/defaults.py` for rooms and the fixed code
    hallway width for corridors. The schedule enforces the same floor on
    its own inputs.
@@ -229,7 +229,7 @@ or delete (`refreshDiagram`), never left stale from the initial layout:
 - **The door arrows** — one per shared wall between boxes that are
   actually touching right now, found by re-walking the touching-graph
   breadth-first from the entry (`computeDoorArrowSegments`, the same
-  algorithm `src/layout.py` uses for the initial recommendation, ported to
+  algorithm `src/circulation.py` uses for the initial recommendation, ported to
   JS) and drawn with an arrowhead marker. Unlike the footprint, this uses
   each box's true (unrotated) rect — a door is a literal wall opening, not
   a safety margin, so a merely-rotated room shouldn't spuriously "touch" a
@@ -256,11 +256,21 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+from typing import NamedTuple
+
 from src.geometry import BuildableEnvelope
-from src.layout import LayoutResult
-from src.layout_plan import CategoryLabels, LayoutPlan
 from src.models import Project, Site
-from src.palette import CATEGORY_COLORS
+from src.palette import ZONE_COLORS, ZONE_KEYS, ZONE_LABELS
+from src.plan_types import LayoutResult
+
+
+class DiagramText(NamedTuple):
+    """The words around the drawing: the heading above the legend and the
+    rationale under the reset button. Composed by src.engine from what
+    was actually decided."""
+
+    title: str
+    rationale: str
 
 PX_PER_METER = 26.0
 MARGIN_PX = 34.0
@@ -305,7 +315,7 @@ GAP_SNAP_M = 1.0
 GAP_SNAP_PX = GAP_SNAP_M * PX_PER_METER
 
 # How far each door arrow's endpoints sit from the wall it crosses — same
-# value src/layout.py's _perpendicular_arrow uses, in meters.
+# value src/circulation.py's perpendicular_arrow uses, in meters.
 DOOR_INSET_M = 0.35
 DOOR_INSET_PX = DOOR_INSET_M * PX_PER_METER
 
@@ -493,11 +503,13 @@ def _corridor_divs(project: Project, result: LayoutResult) -> str:
     return "".join(divs)
 
 
-def _room_divs(project: Project, result: LayoutResult, assignments: Dict[str, str]) -> str:
+def _room_divs(project: Project, result: LayoutResult) -> str:
+    """One draggable box per placed room, coloured by the zone the engine
+    put it in (`PlacedRoom.zone`, src.palette)."""
     divs = []
     for room in result.rooms:
         left, top, w, h = _to_canvas_rect(room.x_m, room.y_m, room.width_m, room.depth_m, project.site.depth_m)
-        color = CATEGORY_COLORS.get(assignments.get(room.base_name, "category_a"), "#cccccc")
+        color = ZONE_COLORS.get(room.zone, "#cccccc")
         entry_class = " entry" if room.is_entry else ""
         min_w_px = room.min_width_m * PX_PER_METER
         min_h_px = room.min_depth_m * PX_PER_METER
@@ -515,13 +527,13 @@ def _room_divs(project: Project, result: LayoutResult, assignments: Dict[str, st
     return "".join(divs)
 
 
-def _legend_html(category_labels: CategoryLabels) -> str:
-    """Category swatches plus the fixed markers (Hallway, Entry, Door)
-    that aren't a 4th color — see src.palette for why."""
+def _legend_html() -> str:
+    """Zone swatches plus the fixed markers (Hallway, Entry, Door) that
+    aren't a 4th color — see src.palette for why."""
     items = []
-    for key in ("category_a", "category_b", "category_c"):
-        label = getattr(category_labels, key)
-        color = CATEGORY_COLORS[key]
+    for key in ZONE_KEYS:
+        label = ZONE_LABELS[key]
+        color = ZONE_COLORS[key]
         items.append(
             f'<span class="legend-item"><span class="swatch" style="background:{color};"></span>{_esc(label)}</span>'
         )
@@ -535,8 +547,7 @@ def render_canvas_html(
     project: Project,
     envelope: BuildableEnvelope,
     result: LayoutResult,
-    assignments: Dict[str, str],
-    layout_plan: LayoutPlan,
+    text: DiagramText,
 ) -> str:
     width_px, height_px = canvas_size_px(project.site)
     env_left, env_top, env_w, env_h = _envelope_canvas_rect(project, envelope)
@@ -877,9 +888,9 @@ def render_canvas_html(
 </head>
 <body>
   <div id="canvas-header">
-    <h2 class="canvas-title">{_esc(layout_plan.grouping_label)}</h2>
+    <h2 class="canvas-title">{_esc(text.title)}</h2>
     <div class="canvas-legend">
-      {_legend_html(layout_plan.category_labels)}
+      {_legend_html()}
       <label class="grid-toggle-label"><input type="checkbox" id="grid-toggle" /> Show {GRID_M:g}m grid</label>
     </div>
   </div>
@@ -901,10 +912,10 @@ def render_canvas_html(
       <div id="canvas-container" data-env-left="{env_left:.1f}" data-env-top="{env_top:.1f}" data-env-right="{env_right:.1f}" data-env-bottom="{env_bottom:.1f}">
         {_static_svg(project, envelope, result)}
         {_corridor_divs(project, result)}
-        {_room_divs(project, result, assignments)}
+        {_room_divs(project, result)}
       </div>
       <button id="reset-btn" type="button">Reset to recommended layout</button>
-      <p class="canvas-rationale">{_esc(layout_plan.rationale)}</p>
+      <p class="canvas-rationale">{_esc(text.rationale)}</p>
     </div>
   </div>
 
@@ -1819,7 +1830,7 @@ def render_canvas_html(
   // If two rects share a boundary segment, returns {{axis, mid}} — axis
   // 'x' when the shared edge is vertical (side by side, so the door arrow
   // should run horizontally), 'y' when horizontal (stacked, arrow runs
-  // vertically). Same algorithm as src/layout.py's _touching_edge, ported
+  // vertically). Same algorithm as src/circulation.py's touching_edge, ported
   // to JS so door arrows can be re-walked after every move instead of
   // staying fixed to the initial layout.
   function touchingEdge(a, b, tol) {{
@@ -1854,7 +1865,7 @@ def render_canvas_html(
   }}
 
   // Breadth-first walk of the touching-graph starting from the entry room
-  // — the live equivalent of src/layout.py's _build_circulation_edges.
+  // — the live equivalent of src/circulation.py's build_circulation_edges.
   // Uses each box's *true* rect (not the rotation-inflated effective
   // one): a door is a literal wall opening, so a merely-rotated room
   // shouldn't register as "touching" a neighbor it doesn't actually share

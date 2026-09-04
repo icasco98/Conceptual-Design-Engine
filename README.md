@@ -15,63 +15,95 @@ sequential stages are planned:
 Goal: turn a plain-language description of a house project into a
 zoning/bubble diagram of its rooms, before any detailed floor plan exists.
 
-**Current scope (this commit):** all four steps of Phase 1 —
+The method follows the seven stations of the zoning sheet the project was
+rebuilt against: **zoning precedes bubbles** (zones come out of the site
+analysis and rooms are arranged *inside* zones that are already fixed),
+and there is a hard seam in the middle of the process. Everything before
+the seam is judgement -- the brief, the site, the zones, the adjacency
+matrix -- and Claude does it. Everything after the seam is arithmetic --
+the feasibility gate, packing, validation, scoring -- and plain, tested
+Python does it. The specification that crosses the seam is one Pydantic
+object (`src/zoning_spec.py`), and nothing else passes between the two.
 
-The app opens on a worked example — a 20 x 28 m lot with a zoned program
-already inside it (`src/sample_project.py`) — so the first thing on screen
-is a live diagram to drag around rather than an empty canvas. It is a
-plain literal, needs no API call, and is replaced wholesale by your own
-project the moment you send your first chat message. It is never merged
-with yours and never sent to Claude as context.
+The app opens on a worked example -- a 20 x 28 m lot facing north with a
+ten-room program already zoned inside it (`src/sample_project.py`) -- so
+the first thing on screen is a live diagram to drag around rather than an
+empty canvas. It runs through the same engine as a real project, from the
+rule-based default specification, so it needs no API call. It is replaced
+wholesale by your own project the moment you send your first chat message.
 
-1. **Conversational intake.** You describe your project in the chat (site
-   size, orientation, which sides face the street vs. neighbors, rooms you
-   need, priorities). Claude extracts a structured site + room program from
-   the conversation as you go, asking for whatever's still missing.
-2. **Geometry & validation.** Plain Python computes the buildable envelope
-   (site rectangle minus setbacks) and checks the room program against it —
-   minimum sizes, hallway width, total area, whether an entry is marked.
-   Claude only explains what Python found, in plain language; it never
-   computes the numbers itself.
+1. **Conversational intake (station 01).** You describe your project in
+   the chat (site size, which sides face the street vs. neighbors, which
+   way the plot faces, rooms you need, priorities). Claude extracts a
+   structured site + room program from the conversation as you go
+   (`src/extraction.py`), asking for whatever's still missing. Room sizes
+   come from one readable defaults table (`src/defaults.py`) unless you
+   state them; setbacks default to 2 m street / 1.5 m neighbor.
+   Deterministic validation (`src/validation.py`) checks the program
+   against the buildable envelope and Claude explains what it found.
 
-   Separately, `src/access.py` asks the question an architect asks first:
-   can you actually walk through this plan? It knows which rooms you may
-   pass *through* (a hall, a living room) and which are destinations you
-   never route through (a bedroom, a bathroom, a garage), walks the layout
-   out from the entry, and names anything it can't serve — "the only way to
-   Bedroom 2 is through the Garage". The packer's own guarantee is purely
-   geometric, so this used to go unsaid.
-3. **Layout recommendation.** Once the site and at least one room are
-   described, plain Python packs several candidate arrangements and draws
-   the best one (`src/planner.py`) rather than accepting the first the
-   packer produces. Candidates are scored on rules written down in code,
-   not in a prompt: **access is a hard constraint** (a plan where the only
-   way to a bedroom is through the garage is not a cheaper plan, it's a
-   wrong one), circulation is scored against the 8–12% of floor area a
-   house normally spends on it, private rooms should sit deeper than public
-   ones, and a compact footprint beats a sprawling one.
+2. **Site analysis (station 02).** Before any room is placed,
+   `src/site_analysis.py` reads the plot: which edge the front door meets,
+   which edges carry street noise, and -- once you've said which way the
+   plot faces -- which edge gets the sun and which faces east for morning
+   light. That becomes a preference for where each zone belongs: public
+   rooms toward the sun, private rooms off the street, service rooms on
+   the poor side and buffering the street. The sidebar shows exactly what
+   was read. With no bearing given nothing is assumed; the notes say so and
+   the intake asks.
 
-   **Corridors are earned, not automatic.** Every gap starts with one, then
-   each is removed if access survives without it — so a corridor keeps its
-   floor area only where a room depends on it to be reachable. Conversely a
-   plan that packs into a single row, which used to get no circulation at
-   all, has one built for it. And because a corridor between two rows only
-   touches those two rows, a plan with several of them gets a spine down
-   one side linking them into one network — without it, a row of bedrooms
-   between two corridors cut off everything beyond.
+3. **Zones and the adjacency matrix (stations 03-04).** Claude's one job
+   past intake is to state the problem (`src/zoning_brief.py`): sort every
+   room onto the public / private / service gradient, and write the
+   adjacency matrix -- *must* share a wall, *should* be near, must be kept
+   *apart* -- revising a rule-based default (`src/zoning_spec.py`) in light
+   of what you said matters. Only "must" and "apart" survive as hard
+   constraints; "should" becomes a scoring term. If Claude can't be
+   reached the default specification stands in and the diagram still
+   draws.
 
-   Underneath, the packer (`src/layout.py`): rooms grouped into 3
-   categories Claude picks based on your stated priorities (e.g. privacy
-   level), the entry marked, corridors generated automatically between room
-   clusters, and a circulation graph showing how to get from the entry to
-   any room one hop at a time. Claude only decides the *grouping and
-   adjacency* (which rooms belong together, which should sit near each
-   other); the packer does the actual arithmetic, so it's always
-   geometrically valid — no overlaps, everything fits inside the buildable
-   envelope, every room reachable. The packer also traces the building's
-   own footprint — the outline around the actual rooms and corridors it
-   placed, not the buildable envelope — so the diagram distinguishes
-   "inside the building" from "buildable but unused site."
+4. **Feasibility gate (station 05).** A plan of rectangular rooms is the
+   rectangular dual of its adjacency graph, so a must-graph that can't be
+   drawn flat has no plan at all. `src/feasibility.py` proves the brief
+   buildable before packing: Euler's bound, a search for K5 and K3,3, and
+   the stricter rule of the hall plan the packer draws (a room along a
+   hall touches at most the room before and after it, so must-chains have
+   to be paths). A failure names the adjacency to drop. The engine relaxes
+   it to "should", draws the plan, and tells you what it did.
+
+5. **Pack and score (station 06).** `src/zoning.py` draws the arrangement
+   a house most often is: a hall runs straight back from the front door,
+   rooms sit in two rows either side of it, and each row runs public,
+   service, private along the hall. Which row a room lands in is enumerated
+   -- every unit of rooms (a must-chain, or a single room) on one side or
+   the other, up to 256 candidates -- and the garage always leads its row
+   at the street. **The hall is earned, not assumed**: rooms at the street
+   end open straight off the entry, a room beside a passable room is served
+   through it, and the hall runs exactly as far as the last room nothing
+   else serves -- or not at all. Rooms turn and shrink toward their
+   minimums only when the plot forces it. `src/scoring.py` ranks the
+   survivors on "should" adjacencies, the site preferences (weighted by how
+   much each room's aspect matters -- the living room most), circulation
+   inside the 5-10% band, privacy depth, and compactness.
+
+6. **Validate (station 07).** `src/validator.py` holds every candidate to
+   hard constraints, and a plan that fails one is not ranked lower -- it is
+   not a plan: inside the envelope with no overlaps; walkable from the
+   entry without passing through a bedroom, bathroom or garage
+   (`src/access.py`); every must pair sharing a wall and no apart pair
+   doing so; **depth as privacy, computed not declared** -- the justified
+   plan graph rooted at the entry, private rooms deeper on average than
+   public ones; hall area under the ceiling; habitable rooms above the
+   code minimum. The outcome is graded rather than binary: `ok`, `relaxed`
+   (the brief had to be loosened at the gate), `compromised` (nothing
+   passes everything; the closest is shown with its failures listed), or
+   `rejected` (nothing packs, with the reason).
+
+   The rationale under the diagram is composed from what was actually
+   decided -- which rooms face the sun, how many doors deeper the bedrooms
+   sit, whether a hall was needed -- never from a template that could drift
+   from the drawing.
+
 4. **Interactive canvas — the diagram itself.** The recommendation above
    is shown as a single interactive canvas (`src/interactive_canvas.py`):
    title, color legend, rationale, and a live room schedule in a panel to
@@ -238,36 +270,35 @@ Roadmap below.
 
 ### Design principles
 
-- **Deterministic code owns the numbers.** Room sizing, setback math, and
-  constraint checks live in `src/geometry.py`, `src/defaults.py`, and
-  `src/validation.py` — plain Python, unit-tested, no LLM involved. Claude's
-  job is narrower: turn conversation into structured data
-  (`src/extraction.py`), and turn Python's findings into plain language
-  (`src/claude_client.py`).
-- **No numeric dimensions on the diagram** (once the diagram exists) —
-  proportions reflect real sizes internally, but the point is to reason
-  about adjacency and zoning, not read off measurements.
+- **Zoning precedes bubbles.** The site is read first and zones are placed
+  on it before any room is; rooms are arranged inside zones already fixed.
+- **The seam is real.** Claude states the problem -- zones, adjacency
+  matrix, rationale -- as one specification object, and never sees a
+  coordinate or computes a size. Everything after that is deterministic,
+  unit-tested Python that can be read, tested and argued with.
+- **Access is a hard constraint; depth is measured.** A plan you cannot
+  walk through is not a cheaper plan, it is a wrong one. Privacy is the
+  justified-graph depth from the entry, computed, never a label.
+- **Circulation is a cost, not something to eliminate.** Minimising
+  hallway on its own drives straight back to rooms entered through other
+  rooms; the hall is kept only where a room depends on it, and scored
+  against the band a house normally spends.
+- **Some briefs cannot be built, and it is proved before packing.** The
+  feasibility gate fails with a sentence naming the requirement to drop,
+  not a timeout.
 - **Defaults are a starting point, not a black box.** Every room-sizing
-  default lives in one readable table (`src/defaults.py`) and Claude tells
-  you which ones it's relying on.
-- **The footprint is compacted, not just packed.** Each room may be nudged
-  up to 0.5m smaller than its nominal size — width to help it share a row
-  instead of forcing a wrap, depth to trim a row down to whichever room in
-  it actually needs the most depth — but never below that room type's
-  real minimum. A room only shrinks when doing so actually makes the
-  building smaller (`src/layout.py`, `MAX_SHRINK_M`).
-- **One diagram, not two.** Everything the tool knows about the layout —
-  grouping, adjacency, footprint — is rendered into the single interactive
-  canvas; there's no separate static image to keep in sync with it.
-- **Constraints hold live, not just at generation time.** The setback
-  line and each room's own minimum size aren't just inputs to the initial
-  packer — they're enforced the whole time you're dragging or resizing, in
-  the browser, with no server round trip (see step 4 above).
+  default lives in one readable table (`src/defaults.py`), every
+  adjacency rule in another (`src/zoning_spec.py`), and the sidebar shows
+  what the site analysis decided.
+- **No numeric dimensions on the diagram.** Proportions reflect real sizes
+  internally, but the point is to reason about adjacency and zoning.
+- **One diagram, not two.** Everything the tool knows about the layout is
+  rendered into the single interactive canvas.
+- **Constraints hold live, not just at generation time.** The setback line
+  and each room's own minimum size are enforced the whole time you're
+  dragging or resizing, in the browser, with no server round trip.
 - **Editing tools stay decision-preserving.** Delete hides a box rather
-  than destroying it, and a rotated box is only ever translated (never
-  resized) when it has to give way to a neighbor — so nothing you do in
-  the canvas can put the geometry in a state "Reset to recommended
-  layout" can't cleanly undo.
+  than destroying it, so "Reset to recommended layout" can always undo.
 
 ## Setup
 
@@ -295,27 +326,38 @@ pytest
 
 | Path | Purpose |
 |---|---|
-| `src/planner.py` | Picks the layout: packs several candidate orderings, thins each one's corridors down to what access actually needs, scores them on access/circulation/privacy/compactness, and returns the best. The architectural judgement lives here, in code that can be read and tested. |
-| `src/access.py` | How each room type behaves in circulation — its zone, whether you may walk *through* it, whether it meets the street — and the check that walks a packed layout from the entry and reports rooms that can't be reached without passing through a bedroom, bathroom or garage. |
-| `src/vendor/` | Vendored third-party code — polygon-clipping (MIT) for boolean polygon geometry, inlined into the diagram rather than loaded from a CDN. |
-| `src/sample_project.py` | The worked example the app opens on — a complete, validating project plus the layout plan Claude would have returned for it, so the first paint needs no API call. |
-| `app.py` | Streamlit UI — chat (fixed-height, scrollable) + interactive zoning diagram below it (schedule panel left of the drawing), sidebar summary of captured site/setback/envelope/priority state. |
+| `app.py` | Streamlit UI — chat (fixed-height, scrollable) + interactive zoning diagram below it (schedule panel left of the drawing), sidebar summary of captured site/setback/envelope/site-analysis/priority state. Runs `src/engine.design` on every rerun. |
+| `src/engine.py` | The pipeline, stations 02-07 end to end: site analysis → instances → feasibility gate → candidates → validate → score → best, with a graded outcome (ok / relaxed / compromised / rejected) and a rationale composed from the plan. |
+| `src/site_analysis.py` | Station 02. Reads the plot's edges and bearing into per-edge sun, morning-light and street readings, and a preference for where each zone belongs. |
+| `src/zoning_spec.py` | The specification that crosses the seam (`ZoningSpec`: zones + adjacency matrix), the rule-based default, reconciliation of Claude's proposal with it, and expansion of counted rooms into instances and requirements. |
+| `src/zoning_brief.py` | Stations 03-04. Claude states the problem: revises the default zones and adjacency matrix in light of the owner's priorities and the site (structured output). |
+| `src/feasibility.py` | Station 05. Proves the must-graph buildable before packing: planarity (Euler, K5, K3,3) and hall-plan realisability. Fails with the adjacency to drop. |
+| `src/zoning.py` | Station 06, geometry. The hall-plan packer: entry at the head of the hall, two rows either side ordered public → service → private, the hall earned per room, rooms turned/shrunk only when the plot forces it; enumerates every side assignment as a candidate. |
+| `src/scoring.py` | Station 06, judgement. Ranks the candidates that pass: "should" adjacencies, site preferences weighted by aspect importance, the 5-10% circulation band, privacy depth, compactness. |
+| `src/validator.py` | Station 07. Hard constraints: envelope, overlaps, walkability, must/apart adjacencies, depth ordering, circulation ceiling, habitable minimums. |
+| `src/access.py` | How each room type behaves in circulation — its zone, whether you may walk *through* it, whether it meets the street — and the walkability check the validator runs. |
+| `src/circulation.py` | Graph geometry over rectangles: shared walls, door arrows, justified-graph depth, the union outline that is the building footprint. |
+| `src/plan_types.py` | The shapes a finished plan is made of (`PlacedRoom`, `CorridorSegment`, `LayoutResult`), read by validation, scoring and the canvas. |
+| `src/sample_project.py` | The worked example the app opens on: a complete, validating project plus its (default) specification, so the first paint needs no API call. |
 | `src/models.py` | The shared data shapes (`Project`, `Site`, `Room`, ...). |
 | `src/defaults.py` | Room-sizing defaults table (widths/depths per room type). |
 | `src/geometry.py` | Buildable envelope from site + setbacks. |
-| `src/validation.py` | Deterministic constraint checks against the envelope. |
+| `src/validation.py` | Deterministic intake checks against the envelope (sizes, area, entry marked). |
 | `src/extraction.py` | Conversation → structured `Project` (Claude, structured output). |
-| `src/claude_client.py` | Anthropic client + plain-language explanation of issues. |
-| `src/layout_plan.py` | Claude picks room categories + adjacency order (structured output). |
-| `src/layout.py` | Deterministic rectangle packing, footprint compaction, building footprint outline, and circulation graph — no LLM math, unit-tested. |
-| `src/interactive_canvas.py` | Renders the interactive zoning diagram (title, legend, live door arrows, a 0.25m snap grid, selection-gated draggable/resizable/rotatable/deletable rooms and hallways with multi-select group rotate/delete, a live-synced editable room schedule in a column left of the drawing, display-shape morphing around rotated neighbours, a true polygon-union footprint outline, gap-closing snap, true rotated-shape collision, live footprint outline, setback-constrained collision resolution with shrink-toward-minimum) as self-contained HTML/CSS/JS, unit-tested. |
-| `src/palette.py` | The 3 validated diagram colors (see dataviz notes in the module docstring). |
-| `tests/` | Unit tests for geometry/defaults/validation/layout/interactive canvas. |
+| `src/claude_client.py` | Anthropic client + plain-language explanation of intake issues. |
+| `src/interactive_canvas.py` | Renders the interactive zoning diagram (title, zone legend, live door arrows, a 0.25m snap grid, selection-gated draggable/resizable/rotatable/deletable rooms and hallways with multi-select, a live-synced editable room schedule, display-shape carving around moved or rotated neighbours, a true polygon-union footprint outline, setback-constrained collision resolution) as self-contained HTML/CSS/JS, unit-tested. |
+| `src/palette.py` | The 3 validated zone colors (public blue, private orange, service aqua). |
+| `src/vendor/` | Vendored third-party code — polygon-clipping (MIT) for boolean polygon geometry, inlined into the diagram rather than loaded from a CDN. |
+| `tests/` | Unit tests for every module above; the engine tests run the whole pipeline on ordinary, impossible and oversized briefs. |
 
 ## Roadmap
 
-- Feedback loop: owner comments in chat → Claude revises the layout,
+- Feedback loop: owner comments in chat → Claude revises the specification,
   informed by whatever the owner dragged, resized, rotated, or deleted.
+- A second parti. The packer draws the central-hall plan; a through-hall
+  plan (entry hall leading past the bedrooms to a garden-side living room)
+  is the natural next candidate family for plots whose sun is on the back
+  edge.
 - Phase 2 (massing) and Phase 3 (optimization), out of scope for now.
 
 ## Constraints baked in
@@ -325,3 +367,7 @@ pytest
   one edge as street-facing.
 - Max building height: 15 m.
 - Hallway width: fixed at 1.2 m (code compliance), enforced in validation.
+- Circulation: scored against 5–10% of floor area; a plan over 13% is
+  refused by the validator.
+- Habitable rooms: at least 6.5 m² and 2.13 m across (IRC R304),
+  checked on every placed room.

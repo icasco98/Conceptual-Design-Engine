@@ -1,21 +1,11 @@
 """How each room type behaves in a plan's circulation, and the check that
 holds a layout to it.
 
-`src/layout.py` packs rectangles: rooms go left-to-right in the order the
-layout plan gives, wrapping to a new row when the next one doesn't fit, and
-the wrap point is decided purely by width arithmetic. Two rooms meant to sit
-together can land in different rows; two unrelated rooms end up adjacent
-because they happened to fit. `_build_circulation_edges` then walks whatever
-touching graph that produced and draws an arrow to each room from whichever
-neighbor reached it first.
+This is the vocabulary the rest of the engine reasons with:
 
-Nothing in that pipeline ever asks whether a route makes sense, which is how
-a plan comes out where the only way from the street to a bedroom is through
-the garage and a bathroom. The packer has no concept of access.
-
-This module is the missing vocabulary:
-
-  zone           where the room belongs in the public-to-private gradient.
+  zone           where the room belongs in the public-to-private gradient,
+                 by type alone. The specification (src/zoning_spec.py) can
+                 move a room; this is the default it moves from.
   passable       whether you may walk THROUGH it to reach somewhere else.
                  A corridor obviously; a living room reasonably; a bedroom,
                  a bathroom or a garage never -- those are destinations, and
@@ -25,10 +15,15 @@ This module is the missing vocabulary:
                  from inside (a garage), so it should sit on the boundary and
                  is not expected to sit on the household's circulation.
 
+`find_access_problems` is the walkability test the validator runs (src/
+validator.py, sheet station 07): walk out from the entry through passable
+spaces only and name every room that can't be reached that way. Two plans
+can carry identical depth profiles and only one be walkable, because depth
+counts doors without asking what kind of room each door opens into -- so
+this is a separate hard constraint, never folded into a score.
+
 The properties are plain data, deterministic, and never guessed by the LLM
--- the same principle as the sizes in src/defaults.py. Claude decides which
-rooms group together; these decide whether the result is a plan you could
-actually walk through.
+-- the same principle as the sizes in src/defaults.py.
 """
 
 from __future__ import annotations
