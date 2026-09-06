@@ -1,4 +1,6 @@
-# Conceptual Design Engine — Zoning Editor
+# CDE non Interactive
+
+*Non-interactive here means nothing generates the design for you — there is no Claude conversation in this version. The drawing itself is entirely hands-on.*
 
 A web tool for the conceptual design phase of a house: the sketchy stage
 before any detailed floor plan, when you are deciding what goes roughly
@@ -6,16 +8,17 @@ where. You draw the rooms by hand on a blank sheet; the tool keeps a live
 room schedule beside the drawing, traces the building outline, draws the
 door arrows, and shows the same arrangement as a 3D massing model.
 
-**This branch is a fork.** The version on
-`claude/design-engine-tool-access-92y89p` generated the zoning diagram for
-you — a Claude conversation extracted the brief, Python packed and scored
-candidate plans inside a site's setbacks — and its results were never
-realistic: a long central hallway every time, rigid rectangles only, an
-unconvincing footprint. Rather than debug that in place, this branch
-isolates the interactive editor as its own clean, manually driven tool.
-Nothing has been thrown away: every module removed here is still on that
-branch and in this repository's history, and the intent is to reintegrate
-assisted generation once the editor is good on its own.
+**This is the current version, and it is what `main` holds.** An earlier
+version — still on `claude/design-engine-tool-access-92y89p` and in this
+repository's history — generated the zoning diagram for you: a Claude
+conversation extracted the brief, and Python packed and scored candidate
+plans inside a site's setbacks. Its results were never realistic: a long
+central hallway every time, rigid rectangles only, an unconvincing
+footprint. Rather than debug that in place, this version isolates the
+interactive editor as its own clean, manually driven tool. Nothing has
+been thrown away: every module removed here is still on that branch and
+in this repository's history, and the intent is to reintegrate assisted
+generation once the editor is good on its own.
 
 What was kept, exactly as it was: the interface (React, Vite, TypeScript,
 zustand), the SVG plan with its drag / resize / rotate / delete gestures,
