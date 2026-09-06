@@ -233,10 +233,10 @@ export function View3D() {
       for (const b of live) {
         if (b.levelTo > b.level) continue; // one mass, drawn once below
         // The room's drawn shape -- rectangle minus whatever carves it,
-        // rotation already applied -- extruded, so a carved room reads as
-        // carved in three dimensions too.
+        // rotation already applied -- extruded to the zone's own height,
+        // so a carved room reads as carved in three dimensions too.
         const page = shapes.find((s) => s.id === b.id)?.page ?? polyOfBox(b);
-        const h = storeyH - SLAB;
+        const h = Math.max(0.3, b.heightM - SLAB);
         const shape = new THREE.Shape(page.map((p) => new THREE.Vector2(p[0], p[1])));
         const geo = new THREE.ExtrudeGeometry(shape, { depth: h, bevelEnabled: false });
         const color = fillFor(b.roomType, b.kind);
@@ -266,7 +266,7 @@ export function View3D() {
     if (massing === "zones") {
       for (const shaft of shafts) {
         const b = shaft.box;
-        const h = (shaft.to - shaft.from + 1) * storeyH - SLAB;
+        const h = Math.max(0.3, b.heightM - SLAB);
         const page = displayShapes(liveBoxes(boxes, shaft.from)).find((s) => s.id === b.id)?.page ?? polyOfBox(b);
         const shape = new THREE.Shape(page.map((p) => new THREE.Vector2(p[0], p[1])));
         const geo = new THREE.ExtrudeGeometry(shape, { depth: h, bevelEnabled: false });

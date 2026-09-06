@@ -43,10 +43,11 @@ the next begins.
    type, floor, size and rotation and edits them in place, live with the
    canvas both ways; several zones can be selected and moved, rotated or
    deleted together.
-3. **Floors.** Assign each room to a floor; when viewing one floor, see a
-   ghosted outline of the floors above and below, to line up walls.
-4. **Adjacency and outline.** Arrows between rooms placed next to each
-   other, and the building envelope traced around everything placed.
+3. **Floors.** Mostly done: each zone has a floor and a height, and the
+   storey below shows as a dashed outline. Still to come: the outline of
+   the floor *above* as well, and adding or removing storeys by hand.
+4. **Adjacency and outline.** Done. Door arrows are objects you own, and
+   the building envelope traces everything placed.
 5. **Priority.** Each room gets a numeric priority in the schedule, so
    that where rooms overlap the tool can tell which one carves which
    without being asked each time. Overlap and manual carving are already

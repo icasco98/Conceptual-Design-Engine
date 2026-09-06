@@ -123,11 +123,9 @@ room; what is left is the ghost of the floor *above* (the ghost code
 with `level + 1`), adding storeys, and moving a span. Room count per
 storey is derived; `storeys` is a store field.
 
-**Stage 4 (adjacency and outline).** `doors.ts` finds shared walls with
-`touchingEdge`; it only walks from the entry because that was the
-circulation graph. Arrows between *any* touching pair is the same
-function without the breadth-first walk. The outline (`footprint.ts`)
-already unions every drawn shape.
+**Stage 4 (adjacency and outline).** Done. If arrows between *every*
+touching pair are wanted rather than one per zone, drop the `covered`
+check in `suggestArrows`.
 
 **Stage 5 (priority).** The overlap rewrite is done (above). What is
 left is a `priority` field on the box, a schedule column, and a rule
@@ -165,9 +163,15 @@ else.
 promise the rewrite makes. Anything that seems to need it should become
 a flag instead.
 
-**Rotation is in 5-degree steps** only because the handle rounds to
-them; stage 2's "freely rotated" can drop that without touching anything
-else.
+**Rotation is free**, with Shift holding 15-degree steps.
+
+**An arrow is stored in its host's frame, never on the page.** That is
+what keeps it perpendicular and attached through a move, a resize and a
+rotation. Anything that needs page coordinates calls `arrowSegment`.
+
+**`heightM` is the truth; `levelTo` is derived.** Set one without the
+other and a zone will be drawn on the wrong storeys. `updateBox` in the
+store recomputes it on every edit; do the same anywhere else.
 
 **The editor must never depend on the backend.** `boot()` opens the
 sample before it asks `/api/health`; a missing backend costs only the

@@ -41,14 +41,17 @@ function projection(o: Obb, axis: Point): number {
   );
 }
 
-/** Separating axis theorem over the four candidate axes. True only when a
- * genuine gap exists along at least one of them. */
+/** Separating axis theorem over the four candidate axes. True when a gap
+ * exists along at least one of them -- and touching counts as a gap, on
+ * the same side of the tolerance as `rectsOverlap` and
+ * `convexPolysSeparated`. Two zones brought flush against each other are
+ * neighbours, not an overlap, whatever angle they sit at. */
 export function obbsSeparated(a: Obb, b: Obb): boolean {
   const dx = b.cx - a.cx;
   const dy = b.cy - a.cy;
   for (const axis of [a.ax, a.ay, b.ax, b.ay]) {
     const dist = Math.abs(dx * axis[0] + dy * axis[1]);
-    if (dist > projection(a, axis) + projection(b, axis) + OVERLAP_EPS) return true;
+    if (dist > projection(a, axis) + projection(b, axis) - OVERLAP_EPS) return true;
   }
   return false;
 }

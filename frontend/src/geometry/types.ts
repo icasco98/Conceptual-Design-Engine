@@ -35,9 +35,13 @@ export interface Box {
   isEntry: boolean;
   /** Lowest storey the box is on, 0 = ground. */
   level: number;
-  /** Highest storey, inclusive. Equal to `level` for an ordinary room; a
-   * stair spans several and is one box, drawn on each and one mass in 3D. */
+  /** Highest storey reached, inclusive. Derived from `heightM`: a zone
+   * taller than a storey spans into the ones above, is drawn on each and
+   * is one mass in 3D. Kept on the box so every reader need not know the
+   * storey height. */
   levelTo: number;
+  /** Vertical height, meters. Defaults to the storey height. */
+  heightM: number;
   left: number;
   top: number;
   width: number;
@@ -85,3 +89,21 @@ export const GAP_SNAP_M = 1.0;
 export const DOOR_INSET_M = 0.35;
 /** How many sides a circle is drawn and computed with. */
 export const CIRCLE_SEGMENTS = 48;
+
+/** A door arrow. It lives on one wall of its host zone, perpendicular to
+ * it, and is stored in the host's own frame so it turns and moves with
+ * the host. */
+export interface Arrow {
+  id: string;
+  level: number;
+  hostId: string;
+  /** The zone it was suggested to lead into, if any; only used to avoid
+   * suggesting a second arrow for the same zone. */
+  targetId?: string;
+  /** 0 top, 1 right, 2 bottom, 3 left in the host's frame; unused on a circle. */
+  side: number;
+  /** How far along that wall, 0..1; on a circle, the fraction of a turn. */
+  t: number;
+  /** 1 = out of the host, -1 = into it. */
+  dir: 1 | -1;
+}

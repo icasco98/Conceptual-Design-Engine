@@ -66,6 +66,7 @@ export function Schedule() {
             <th>Floor</th>
             <th className="r">Width</th>
             <th className="r">Depth</th>
+            <th className="r" title="Vertical height. Taller than a storey and the zone reaches the storey above.">Height</th>
             <th className="r">Area</th>
             <th className="r">Rot.</th>
             <th />
@@ -163,6 +164,21 @@ export function Schedule() {
                     onChange={(e) => edit(b, "h", parseFloat(e.target.value))}
                   />
                 </td>
+                <td className="r">
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="0.5"
+                    defaultValue={b.heightM.toFixed(1)}
+                    key={`z${b.heightM.toFixed(2)}`}
+                    title="Height in m"
+                    onFocus={() => select(b.id)}
+                    onChange={(e) => {
+                      const v = parseFloat(e.target.value);
+                      if (isFinite(v) && v >= 0.5) updateBox(b.id, { heightM: v });
+                    }}
+                  />
+                </td>
                 <td
                   className={`r num ${flagged ? "flag" : carved ? "carved" : ""}`}
                   title={flagged ? "Carved below its minimum size, or cut in two" : carved ? "Carved by another zone" : ""}
@@ -185,10 +201,11 @@ export function Schedule() {
                   <button
                     type="button"
                     className={`carve-btn ${carving ? "on" : ""}`}
-                    title={carving ? "Stop carving the zones under this one" : "Carve the zones under this one"}
+                    title={carving ? "Release: stop carving the zones under this one" : "Carve the zones under this one"}
+                    aria-label={carving ? "Release the carve" : "Carve"}
                     onClick={() => (carving ? release(b.id) : carve(b.id))}
                   >
-                    {carving ? "⊟ Release" : "⊠ Carve"}
+                    {carving ? "⊟" : "⊠"}
                   </button>
                 </td>
                 <td>
@@ -206,7 +223,7 @@ export function Schedule() {
           })}
         </tbody>
       </table>
-      <p className="schedule-foot muted">Width and depth in m, area in m², rotation in degrees.</p>
+      <p className="schedule-foot muted">Width, depth and height in m, area in m², rotation in degrees. A zone taller than 3.0 m reaches the storey above.</p>
     </div>
   );
 }

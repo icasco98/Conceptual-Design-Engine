@@ -8,7 +8,7 @@
 import { useEffect } from "react";
 
 import { Canvas2D } from "./components/Canvas2D";
-import { IconCircle, IconCursor, IconGrid, IconHand, IconLayers, IconRect, IconReset } from "./components/icons";
+import { IconArrow, IconCircle, IconCursor, IconGrid, IconHand, IconLayers, IconMagnet, IconRect, IconReset, IconSuggest } from "./components/icons";
 import { Massing } from "./components/Massing";
 import { Schedule } from "./components/Schedule";
 import { Sidebar } from "./components/Sidebar";
@@ -27,6 +27,9 @@ function Rail() {
   const toggleGhost = useStore((s) => s.toggleGhost);
   const resetLayout = useStore((s) => s.resetLayout);
   const storeys = useStore((s) => s.storeys);
+  const selected = useStore((s) => s.selected);
+  const touchSelected = useStore((s) => s.touchSelected);
+  const suggestArrows = useStore((s) => s.suggestArrows);
 
   const toolButton = (t: Tool, title: string, icon: React.ReactNode) => (
     <button type="button" className={tool === t ? "on" : ""} aria-pressed={tool === t} title={title} aria-label={title} onClick={() => setTool(t)}>
@@ -40,6 +43,20 @@ function Rail() {
       {toolButton("pan", "Pan the plan (or drag with the middle button)", <IconHand />)}
       {toolButton("rect", "Draw a rectangle zone (Shift for a square)", <IconRect />)}
       {toolButton("circle", "Draw a circle zone", <IconCircle />)}
+      {toolButton("arrow", "Add a door arrow: click a zone's wall", <IconArrow />)}
+      <span className="rail-sep" />
+      <button
+        type="button"
+        disabled={!selected.length}
+        title="Make the selected zones touch their nearest neighbour (gaps under 1 m)"
+        aria-label="Make the selected zones touch"
+        onClick={touchSelected}
+      >
+        <IconMagnet />
+      </button>
+      <button type="button" title="Suggest door arrows for zones that have none" aria-label="Suggest door arrows" onClick={suggestArrows}>
+        <IconSuggest />
+      </button>
       <span className="rail-sep" />
       <button
         type="button"

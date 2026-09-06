@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import { carveWith, displayShapes, releaseCarve, shapeStillUsable, subtractKeepLargest } from "./carve";
-import { doorArrows, touchingEdge } from "./doors";
+import { arrowSegment, nearestWallPoint, suggestArrows } from "./arrows";
+import { touchingEdge } from "./doors";
 import { footprintRings } from "./footprint";
-import { polyArea, rectPolyOf } from "./poly";
+import { polyArea, polyOfBox, rectPolyOf } from "./poly";
 import { boxesTrulyIntersect, obbOf, obbsSeparated } from "./rect";
 import { shaftsPiercing, stairShafts } from "./shafts";
 import { liveBoxes, snapToGrid, snapToNearbyNeighbors } from "./snap";
+import { polyGap, touchDelta, touchSelected } from "./touch";
 import type { Box } from "./types";
 
 function box(partial: Partial<Box> & { id: string; left: number; top: number; width: number; height: number }): Box {
@@ -18,6 +20,7 @@ function box(partial: Partial<Box> & { id: string; left: number; top: number; wi
     isEntry: false,
     level: 0,
     levelTo: partial.level ?? 0,
+    heightM: 3,
     minWidth: 2.7,
     minHeight: 3.0,
     rotation: 0,
@@ -173,16 +176,6 @@ describe("doors and footprint", () => {
     expect(touchingEdge({ left: 0, top: 0, width: 4, height: 4 }, { left: 4, top: 4, width: 3, height: 3 }, 0.04)).toBeNull();
   });
 
-  it("arrows walk from the entry, or from the stair on an upper level", () => {
-    const entry = box({ id: "e", isEntry: true, roomType: "entry", left: 0, top: 0, width: 2, height: 4 });
-    const hall = box({ id: "h", kind: "corridor", roomType: "hallway", left: 0, top: 4, width: 10, height: 1.2 });
-    const bed = box({ id: "b", left: 4, top: 5.2, width: 3.3, height: 3.6 });
-    expect(doorArrows([entry, hall, bed])).toHaveLength(2);
-    const stair = box({ id: "s", roomType: "stair", left: 0, top: 0, width: 1.2, height: 4, level: 1 });
-    expect(doorArrows([stair, { ...hall, level: 1 }, { ...bed, level: 1 }])).toHaveLength(2);
-    expect(doorArrows([{ ...hall, level: 1 }, { ...bed, level: 1 }])).toHaveLength(0);
-  });
-
   it("the outline is one ring around touching boxes", () => {
     const a = box({ id: "a", left: 0, top: 0, width: 4, height: 4 });
     const b = box({ id: "b", left: 4, top: 0, width: 4, height: 4 });
@@ -227,8 +220,125 @@ describe("circles", () => {
   });
 });
 
+describe("door arrows", () => {
+  const entry = box({ id: "e", name: "Entry", isEntry: true, roomType: "entry", left: 0, top: 0, width: 2, height: 4 });
+  const hall = box({ id: "h", name: "Hall", kind: "corridor", roomType: "hallway", left: 2, top: 0, width: 6, height: 4 });
+  const bed = box({ id: "b", name: "Bed", left: 8, top: 0, width: 3.3, height: 4 });
+
+  it("suggests one arrow per zone, walking out from the entry", () => {
+    const out = suggestArrows([entry, hall, bed], [], 0);
+    expect(out).toHaveLength(2);
+    expect(out.map((a) => a.hostId)).toEqual(["e", "h"]);
+    expect(out.map((a) => a.targetId)).toEqual(["h", "b"]);
+  });
+
+  it("suggests nothing for a zone that already has an arrow into it", () => {
+    const existing = suggestArrows([entry, hall, bed], [], 0);
+    expect(suggestArrows([entry, hall, bed], existing, 0)).toEqual([]);
+  });
+
+  it("hosts a carve's arrow on the carving zone", () => {
+    const room = box({ id: "r", left: 0, top: 0, width: 6, height: 6 });
+    const cutter = box({ id: "c", left: 4, top: 4, width: 3, height: 3 });
+    const live = carveWith(cutter, [room, cutter]);
+    const out = suggestArrows(live, [], 0);
+    const forRoom = out.find((a) => a.targetId === "r")!;
+    expect(forRoom.hostId).toBe("c");
+  });
+
+  it("an arrow is perpendicular to its wall and turns with its host", () => {
+    const host = box({ id: "h2", left: 0, top: 0, width: 4, height: 4 });
+    const arrow = { id: "a", level: 0, hostId: "h2", side: 1, t: 0.5, dir: 1 as const };
+    const [tail, head] = arrowSegment(host, arrow);
+    // Right wall: the arrow runs along x, through the wall's midpoint.
+    expect(tail[1]).toBeCloseTo(2);
+    expect(head[1]).toBeCloseTo(2);
+    expect(head[0]).toBeGreaterThan(tail[0]);
+    // Turn the host 90 degrees and it runs along y instead.
+    const [t2, h2] = arrowSegment({ ...host, rotation: 90 }, arrow);
+    expect(t2[0]).toBeCloseTo(2);
+    expect(h2[1]).toBeGreaterThan(t2[1]);
+  });
+
+  it("flipping reverses it through the same point", () => {
+    const host = box({ id: "h3", left: 0, top: 0, width: 4, height: 4 });
+    const out = arrowSegment(host, { id: "a", level: 0, hostId: "h3", side: 0, t: 0.5, dir: 1 });
+    const back = arrowSegment(host, { id: "a", level: 0, hostId: "h3", side: 0, t: 0.5, dir: -1 });
+    expect(out[0]).toEqual(back[1]);
+    expect(out[1]).toEqual(back[0]);
+  });
+
+  it("dragging picks the nearest wall of the host", () => {
+    const host = box({ id: "h4", left: 0, top: 0, width: 4, height: 4 });
+    expect(nearestWallPoint(host, [2, -0.3]).side).toBe(0);
+    expect(nearestWallPoint(host, [4.3, 2]).side).toBe(1);
+    expect(nearestWallPoint(host, [2, 4.3]).side).toBe(2);
+    expect(nearestWallPoint(host, [-0.3, 2]).side).toBe(3);
+    expect(nearestWallPoint(host, [1, -0.3]).t).toBeCloseTo(0.25);
+  });
+});
+
+describe("make the selected zones touch", () => {
+  it("closes a gap under a metre and leaves everything else alone", () => {
+    const a = box({ id: "a", left: 0, top: 0, width: 4, height: 4 });
+    const b = box({ id: "b", left: 4.6, top: 0, width: 3, height: 3 });
+    const out = touchSelected([a, b], ["b"]);
+    expect(out.find((x) => x.id === "b")!.left).toBeCloseTo(4);
+    expect(out.find((x) => x.id === "a")).toEqual(a);
+  });
+
+  it("leaves a gap of a metre or more", () => {
+    const a = box({ id: "a", left: 0, top: 0, width: 4, height: 4 });
+    const b = box({ id: "b", left: 5.2, top: 0, width: 3, height: 3 });
+    expect(touchDelta(b, [a])).toBeNull();
+  });
+
+  it("leaves a zone that already touches or overlaps", () => {
+    const a = box({ id: "a", left: 0, top: 0, width: 4, height: 4 });
+    expect(touchDelta(box({ id: "b", left: 4, top: 0, width: 3, height: 3 }), [a])).toBeNull();
+    expect(touchDelta(box({ id: "c", left: 3, top: 0, width: 3, height: 3 }), [a])).toBeNull();
+  });
+
+  it("two zones turned the same way meet flush along their walls", () => {
+    // Both at 30 degrees. A box's left/top is its UNROTATED corner and it
+    // turns about its own centre, so b is placed by its centre: 4 m (one
+    // full width) plus the gap, along a's own x axis.
+    const rad = (30 * Math.PI) / 180;
+    const gap = 0.6;
+    const a = box({ id: "a", left: 0, top: 0, width: 4, height: 4, rotation: 30 });
+    const reach = 4 + gap;
+    const b = box({
+      id: "b",
+      left: 2 + reach * Math.cos(rad) - 2,
+      top: 2 + reach * Math.sin(rad) - 2,
+      width: 4,
+      height: 4,
+      rotation: 30,
+    });
+    const out = touchSelected([a, b], ["b"]);
+    const moved = out.find((x) => x.id === "b")!;
+    expect(boxesTrulyIntersect(moved, a)).toBe(false);
+    expect(polyGap(polyOfBox(moved), polyOfBox(a)).d).toBeCloseTo(0, 3);
+  });
+
+  it("a circle meets its neighbour tangentially", () => {
+    const wall = box({ id: "w", left: 0, top: 0, width: 6, height: 1 });
+    const c = box({ id: "c", shape: "circle", left: 2, top: 1.5, width: 2, height: 2 });
+    const out = touchSelected([wall, c], ["c"]);
+    const moved = out.find((x) => x.id === "c")!;
+    expect(moved.top).toBeCloseTo(1, 2);
+  });
+
+  it("two selected zones close on one another", () => {
+    const a = box({ id: "a", left: 0, top: 0, width: 4, height: 4 });
+    const b = box({ id: "b", left: 4.5, top: 0, width: 3, height: 3 });
+    const out = touchSelected([a, b], ["a", "b"]);
+    expect(polyGap(polyOfBox(out[0]), polyOfBox(out[1])).d).toBeCloseTo(0, 3);
+  });
+});
+
 describe("vertical masses", () => {
-  const stair = box({ id: "stair", name: "Stair", roomType: "stair", left: 1.5, top: 2, width: 1.2, height: 5, level: 0, levelTo: 2 });
+  const stair = box({ id: "stair", name: "Stair", roomType: "stair", left: 1.5, top: 2, width: 1.2, height: 5, level: 0, levelTo: 2, heightM: 9 });
 
   it("a zone spanning storeys is live on each of them", () => {
     const bed = box({ id: "bed", left: 8, top: 2, width: 3, height: 4, level: 1 });

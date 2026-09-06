@@ -1,11 +1,9 @@
 /**
- * Door arrows: a breadth-first walk of the touching graph from the entry
- * (or, on an upper level, from the stair), one arrow per box crossing the
- * wall it was first reached through. The live equivalent of
- * src/layout.py's _build_circulation_edges.
+ * Shared walls between unrotated rectangles: which axis the wall is
+ * perpendicular to and its midpoint. Used to suggest door arrows
+ * (arrows.ts).
  */
-import { centerOf, rectOf } from "./rect";
-import { DOOR_INSET_M, type Box, type Point, type Rect } from "./types";
+import type { Point, Rect } from "./types";
 
 export interface Touch {
   axis: "x" | "y";
@@ -36,48 +34,4 @@ export function touchingEdge(a: Rect, b: Rect, tol: number): Touch | null {
     }
   }
   return null;
-}
-
-export function perpendicularArrow(t: Touch, from: Point): [Point, Point] {
-  const [mx, my] = t.mid;
-  if (t.axis === "x") {
-    const s = from[0] < mx ? -1 : 1;
-    return [
-      [mx + s * DOOR_INSET_M, my],
-      [mx - s * DOOR_INSET_M, my],
-    ];
-  }
-  const s = from[1] < my ? -1 : 1;
-  return [
-    [mx, my + s * DOOR_INSET_M],
-    [mx, my - s * DOOR_INSET_M],
-  ];
-}
-
-const TOUCH_TOL_M = 0.04;
-
-export function doorArrows(live: Box[]): [Point, Point][] {
-  let start = live.findIndex((b) => b.isEntry);
-  if (start === -1) start = live.findIndex((b) => b.roomType === "stair");
-  if (start === -1) return [];
-  const rects = live.map(rectOf);
-  const centers = rects.map(centerOf);
-  const visited = new Array(live.length).fill(false);
-  visited[start] = true;
-  const queue = [start];
-  const segs: [Point, Point][] = [];
-  while (queue.length) {
-    const cur = queue.shift()!;
-    for (let j = 0; j < live.length; j++) {
-      if (visited[j]) continue;
-      // An ellipse has no wall to share; it gets no arrow for now.
-      if (live[j].shape === "circle" || live[cur].shape === "circle") continue;
-      const touch = touchingEdge(rects[cur], rects[j], TOUCH_TOL_M);
-      if (!touch) continue;
-      visited[j] = true;
-      segs.push(perpendicularArrow(touch, centers[cur]));
-      queue.push(j);
-    }
-  }
-  return segs;
 }

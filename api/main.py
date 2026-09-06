@@ -57,13 +57,14 @@ class ProjectSummary(BaseModel):
 
 
 class SavedProjectIn(BaseModel):
-    """A layout as the canvas holds it. The boxes are stored exactly as the
-    frontend sends them (plan-frame meters, its own field names) and handed
-    back untouched: the browser owns that shape, and a copy of it here
-    would only be a second thing to keep in step."""
+    """A layout as the canvas holds it. The boxes and door arrows are
+    stored exactly as the frontend sends them (plan-frame meters, its own
+    field names) and handed back untouched: the browser owns that shape,
+    and a copy of it here would only be a second thing to keep in step."""
 
     name: str
     boxes: list[dict[str, Any]] = Field(default_factory=list)
+    arrows: list[dict[str, Any]] = Field(default_factory=list)
     storeys: int = Field(default=1, ge=1)
 
 

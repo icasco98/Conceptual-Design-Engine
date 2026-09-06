@@ -62,6 +62,27 @@ export const IconReset = ({ size = 17, className }: P) =>
   );
 export const IconRect = ({ size = 17, className }: P) => svg(<rect x="4" y="6" width="16" height="12" rx="1" />, size, className);
 export const IconCircle = ({ size = 17, className }: P) => svg(<circle cx="12" cy="12" r="8" />, size, className);
+export const IconArrow = ({ size = 17, className }: P) => svg(<><path d="M4 12h14" /><path d="m13 7 5 5-5 5" /></>, size, className);
+export const IconMagnet = ({ size = 17, className }: P) =>
+  svg(
+    <>
+      <path d="M6 4v8a6 6 0 0 0 12 0V4" />
+      <path d="M6 4h4v8a2 2 0 0 0 4 0V4h4" />
+    </>,
+    size,
+    className,
+  );
+export const IconSuggest = ({ size = 17, className }: P) =>
+  svg(
+    <>
+      <path d="M4 17h6" />
+      <path d="m8 14 3 3-3 3" />
+      <path d="M14 7h6" />
+      <path d="m18 4 3 3-3 3" />
+    </>,
+    size,
+    className,
+  );
 export const IconMinus = ({ size = 15, className }: P) => svg(<path d="M5 12h14" />, size, className);
 export const IconPlus = ({ size = 15, className }: P) => svg(<path d="M12 5v14M5 12h14" />, size, className);
 export const IconFit = ({ size = 15, className }: P) =>

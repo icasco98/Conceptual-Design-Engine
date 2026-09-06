@@ -1,6 +1,6 @@
 /** Wire shapes for the thin backend (api/main.py): health, and saved
  *  layouts. The layout itself is the canvas's own boxes, stored as-is. */
-import type { Box } from "../geometry/types";
+import type { Arrow, Box } from "../geometry/types";
 
 export type CategoryKey = "category_a" | "category_b" | "category_c";
 
@@ -15,6 +15,7 @@ export interface ProjectSummary {
  *  second copy of the truth. */
 export interface LayoutBody {
   boxes: Box[];
+  arrows: Arrow[];
   storeys: number;
 }
 

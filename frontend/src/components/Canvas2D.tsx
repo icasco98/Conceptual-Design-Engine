@@ -1,8 +1,13 @@
 /**
  * The plan: every zone on the current storey as a shape you can select,
  * drag, resize (corner handles), rotate (top handle) and delete, over a
- * blank sheet and, on an upper level, a ghost of the storey below. The
- * building outline and door arrows recompute from wherever the zones are.
+ * blank sheet and, on an upper level, the dashed outline of the storey
+ * below. The building outline recomputes from wherever the zones are.
+ *
+ * Door arrows are yours: each sits on a wall of its host zone, always
+ * perpendicular to it. Drag one to slide it along the wall or onto
+ * another wall of the same zone; the handles flip or delete it; the
+ * Arrow tool puts a new one on the wall you click.
  *
  * Tools (the rail): Select rubber-bands a selection when you drag empty
  * sheet; Pan moves the view; Rectangle and Circle draw a new zone. With
@@ -28,12 +33,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { CategoryKey } from "../api/types";
+import { arrowSegment } from "../geometry/arrows";
 import { displayShapes } from "../geometry/carve";
-import { doorArrows } from "../geometry/doors";
 import { footprintRings, ringsToPath } from "../geometry/footprint";
 import { polyArea, polyOfBox } from "../geometry/poly";
 import { liveBoxes, snapToGrid, snapToNearbyNeighbors } from "../geometry/snap";
-import { GRID_M, type Box, type Poly, type Rect } from "../geometry/types";
+import { GRID_M, type Arrow, type Box, type Poly, type Rect } from "../geometry/types";
 import { IconFit, IconMinus, IconPlus } from "./icons";
 import { CATEGORY_WASH, INK, fillFor, zoneFill } from "../palette";
 import { ZONE_LABELS } from "../rooms";
@@ -50,7 +55,6 @@ const MAX_ZOOM = 12;
 const HANDLE = 0.42;
 /** A drawn zone smaller than this on either side is a slip, not a zone. */
 const MIN_DRAW_M = 0.5;
-const WET_TYPES = new Set(["bathroom", "half_bath", "kitchen", "laundry"]);
 
 type Corner = "nw" | "ne" | "sw" | "se";
 
@@ -59,7 +63,8 @@ type Gesture =
   | { kind: "resize"; id: string; corner: Corner; start: Rect; startX: number; startY: number; snapshot: Box[] }
   | { kind: "rotate"; ids: string[]; cx: number; cy: number; startAngle: number; snapshot: Box[] }
   | { kind: "marquee"; x0: number; y0: number; additive: boolean }
-  | { kind: "draw"; shape: "rect" | "circle"; x0: number; y0: number };
+  | { kind: "draw"; shape: "rect" | "circle"; x0: number; y0: number }
+  | { kind: "arrow"; id: string };
 
 function pointsOf(poly: Poly): string {
   return poly.map((p) => `${p[0].toFixed(3)},${p[1].toFixed(3)}`).join(" ");
@@ -113,6 +118,13 @@ export function Canvas2D() {
   const release = useStore((s) => s.release);
   const showGrid = useStore((s) => s.showGrid);
   const showGhost = useStore((s) => s.showGhost);
+  const arrows = useStore((s) => s.arrows);
+  const selectedArrow = useStore((s) => s.selectedArrow);
+  const selectArrow = useStore((s) => s.selectArrow);
+  const addArrow = useStore((s) => s.addArrow);
+  const moveArrow = useStore((s) => s.moveArrow);
+  const flipArrow = useStore((s) => s.flipArrow);
+  const deleteArrow = useStore((s) => s.deleteArrow);
 
   const gRef = useRef<SVGGElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -133,15 +145,19 @@ export function Canvas2D() {
   }, []);
 
   const live = useMemo(() => liveBoxes(boxes, level), [boxes, level]);
-  const below = useMemo(() => {
-    if (!showGhost || level === 0) return [];
-    const here = new Set(live.map((b) => b.id));
-    // A box spanning both storeys is already drawn live; no ghost of it.
-    return liveBoxes(boxes, level - 1).filter((b) => !here.has(b.id));
-  }, [boxes, level, showGhost, live]);
   const shapes = useMemo(() => displayShapes(live), [live]);
   const footprint = useMemo(() => ringsToPath(footprintRings(shapes.map((s) => s.page))), [shapes]);
-  const arrows = useMemo(() => doorArrows(live), [live]);
+  /** The building outline of the storey below, to line walls up against.
+   *  Only the outline: room names and walls from below were clutter. */
+  const belowOutline = useMemo(() => {
+    if (!showGhost || level === 0) return "";
+    const under = displayShapes(liveBoxes(boxes, level - 1));
+    return ringsToPath(footprintRings(under.map((s) => s.page)));
+  }, [boxes, level, showGhost]);
+  const liveArrows = useMemo(() => {
+    const here = new Map(live.map((b) => [b.id, b]));
+    return arrows.filter((a) => a.level === level && here.has(a.hostId)).map((a) => ({ arrow: a, host: here.get(a.hostId)! }));
+  }, [arrows, live, level]);
 
   const width = SHEET.width;
   const depth = SHEET.depth;
@@ -243,6 +259,8 @@ export function Canvas2D() {
         return { ...b, rotation: (((b.rotation + delta) % 360) + 360) % 360, left: ncx - b.width / 2, top: ncy - b.height / 2 };
       });
       setBoxes(mergeRef.current(turned));
+    } else if (g.kind === "arrow") {
+      moveArrow(g.id, [p.x, p.y]);
     } else if (g.kind === "marquee") {
       setRubber({ left: Math.min(g.x0, p.x), top: Math.min(g.y0, p.y), width: Math.abs(p.x - g.x0), height: Math.abs(p.y - g.y0) });
     } else if (g.kind === "draw") {
@@ -256,7 +274,7 @@ export function Canvas2D() {
       const top = y1 < g.y0 ? g.y0 - h : g.y0;
       setRubber({ left, top, width: w, height: h });
     }
-  }, [setBoxes, setRubber]);
+  }, [moveArrow, setBoxes, setRubber]);
 
   const onPointerMove = useCallback(
     (e: React.PointerEvent) => {
@@ -306,6 +324,7 @@ export function Canvas2D() {
       setTool("select");
       return;
     }
+    if (g.kind === "arrow") return;
     commitBoxes(useStore.getState().boxes);
   }, [addBox, commitBoxes, runFrame, select, selectMany, setRubber, setTool]);
 
@@ -325,22 +344,32 @@ export function Canvas2D() {
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA")) return;
       const state = useStore.getState();
-      if ((e.key === "Delete" || e.key === "Backspace") && state.selected.length) {
+      if ((e.key === "Delete" || e.key === "Backspace") && state.selectedArrow) {
+        e.preventDefault();
+        deleteArrow(state.selectedArrow);
+      } else if ((e.key === "Delete" || e.key === "Backspace") && state.selected.length) {
         e.preventDefault();
         deleteBoxes(state.selected);
       } else if (e.key === "Escape") {
         select(null);
+        selectArrow(null);
         setTool("select");
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [deleteBoxes, select, setTool]);
+  }, [deleteArrow, deleteBoxes, select, selectArrow, setTool]);
 
   const startMove = (e: React.PointerEvent, b: Box) => {
     if (tool === "rect" || tool === "circle") return; // drawing starts on the sheet below
     e.stopPropagation();
     e.preventDefault();
+    if (tool === "arrow") {
+      const p = toMeters(e);
+      addArrow(b.id, [p.x, p.y]);
+      setTool("select");
+      return;
+    }
     const inGroup = selected.includes(b.id) && selected.length > 1;
     if (!inGroup) select(b.id, e.shiftKey);
     // Shift-click on a grouped box toggles it out rather than dragging.
@@ -396,6 +425,24 @@ export function Canvas2D() {
 
   const carvesSomething = (b: Box) => live.some((o) => o.carvedBy.includes(b.id));
 
+  const startArrowDrag = (e: React.PointerEvent, a: Arrow) => {
+    e.stopPropagation();
+    e.preventDefault();
+    selectArrow(a.id);
+    gesture.current = { kind: "arrow", id: a.id };
+    capture(e);
+  };
+  const onFlipArrow = (e: React.PointerEvent, a: Arrow) => {
+    e.stopPropagation();
+    e.preventDefault();
+    flipArrow(a.id);
+  };
+  const onDeleteArrow = (e: React.PointerEvent, a: Arrow) => {
+    e.stopPropagation();
+    e.preventDefault();
+    deleteArrow(a.id);
+  };
+
   /** Carve with this zone, or release its cuts if it already carves. */
   const onCarve = (e: React.PointerEvent, b: Box) => {
     e.stopPropagation();
@@ -447,12 +494,13 @@ export function Canvas2D() {
         gesture.current = { kind: "draw", shape: tool, x0: snapToGrid(p.x), y0: snapToGrid(p.y) };
         setRubber({ left: snapToGrid(p.x), top: snapToGrid(p.y), width: 0, height: 0 });
       } else {
+        selectArrow(null);
         gesture.current = { kind: "marquee", x0: p.x, y0: p.y, additive: e.shiftKey };
         setRubber(null);
       }
       e.currentTarget.setPointerCapture(e.pointerId);
     },
-    [cam.x, cam.y, setRubber, toMeters, tool],
+    [cam.x, cam.y, selectArrow, setRubber, toMeters, tool],
   );
 
   const onPanMove = useCallback((e: React.PointerEvent) => {
@@ -518,6 +566,7 @@ export function Canvas2D() {
           Drag on the sheet to draw a {tool === "rect" ? "rectangle (hold Shift for a square)" : "circle"}. Esc to cancel.
         </div>
       )}
+      {tool === "arrow" && <div className="pane-hint">Click a zone's wall to put a door arrow on it. Esc to cancel.</div>}
       <svg
         ref={svgRef}
         className="plan-svg"
@@ -548,27 +597,10 @@ export function Canvas2D() {
           {/* the sheet: a reference area, not a boundary */}
           <rect x={0} y={0} width={width} height={depth} fill={INK.sheet} stroke={INK.site} strokeWidth={0.04} strokeDasharray="0.3 0.3" />
           {showGrid && <rect x={0} y={0} width={width} height={depth} fill="url(#grid)" />}
-          {/* ghost of the level below */}
-          {below.map((b) => {
-            const cx = b.left + b.width / 2;
-            const cy = b.top + b.height / 2;
-            const wet = WET_TYPES.has(b.roomType);
-            return (
-              <g key={`ghost-${b.id}`} className="ghost">
-                <polygon
-                  points={pointsOf(polyOfBox(b))}
-                  fill={wet ? "#2a78d6" : "none"}
-                  fillOpacity={wet ? 0.12 : 0}
-                  stroke="#888"
-                  strokeWidth={0.04}
-                  strokeDasharray="0.3 0.2"
-                />
-                <text x={cx} y={cy} className="ghost-label" textAnchor="middle" dominantBaseline="middle">
-                  {b.name}
-                </text>
-              </g>
-            );
-          })}
+          {/* the outline of the storey below */}
+          {belowOutline && (
+            <path d={belowOutline} className="ghost" fill="none" stroke="#8a8f8b" strokeWidth={0.07} strokeDasharray="0.45 0.25" strokeLinejoin="round" />
+          )}
           {/* footprint */}
           <path d={footprint} fill="none" stroke={INK.footprint} strokeWidth={0.2} strokeLinejoin="round" />
           {/* zones */}
@@ -676,20 +708,45 @@ export function Canvas2D() {
               </g>
             );
           })}
-          {/* door arrows */}
-          {arrows.map(([a, c], i) => (
-            <line
-              key={i}
-              x1={a[0]}
-              y1={a[1]}
-              x2={c[0]}
-              y2={c[1]}
-              stroke="#1a1a1a"
-              strokeOpacity={0.55}
-              strokeWidth={0.07}
-              markerEnd="url(#door-arrow)"
-            />
-          ))}
+          {/* door arrows: on their host's wall, perpendicular to it */}
+          {liveArrows.map(({ arrow, host }) => {
+            const [a, c] = arrowSegment(host, arrow);
+            const sel = arrow.id === selectedArrow;
+            const mx = (a[0] + c[0]) / 2;
+            const my = (a[1] + c[1]) / 2;
+            return (
+              <g key={arrow.id} className={`arrow ${sel ? "selected" : ""}`} pointerEvents="all" onPointerDown={(e) => startArrowDrag(e, arrow)}>
+                {/* a fat invisible stroke so a thin arrow is easy to grab */}
+                <line x1={a[0]} y1={a[1]} x2={c[0]} y2={c[1]} stroke="transparent" strokeWidth={0.5} />
+                <line
+                  x1={a[0]}
+                  y1={a[1]}
+                  x2={c[0]}
+                  y2={c[1]}
+                  stroke={sel ? "#2f5d7c" : "#1a1a1a"}
+                  strokeOpacity={sel ? 1 : 0.55}
+                  strokeWidth={sel ? 0.1 : 0.07}
+                  markerEnd="url(#door-arrow)"
+                />
+                {sel && (
+                  <>
+                    <circle className="handle flip" cx={mx + 0.7} cy={my - 0.7} r={HANDLE / 2} onPointerDown={(e) => onFlipArrow(e, arrow)}>
+                      <title>Flip the arrow</title>
+                    </circle>
+                    <text x={mx + 0.7} y={my - 0.7} className="handle-glyph" textAnchor="middle" dominantBaseline="middle">
+                      ⇅
+                    </text>
+                    <circle className="handle delete" cx={mx + 1.25} cy={my - 0.7} r={HANDLE / 2} onPointerDown={(e) => onDeleteArrow(e, arrow)}>
+                      <title>Delete the arrow</title>
+                    </circle>
+                    <text x={mx + 1.25} y={my - 0.7} className="handle-glyph" textAnchor="middle" dominantBaseline="middle">
+                      ×
+                    </text>
+                  </>
+                )}
+              </g>
+            );
+          })}
           {/* the marquee, or the zone being drawn */}
           {rubber && gesture.current?.kind === "marquee" && (
             <rect x={rubber.left} y={rubber.top} width={rubber.width} height={rubber.height} className="marquee" />
