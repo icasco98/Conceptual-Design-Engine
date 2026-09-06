@@ -1,45 +1,28 @@
 /**
  * The single source of truth for what is on the canvas.
  *
- * The 2D canvas, the 3D view, the schedule and the checks all read from
- * here and nothing else. Python supplies a recommendation (boxes per
- * level) and answers questions about an arrangement; the arrangement
- * itself lives here, in plan-frame meters, and every edit goes through
- * these actions.
+ * The 2D canvas, the 3D view, the schedule and the status bar all read
+ * from here and nothing else. The arrangement lives here, in plan-frame
+ * meters, and every edit goes through these actions. Nothing outside the
+ * browser generates or checks it: the backend only keeps saved layouts.
  */
 import { create } from "zustand";
 
 import { api } from "../api/client";
-import { arrangementToBoxes, boxesToArrangement, buildingToBoxes, envelopeToPlan } from "../api/convert";
-import type {
-  AccessProblem,
-  ChatMessage,
-  Issue,
-  LayoutOut,
-  LayoutPlan,
-  Project,
-  ProjectSummary,
-} from "../api/types";
-import { applyRotations, rotationReport } from "../geometry/rotate";
-import type { Box, Envelope } from "../geometry/types";
+import type { ProjectSummary } from "../api/types";
+import type { Box } from "../geometry/types";
+import { SAMPLE_STOREYS, sampleBoxes } from "../sample";
 
 /** What the 3D pane draws: coloured zones per room, or one grey volume. */
 export type MassingMode = "zones" | "mass";
 
 export interface State {
-  project: Project | null;
-  layoutPlan: LayoutPlan | null;
-  envelope: Envelope | null;
   boxes: Box[];
+  /** What Reset returns to: the sample, or the layout as it was loaded. */
   recommended: Box[];
+  storeys: number;
   level: number;
   selected: string[];
-  history: ChatMessage[];
-  issues: Issue[];
-  accessProblems: AccessProblem[];
-  stackingIssues: Issue[];
-  notes: string;
-  hasApiKey: boolean;
   busy: string | null;
   error: string | null;
   showGrid: boolean;
@@ -50,8 +33,6 @@ export interface State {
   projects: ProjectSummary[];
 
   boot: () => Promise<void>;
-  sendMessage: (text: string) => Promise<void>;
-  applyLayout: (out: LayoutOut, project: Project) => void;
   setBoxes: (boxes: Box[]) => void;
   commitBoxes: (boxes: Box[]) => void;
   select: (id: string | null, additive?: boolean) => void;
@@ -61,12 +42,11 @@ export interface State {
   setMassing: (massing: MassingMode) => void;
   toggleGrid: () => void;
   toggleGhost: () => void;
-  runCheck: () => Promise<void>;
   refreshProjects: () => Promise<void>;
   saveProject: (name: string) => Promise<void>;
   loadProject: (id: string) => Promise<void>;
   deleteProject: (id: string) => Promise<void>;
-  newProject: () => Promise<void>;
+  newProject: () => void;
   clearError: () => void;
 }
 
@@ -83,22 +63,12 @@ function syncStairs(boxes: Box[], changedIds: Set<string>): Box[] {
   });
 }
 
-let checkTimer: ReturnType<typeof setTimeout> | null = null;
-
 export const useStore = create<State>((set, get) => ({
-  project: null,
-  layoutPlan: null,
-  envelope: null,
   boxes: [],
   recommended: [],
+  storeys: SAMPLE_STOREYS,
   level: 0,
   selected: [],
-  history: [],
-  issues: [],
-  accessProblems: [],
-  stackingIssues: [],
-  notes: "",
-  hasApiKey: false,
   busy: null,
   error: null,
   showGrid: false,
@@ -109,89 +79,33 @@ export const useStore = create<State>((set, get) => ({
   projects: [],
 
   async boot() {
+    get().newProject();
+    // The saved-layout list is the only thing that needs the backend. The
+    // editor itself has already opened on the sample by this point, so a
+    // missing backend (plain `vite dev`, say) costs nothing but this list.
     try {
-      const health = await api.health();
-      set({ hasApiKey: health.has_api_key });
-      await get().newProject();
+      await api.health();
       await get().refreshProjects();
-    } catch (e) {
-      set({ error: (e as Error).message });
+    } catch {
+      /* no backend: the editor still works, there is just nowhere to save */
     }
   },
 
-  async newProject() {
-    set({ busy: "Loading the sample project…" });
-    try {
-      const sample = await api.sample();
-      const out = await api.layout(sample.project, sample.layout_plan);
-      set({ layoutPlan: sample.layout_plan, history: [], savedId: null, savedName: "" });
-      get().applyLayout(out, sample.project);
-    } catch (e) {
-      set({ error: (e as Error).message });
-    } finally {
-      set({ busy: null });
-    }
+  newProject() {
+    const boxes = sampleBoxes();
+    set({ boxes, recommended: boxes, storeys: SAMPLE_STOREYS, selected: [], level: 0, savedId: null, savedName: "" });
   },
 
-  applyLayout(out, project) {
-    const boxes = out.building ? buildingToBoxes(out.building.levels, project) : [];
-    set({
-      project,
-      envelope: out.envelope ? envelopeToPlan(out.envelope, project) : null,
-      boxes,
-      recommended: boxes,
-      issues: out.issues,
-      accessProblems: out.access_problems,
-      stackingIssues: out.stacking_issues,
-      notes: out.notes,
-      selected: [],
-      level: Math.min(get().level, Math.max(0, project.storeys - 1)),
-    });
-  },
-
-  async sendMessage(text) {
-    const history: ChatMessage[] = [...get().history, { role: "user", content: text }];
-    set({ history, busy: "Reading that…" });
-    try {
-      const project = get().project;
-      const arrangement = project ? boxesToArrangement(get().boxes, project) : null;
-      const out = await api.chat(history, arrangement);
-      const next: ChatMessage[] = [...history, { role: "assistant", content: out.assistant_message }];
-      if (out.explanation) next.push({ role: "assistant", content: out.explanation });
-      set({ history: next, layoutPlan: out.layout_plan, busy: "Arranging the rooms…" });
-      const layout = await api.layout(out.project, out.layout_plan);
-      get().applyLayout(layout, out.project);
-      // Rotations asked for in words go through the same rules a hand
-      // rotation goes through, on the arrangement that was just packed.
-      // Whatever will not fit is said out loud rather than dropped.
-      if (out.rotations.length) {
-        const envelope = get().envelope;
-        if (envelope) {
-          const outcome = applyRotations(get().boxes, out.rotations, envelope, out.project.storeys);
-          get().commitBoxes(outcome.boxes);
-          const report = rotationReport(outcome);
-          if (report) set({ history: [...get().history, { role: "assistant", content: report }] });
-        }
-      }
-    } catch (e) {
-      set({ history: [...history, { role: "assistant", content: `Couldn't reach Claude: ${(e as Error).message}` }] });
-    } finally {
-      set({ busy: null });
-    }
-  },
-
-  /** Mid-gesture: every frame. No stair sync, no check. */
+  /** Mid-gesture: every frame. No stair sync. */
   setBoxes(boxes) {
     set({ boxes });
   },
 
-  /** Gesture over: stairs mirrored across levels, checks re-run. */
+  /** Gesture over: stairs mirrored across levels. */
   commitBoxes(boxes) {
     const before = new Map(get().boxes.map((b) => [b.id, b]));
     const changed = new Set(boxes.filter((b) => before.get(b.id) !== b).map((b) => b.id));
     set({ boxes: syncStairs(boxes, changed) });
-    if (checkTimer) clearTimeout(checkTimer);
-    checkTimer = setTimeout(() => void get().runCheck(), 250);
   },
 
   select(id, additive = false) {
@@ -215,7 +129,6 @@ export const useStore = create<State>((set, get) => ({
 
   resetLayout() {
     set({ boxes: get().recommended, selected: [] });
-    void get().runCheck();
   },
 
   setLevel(level) {
@@ -231,17 +144,6 @@ export const useStore = create<State>((set, get) => ({
     set({ showGhost: !get().showGhost });
   },
 
-  async runCheck() {
-    const project = get().project;
-    if (!project) return;
-    try {
-      const out = await api.check(project, boxesToArrangement(get().boxes, project));
-      set({ accessProblems: out.access_problems, stackingIssues: out.stacking_issues });
-    } catch (e) {
-      set({ error: (e as Error).message });
-    }
-  },
-
   async refreshProjects() {
     try {
       set({ projects: await api.listProjects() });
@@ -251,9 +153,8 @@ export const useStore = create<State>((set, get) => ({
   },
 
   async saveProject(name) {
-    const { project, layoutPlan, boxes, history, savedId } = get();
-    if (!project) return;
-    const body = { name, project, layout_plan: layoutPlan, arrangement: boxesToArrangement(boxes, project), history };
+    const { boxes, storeys, savedId } = get();
+    const body = { name, boxes, storeys };
     try {
       const saved = savedId ? await api.updateProject(savedId, body) : await api.createProject(body);
       set({ savedId: saved.id, savedName: saved.name });
@@ -267,14 +168,15 @@ export const useStore = create<State>((set, get) => ({
     set({ busy: "Loading…" });
     try {
       const saved = await api.getProject(id);
-      const out = await api.layout(saved.project, saved.layout_plan);
-      set({ layoutPlan: saved.layout_plan, history: saved.history, savedId: saved.id, savedName: saved.name });
-      get().applyLayout(out, saved.project);
-      if (saved.arrangement) {
-        const boxes = arrangementToBoxes(saved.arrangement, saved.project, get().recommended);
-        set({ boxes });
-        await get().runCheck();
-      }
+      set({
+        boxes: saved.boxes,
+        recommended: saved.boxes,
+        storeys: saved.storeys,
+        level: Math.min(get().level, Math.max(0, saved.storeys - 1)),
+        selected: [],
+        savedId: saved.id,
+        savedName: saved.name,
+      });
     } catch (e) {
       set({ error: (e as Error).message });
     } finally {

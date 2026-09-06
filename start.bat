@@ -14,12 +14,6 @@ where npm >nul 2>nul || (
   pause & exit /b 1
 )
 
-if not exist .env (
-  copy .env.example .env >nul
-  echo Created .env - open it in Notepad and paste your Anthropic API key after ANTHROPIC_API_KEY=
-  echo The diagram works without it; the chat needs it.
-)
-
 if not exist .venv (
   echo Setting up Python ^(first run only^)...
   where py >nul 2>nul && (py -3 -m venv .venv) || (python -m venv .venv)

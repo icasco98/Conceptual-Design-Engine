@@ -1,189 +1,8 @@
-/** Wire shapes, mirroring src/models.py and api/serialize.py. */
-
-export type EdgePosition = "front" | "back" | "left" | "right";
-
-export interface SiteEdge {
-  position: EdgePosition;
-  adjacency: "street" | "neighbor";
-  setback_override_m: number | null;
-}
-
-export interface Site {
-  width_m: number | null;
-  depth_m: number | null;
-  rotation_deg: number | null;
-  edges: SiteEdge[];
-}
-
-export interface Room {
-  name: string;
-  room_type: string;
-  count: number;
-  explicit_width_m: number | null;
-  explicit_depth_m: number | null;
-  is_entry: boolean;
-  priority_notes: string | null;
-  levels: number[];
-}
-
-export interface Project {
-  owner: string | null;
-  site: Site;
-  setbacks: { street_m: number; neighbor_m: number };
-  max_building_height_m: number;
-  hallway_width_m: number;
-  storeys: number;
-  storey_height_m: number;
-  rooms: Room[];
-  priorities: string[];
-  notes: string | null;
-}
+/** Wire shapes for the thin backend (api/main.py): health, and saved
+ *  layouts. The layout itself is the canvas's own boxes, stored as-is. */
+import type { Box } from "../geometry/types";
 
 export type CategoryKey = "category_a" | "category_b" | "category_c";
-
-export interface RoomAspect {
-  room_name: string;
-  wants: "morning_sun" | "evening_sun" | "off_the_street";
-}
-
-export interface Adjacency {
-  room_a: string;
-  room_b: string;
-  relation: "near" | "apart";
-  strength: "strong" | "mild";
-}
-
-export interface LayoutPlan {
-  grouping_label: string;
-  category_labels: Record<CategoryKey, string>;
-  assignments: { room_name: string; category: CategoryKey }[];
-  placement_order: string[];
-  /** Pairings the packer scores against. Carried back to /api/layout
-   *  verbatim, so a plan keeps the reasoning it was built from. */
-  adjacencies: Adjacency[];
-  /** What a room wants from the sun or the street, named by intent — the
-   *  packer works out which way that is on this particular site. */
-  orientations: RoomAspect[];
-  rationale: string;
-}
-
-export interface EnvelopeOut {
-  valid: boolean;
-  width_m: number;
-  depth_m: number;
-  area_m2: number;
-  front_setback_m: number;
-  back_setback_m: number;
-  left_setback_m: number;
-  right_setback_m: number;
-}
-
-export interface BoxOut {
-  name: string;
-  base_name: string;
-  room_type: string;
-  is_entry: boolean;
-  level: number;
-  x_m: number;
-  y_m: number;
-  width_m: number;
-  depth_m: number;
-  min_width_m: number;
-  min_depth_m: number;
-}
-
-export interface CorridorOut {
-  x_m: number;
-  y_m: number;
-  width_m: number;
-  depth_m: number;
-  min_width_m: number;
-  min_depth_m: number;
-}
-
-export interface LevelOut {
-  level: number;
-  rooms: BoxOut[];
-  corridors: CorridorOut[];
-  footprint: [number, number][];
-  circulation_edges: [[number, number], [number, number]][];
-}
-
-export interface Issue {
-  severity: "error" | "warning";
-  code: string;
-  message: string;
-}
-
-export interface AccessProblem {
-  room_name: string;
-  kind: string;
-  via: string[];
-  message: string;
-}
-
-export interface LayoutOut {
-  envelope: EnvelopeOut | null;
-  issues: Issue[];
-  building: { levels: LevelOut[] } | null;
-  access_problems: AccessProblem[];
-  stacking_issues: Issue[];
-  notes: string;
-  circulation_ratio: number;
-  placement_order: string[];
-}
-
-export interface BoxIn {
-  name: string;
-  room_type: string;
-  level: number;
-  x_m: number;
-  y_m: number;
-  width_m: number;
-  depth_m: number;
-  is_entry: boolean;
-  rotation_deg: number;
-  deleted: boolean;
-}
-
-export interface CorridorIn {
-  level: number;
-  x_m: number;
-  y_m: number;
-  width_m: number;
-  depth_m: number;
-  rotation_deg: number;
-  deleted: boolean;
-}
-
-export interface ArrangementIn {
-  boxes: BoxIn[];
-  corridors: CorridorIn[];
-}
-
-export interface CheckOut {
-  access_problems: AccessProblem[];
-  stacking_issues: Issue[];
-}
-
-export interface ChatMessage {
-  role: "user" | "assistant";
-  content: string;
-}
-
-export interface RoomRotation {
-  room_name: string;
-  degrees: number;
-}
-
-export interface ChatOut {
-  assistant_message: string;
-  explanation: string | null;
-  project: Project;
-  layout_plan: LayoutPlan | null;
-  /** Rooms the owner asked to have turned. Requests: the canvas decides. */
-  rotations: RoomRotation[];
-}
 
 export interface ProjectSummary {
   id: string;
@@ -192,9 +11,11 @@ export interface ProjectSummary {
   updated_at: string;
 }
 
-export interface SavedProject extends ProjectSummary {
-  project: Project;
-  layout_plan: LayoutPlan | null;
-  arrangement: ArrangementIn | null;
-  history: ChatMessage[];
+/** What a saved layout holds. Plain plan-frame boxes: no conversion, no
+ *  second copy of the truth. */
+export interface LayoutBody {
+  boxes: Box[];
+  storeys: number;
 }
+
+export interface SavedProject extends ProjectSummary, LayoutBody {}

@@ -1,302 +1,99 @@
-# Conceptual Design Engine
+# Conceptual Design Engine — Zoning Editor
 
-A web-based tool for the conceptual design phase of architecture — the
-sketchy, upstream stage before any detailed floor plan exists. Three
-sequential stages are planned:
+A web tool for the conceptual design phase of a house: the sketchy stage
+before any detailed floor plan, when you are deciding what goes roughly
+where. You draw the rooms by hand on a blank sheet; the tool keeps a live
+room schedule beside the drawing, traces the building outline, draws the
+door arrows, and shows the same arrangement as a 3D massing model.
 
-1. **Zoning diagram** — what this repo currently builds.
-2. **Massing** — 3D solid geometry + fenestration, informed by weather/solar
-   data. Not started.
-3. **Optimization** — thermal performance, daylight, and view/privacy
-   trade-offs. Not started.
+**This branch is a fork.** The version on
+`claude/design-engine-tool-access-92y89p` generated the zoning diagram for
+you — a Claude conversation extracted the brief, Python packed and scored
+candidate plans inside a site's setbacks — and its results were never
+realistic: a long central hallway every time, rigid rectangles only, an
+unconvincing footprint. Rather than debug that in place, this branch
+isolates the interactive editor as its own clean, manually driven tool.
+Nothing has been thrown away: every module removed here is still on that
+branch and in this repository's history, and the intent is to reintegrate
+assisted generation once the editor is good on its own.
 
-## Phase 1 — Zoning Diagram Generator
+What was kept, exactly as it was: the interface (React, Vite, TypeScript,
+zustand), the SVG plan with its drag / resize / rotate / delete gestures,
+pan and zoom, the schedule, the 3D view (Three.js) in both its readings,
+and the thin FastAPI server that serves the built app and keeps saved
+layouts.
 
-Goal: turn a plain-language description of a house project into a
-zoning/bubble diagram of its rooms, before any detailed floor plan exists.
+What was removed: every Claude call and the chat; the packers, the
+planner and its scoring; the access and stacking checks; the site, its
+edges, the setbacks and the buildable envelope. The canvas is a blank,
+unconstrained sheet.
 
-**Current scope (this commit):** all four steps of Phase 1 —
+## The plan, in stages
 
-The app opens on a worked example — a 20 x 28 m lot with a zoned program
-already inside it (`src/sample_project.py`) — so the first thing on screen
-is a live diagram to drag around rather than an empty canvas. It is a
-plain literal, needs no API call, and is replaced wholesale by your own
-project the moment you send your first chat message. It is never merged
-with yours and never sent to Claude as context.
+Each stage leaves the app working and is confirmed in a browser before
+the next begins.
 
-1. **Conversational intake.** You describe your project in the chat (site
-   size, orientation, which sides face the street vs. neighbors, rooms you
-   need, priorities). Claude extracts a structured site + room program from
-   the conversation as you go, asking for whatever's still missing.
-2. **Geometry & validation.** Plain Python computes the buildable envelope
-   (site rectangle minus setbacks) and checks the room program against it —
-   minimum sizes, hallway width, total area, whether an entry is marked.
-   Claude only explains what Python found, in plain language; it never
-   computes the numbers itself.
+1. **Fork and strip.** Done. The editor opens on a hand-placed sample
+   house (`frontend/src/sample.ts`) — two storeys, rooms directly against
+   each other, no corridor spine — so that trying it never means drawing
+   a plan from nothing. Plan, schedule and 3D all work with no backend
+   and no API key.
+2. **Drawing.** Draw new zones as rectangles, squares or circles; rotate
+   any shape freely; a schedule listing name, size, rotation, floor and
+   priority, live-synced with the canvas in both directions.
+3. **Floors.** Assign each room to a floor; when viewing one floor, see a
+   ghosted outline of the floors above and below, to line up walls.
+4. **Adjacency and outline.** Arrows between rooms placed next to each
+   other, and the building envelope traced around everything placed.
+5. **Overlap and priority.** Rooms may overlap. Each has a numeric
+   priority; a higher-priority room carves a lower-priority one, never
+   below that room type's hard minimum — a room that would have to go
+   below it is flagged with a red outline for the person to resolve, not
+   auto-resized and not blocked.
+6. **3D.** Confirm the finished 2D editor converts into the massing view.
 
-   Separately, `src/access.py` asks the question an architect asks first:
-   can you actually walk through this plan? It knows which rooms you may
-   pass *through* (a hall, a living room) and which are destinations you
-   never route through (a bedroom, a bathroom, a garage), walks the layout
-   out from the entry, and names anything it can't serve — "the only way to
-   Bedroom 2 is through the Garage". The packer's own guarantee is purely
-   geometric, so this used to go unsaid.
-3. **Layout recommendation.** Once the site and at least one room are
-   described, plain Python packs several candidate arrangements and draws
-   the best one (`src/planner.py`) rather than accepting the first the
-   packer produces. Candidates are scored on rules written down in code,
-   not in a prompt: **access is a hard constraint** (a plan where the only
-   way to a bedroom is through the garage is not a cheaper plan, it's a
-   wrong one), circulation is scored against the 8–12% of floor area a
-   house normally spends on it, private rooms should sit deeper than public
-   ones, and a compact footprint beats a sprawling one.
+## What the editor does today (after stage 1)
 
-   **Corridors are earned, not automatic.** Every gap starts with one, then
-   each is removed if access survives without it — so a corridor keeps its
-   floor area only where a room depends on it to be reachable. Conversely a
-   plan that packs into a single row, which used to get no circulation at
-   all, has one built for it. And because a corridor between two rows only
-   touches those two rows, a plan with several of them gets a spine down
-   one side linking them into one network — without it, a row of bedrooms
-   between two corridors cut off everything beyond.
+- **Plan.** Every room on the current storey is a box: click to select
+  (shift-click for several), drag to move, corner handles to resize, the
+  top handle to rotate in 5° steps, the × to delete. Drag the background
+  to pan, scroll to zoom. A 0.25 m grid can be shown from the rail, and
+  positions snap to it whether or not it is visible; a box dragged within
+  1 m of a facing neighbour snaps to touch it.
+- **Overlaps, for now.** The carve rules from the forked branch are still
+  in place until stage 5 replaces them: the box under the cursor keeps
+  its place and whatever it overlaps gives up the space, never below its
+  minimum; where a room cannot give the space up, the other room is pushed
+  one step. Hallways are never carved and never move. Stage 5 rewrites
+  this around the schedule's priority column.
+- **Schedule.** Width and depth are editable in place and the box follows
+  (growing from its centre); area is read from the shape actually drawn.
+  Clicking a row selects the box and vice versa.
+- **Storeys.** Ground floor and Level 1 tabs; the storey below is ghosted
+  on the upper floor (toggle on the rail). The stair is one rectangle on
+  every level it connects, and an edit to it on one level is mirrored to
+  the others.
+- **Outline and doors.** The building outline is a true polygon union of
+  every room's drawn shape. Door arrows walk the touching graph from the
+  entry (from the stair on an upper floor). Stage 4 replaces this with
+  arrows between any two adjacent rooms.
+- **3D.** Colour by zone: every room extruded to storey height, the
+  current level solid and the others translucent, the stair drawn once as
+  a shaft with the floor plates cut around it. Or one grey volume per
+  storey from its own outline. Drag to orbit, scroll to zoom.
+- **Saved layouts.** Save the boxes as they are; load one back; "Start
+  over with the sample" returns to the sample house. Reset on the rail
+  returns to whatever was last loaded.
 
-   Underneath, the packer (`src/layout.py`): rooms grouped into 3
-   categories Claude picks based on your stated priorities (e.g. privacy
-   level), the entry marked, corridors generated automatically between room
-   clusters, and a circulation graph showing how to get from the entry to
-   any room one hop at a time. Claude only decides the *grouping and
-   adjacency* (which rooms belong together, which should sit near each
-   other); the packer does the actual arithmetic, so it's always
-   geometrically valid — no overlaps, everything fits inside the buildable
-   envelope, every room reachable. The packer also traces the building's
-   own footprint — the outline around the actual rooms and corridors it
-   placed, not the buildable envelope — so the diagram distinguishes
-   "inside the building" from "buildable but unused site."
-4. **Interactive canvas — the diagram itself.** The recommendation above
-   is shown as a single interactive canvas (`frontend/src/components/`):
-   title, color legend, rationale, and a live room schedule in a panel to
-   its left, with every room *and* hallway as a draggable box (nothing
-   here is a fixed zone) so you can explore a different arrangement by
-   hand.
-
-   **Selection.** A box's handles are hidden until you select it —
-   clicking its body (or its row in the schedule) selects it and clears
-   any other selection; shift-clicking adds/removes it from a multi-box
-   selection instead; clicking empty canvas clears the selection. Once
-   selected, each box has:
-   - **Corner handles to resize it** — drag any corner and the opposite
-     one stays put. Only shown for a single (not multi-) selection, since
-     resizing several boxes from one dragged corner is ambiguous.
-   - **A rotate handle**, spinning the box in fixed 5° steps. With more
-     than one box selected, grabbing *any* selected box's rotate handle
-     spins the whole selection together (each box around its own center,
-     by the same angle) — see Multi-select below.
-   - **A delete handle** (hides the box — not a fixed decision, since
-     "Reset to recommended layout" always brings it back). Deletes the
-     whole selection at once if more than one box is selected.
-   - **A 0.25m grid** you can show or hide with a checkbox in the header;
-     independent of that, every drag or resize always snaps position to
-     that same grid, whether or not it's visible. Dragging a box within 1m
-     of a same-facing neighbor also snaps it the rest of the way to touch
-     exactly, so it's easy to close an accidental sliver of empty space
-     between zones instead of pixel-hunting for the exact touching spot.
-
-   **Moving a room: carve first, protect the minimum, push last.** The room
-   you pick up goes exactly where you put it — nothing pushes it back. What
-   it overlaps gives up that space and draws itself around it, so rooms
-   start as plain rectangles and become whatever the layout makes them: an
-   L, a wedge, a notched shape. No room is ever carved below its minimum
-   area or below the minimum rectangle it has to hold, and that's checked
-   against every cut a room is taking at once — three cuts can each look
-   harmless alone and gut a room together. Only where a room can't give the
-   space up does anything move, and then it's the other room, one step,
-   once — never a cascade. A room with nowhere to go is left overlapping
-   rather than scattering the plan.
-
-   Hallways work the other way round: drag a room onto one and the *room*
-   bends around it. Circulation never gives way and never gets shoved.
-
-   Rooms only ever give space up — they never reach beyond their own
-   rectangle to take any. An earlier version had a room next to a rotated
-   neighbour grow into the triangular void the rotation opened, to turn the
-   gap into floor. It was removed for being unpredictable: you couldn't
-   tell which room would grow, how far, or when, and rooms swelled and
-   shrank as unrelated boxes moved nearby. A room is its rectangle, minus
-   whatever is carved out of it.
-
-   A rotated room moves freely — no grid snapping, no gap snapping, since
-   both work on the unrotated rectangle, which isn't where a turned room
-   is. Two rotated rooms can be pushed together until their real edges meet.
-
-   Nothing changes a room's size except your own resize handle and the
-   schedule's fields. And displacement undoes itself: drag across the plan
-   and back and every room comes with you.
-
-   **Rotating a room reshapes its neighbours instead of moving them.** A
-   room's model is always a rectangle plus a rotation — that's what the
-   schedule's width and depth edit — but what it *draws* can be a polygon.
-   Turn a room and it's allowed to bite into the ones beside it: each
-   neighbour gives up just the overlapping sliver and draws itself as an
-   L-shape against the slanted wall, while its position and size stay
-   exactly as they were. Rooms also reach into the triangular voids a
-   rotation opens, so those become floor rather than slots you can't walk
-   through.
-
-   A bite only goes ahead if the room keeps its minimum area *and* still
-   holds its minimum rectangle — area alone would let an L-shape keep its
-   number as a dogleg nothing fits in — and never if the cut would split a
-   room in two, which is what stops a hallway ever being severed. Where a
-   bite isn't allowed, the rotation is refused rather than the neighbour
-   displaced; nothing on the canvas moves because you turned something.
-   Un-rotate and every neighbour comes back whole, since the carving is
-   recomputed live and never written into the rooms themselves.
-
-   The schedule carries a live **area** column read from the shape actually
-   drawn, marked when a room has been reshaped — an L-shaped room has no
-   single width, so area is what you check it against.
-
-   Rotated rooms have no invisible box around them: two rooms turned
-   toward each other are separated by their real shapes, so their drawn
-   edges meet exactly, and they reshape around each other the same way a
-   square room does. (Separation used to be measured on each room's
-   upright bounding box, which for a turned room is bigger than the room —
-   so they were held apart by a gap that wasn't there.)
-
-   The building outline is a true union of those shapes, so it follows a
-   rotated room's diagonal walls exactly. All the boolean geometry —
-   carving, gap fill, the outline — is done by the
-   [polygon-clipping](https://github.com/mfogel/polygon-clipping) library
-   (MIT), bundled with the frontend so the diagram works offline.
-
-   **Room schedule.** In the column left of the canvas, a table lists
-   every box's current width, depth, and rotation in meters/degrees. It
-   is the only room table in the app — the sidebar carries site, setback,
-   envelope and priority context, but no second list of rooms. Width and
-   depth are editable in place — typing a new value resizes the box on the canvas
-   (growing/shrinking from its center, since a table cell has no natural
-   corner to anchor to) exactly as if you'd dragged its corner. It's
-   kept live-synced with the canvas in both directions, and clicking a row
-   selects the matching box (and vice versa).
-
-   Door arrows — one per shared wall on the current circulation path,
-   drawn with an arrowhead, re-walked from whichever boxes are actually
-   touching right now — show where each room connects to the one next to
-   it, and are always exactly perpendicular to the wall they cross by
-   construction.
-
-   Colors are locked, but as you drag, resize, or rotate, three things
-   stay continuously true instead of just at the start:
-   - **No overlaps, including rotated ones.** Moving, resizing, or
-     rotating a box pushes any other box it would *actually* overlap out
-     of the way, cascading if needed. Two rotated rooms are checked
-     against their true rotated shapes (not an inflated bounding box), so
-     you can push them together until their real edges actually touch —
-     not stopped early by a margin that isn't really there.
-   - **The setback line is a hard wall.** The buildable envelope is drawn
-     as a dashed line, and no box — dragged, resized, rotated, or pushed —
-     can ever cross it.
-   - **Rooms may shrink, never below their minimum.** A pushed box shrinks
-     toward its own type minimum first (never below it — `src/defaults.py`
-     for rooms, the fixed code hallway width for corridors) before it's
-     displaced any further, the same idea as the initial layout's own
-     footprint compaction, just live. A manual corner-resize (on the
-     canvas or in the schedule) is clamped to that same minimum directly.
-
-   The building footprint outline updates after every move, resize,
-   rotate, or delete, too — it's the union of whatever boxes are currently
-   on the canvas and not deleted, following each box's true rotated shape
-   rather than an inflated bounding box, not a fixed shape from the
-   initial layout.
-
-   Dragging happens entirely in the browser, against the store in
-   `frontend/src/state/store.ts`, so there's no server round trip for the
-   plan and the numbers to fall out of sync over. Python is asked to
-   re-check the arrangement, never to re-own it. A
-   "Reset to recommended layout" button (also pure JS) restores position,
-   size, rotation, selection, and any deleted spaces on demand.
-
-   Rotation is a CSS transform for *rendering*, but overlap detection uses
-   each box's true rotated shape (oriented-box collision, via the
-   separating-axis theorem) rather than treating rotation as purely
-   cosmetic — that's what lets two rotated rooms actually touch. The
-   collision-response bookkeeping (how far to push, whether a shrink is
-   possible) still works off the rotated shape's axis-aligned bounding
-   box for simplicity, and a rotated box is only ever translated, never
-   resized, when it has to give way, so a CSS rotation is never distorted.
-   Full rotated-rectangle geometry throughout (e.g. a footprint outline
-   with clean diagonal edges instead of a fine staircase around a rotated
-   room) is a bigger feature than this tool needs; this covers the part
-   that matters for exploring adjacency.
-
-5. **Multi-storey.** A house can have more than one level
-   (`Project.storeys`). Every room lists the storeys it is on
-   (`Room.levels`, `[0]` = ground). Three rules are built in, all plain
-   geometry (`src/layout.py`, `src/access.py`, `src/stacking.py`):
-
-   - **The stair is one room shared by every level it connects.** It has a
-     single rectangle, pinned at the left end of the first row on each of
-     its levels and spanning that row's full depth, so it meets the
-     corridor below like the entry does. Upper levels have no front door;
-     the access walk reaches them only through the stair, and a level the
-     stair doesn't reach is reported as cut off.
-   - **Wet rooms are asked to stack.** Bathrooms, kitchens and laundries
-     carry the pipework, so an upper wet room is scored on how much of it
-     sits over *some* wet room below — any overlap will do, exact
-     alignment isn't required. One with nothing under it is named in a
-     warning and costs in the planner's score.
-   - **Levels may have different footprints.** Each storey is packed to
-     its own outline. A room hanging more than a quarter of its area past
-     the level below is flagged as a cantilever.
-
-   If the owner never says what goes where, `src/levels.py` opens on the
-   architect's first sketch — sleeping upstairs, living downstairs, one
-   bathroom kept on the ground floor — as a starting point to move away
-   from. The app shows one canvas per storey behind a selector; the stair
-   appears on each.
-
-**Not yet built:** a chat-driven revision loop where the arrangement you
-dragged becomes the starting point for Claude's next suggestion. See
-Roadmap below.
-
-### Design principles
-
-- **Deterministic code owns the numbers.** Room sizing, setback math, and
-  constraint checks live in `src/geometry.py`, `src/defaults.py`, and
-  `src/validation.py` — plain Python, unit-tested, no LLM involved. Claude's
-  job is narrower: turn conversation into structured data
-  (`src/extraction.py`), and turn Python's findings into plain language
-  (`src/claude_client.py`).
-- **No numeric dimensions on the diagram** (once the diagram exists) —
-  proportions reflect real sizes internally, but the point is to reason
-  about adjacency and zoning, not read off measurements.
-- **Defaults are a starting point, not a black box.** Every room-sizing
-  default lives in one readable table (`src/defaults.py`) and Claude tells
-  you which ones it's relying on.
-- **The footprint is compacted, not just packed.** Each room may be nudged
-  up to 0.5m smaller than its nominal size — width to help it share a row
-  instead of forcing a wrap, depth to trim a row down to whichever room in
-  it actually needs the most depth — but never below that room type's
-  real minimum. A room only shrinks when doing so actually makes the
-  building smaller (`src/layout.py`, `MAX_SHRINK_M`).
-- **One diagram, not two.** Everything the tool knows about the layout —
-  grouping, adjacency, footprint — is rendered into the single interactive
-  canvas; there's no separate static image to keep in sync with it.
-- **Constraints hold live, not just at generation time.** The setback
-  line and each room's own minimum size aren't just inputs to the initial
-  packer — they're enforced the whole time you're dragging or resizing, in
-  the browser, with no server round trip (see step 4 above).
-- **Editing tools stay decision-preserving.** Delete hides a box rather
-  than destroying it, and a rotated box is only ever translated (never
-  resized) when it has to give way to a neighbor — so nothing you do in
-  the canvas can put the geometry in a state "Reset to recommended
-  layout" can't cleanly undo.
+Room types, their minimum sizes and their zone colour are one table,
+`frontend/src/rooms.ts`. Minimums are conceptual-design minimums, not
+code — confirm against local code in detailed design.
 
 ## Run it on your computer
 
-The tool runs as a small local web app: a Python server for the numbers
-and the Claude chat, and a browser page for the plan, the 3D view and the
-schedule. Nothing is hosted anywhere; only chat messages leave your
-machine, to Claude, through your own API key.
+A small local web app: a Python server that serves the page and keeps
+saved layouts, and the browser page itself. Nothing is hosted anywhere and
+nothing leaves your machine.
 
 **Install once** (all free):
 
@@ -305,9 +102,8 @@ machine, to Claude, through your own API key.
 2. **Node.js (LTS)** — <https://nodejs.org/>. This builds the browser page.
 3. **GitHub Desktop** — <https://desktop.github.com/>. Sign in, choose
    *File → Clone repository*, pick this repository, and choose a folder
-   such as `Documents`. Later, *Fetch origin* pulls in updates.
-4. **An Anthropic API key** — <https://console.anthropic.com/settings/keys>.
-   Only the chat needs it; everything else works without one.
+   such as `Documents`. Later, *Fetch origin* pulls in updates. Make sure
+   the branch shown at the top is `claude/zoning-editor-rebuild-shnp69`.
 
 **Then, every time:**
 
@@ -319,38 +115,27 @@ project folder (`.venv/` and `frontend/node_modules/`). Every run after
 that re-checks those installs before building — a second or two — so a
 version of the app that needs a new package gets it instead of failing on
 an import. If the build fails the app does not start, rather than serving
-the previous build as though it were the new one.
+the previous build as though it were the new one. A browser tab opens at
+<http://localhost:8000>; closing the terminal window stops the app.
 
-It creates a `.env` file from `.env.example`; open that in a text editor
-and paste your key after `ANTHROPIC_API_KEY=`. A browser tab opens at
-<http://localhost:8000>. Closing the terminal window stops the app.
-
-If the chat answers that the key is *identity-linked* and a workspace id
-is required, the key belongs to you rather than to one workspace, so every
-request has to say which workspace it acts in. Add the id on the
-`ANTHROPIC_WORKSPACE_ID=` line of `.env` (it is in the workspace's URL at
-console.anthropic.com under Settings → Workspaces) and restart, or create
-a plain workspace API key instead.
-
-Your saved projects live in `data/projects.db` inside the folder.
+No API key is needed. Saved layouts live in `data/projects.db` inside the
+folder.
 
 ## Setup (developers)
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt -r requirements-dev.txt
-cp .env.example .env            # add ANTHROPIC_API_KEY
 (cd frontend && npm install && npm run build)
 uvicorn api.main:app --reload   # http://localhost:8000
 ```
 
-For frontend work with hot reload, run `npm run dev` in `frontend/`
-alongside the API; the Vite dev server on port 5173 proxies `/api`.
+For frontend work with hot reload, run `npm run dev` in `frontend/`. The
+editor itself needs no backend at all; only the saved-layouts panel does,
+and the Vite dev server on port 5173 proxies `/api` to it when it is
+running.
 
 ## Running the tests
-
-The geometry, defaults, and validation logic is unit-tested and doesn't
-call the API:
 
 ```bash
 pip install -r requirements-dev.txt
@@ -367,42 +152,11 @@ typecheck, unit tests and build.
 
 | Path | Purpose |
 |---|---|
-| `src/planner.py` | Picks the layout: packs several candidate orderings, thins each one's corridors down to what access actually needs, scores them on access/circulation/privacy/compactness, and returns the best. The architectural judgement lives here, in code that can be read and tested. |
-| `src/access.py` | How each room type behaves in circulation — its zone, whether you may walk *through* it, whether it meets the street, whether it is plumbed — and the check that walks a packed building from the entry (across the stair, level to level) and reports rooms that can't be reached without passing through a bedroom, bathroom or garage. |
-| `src/stacking.py` | What one storey asks of the storey below it: wet-room stacking and cantilever checks, in shapely polygon arithmetic. Feeds both the planner's score and the owner's warnings. |
-| `src/levels.py` | The default storey split for a multi-storey house the owner hasn't split themselves. |
-| `src/sample_project.py` | The worked example the app opens on — a complete, validating project plus the layout plan Claude would have returned for it, so the first paint needs no API call. |
-| `api/` | FastAPI server: `/api/layout` packs and scores, `/api/check` runs access and stacking on a hand-made arrangement, `/api/chat` is one conversational turn, `/api/projects` saves to SQLite. Serves `frontend/dist` at `/`. `serialize.py` is the wire contract between Python's site frame and the canvas. |
-| `frontend/` | The browser app (Vite, React, TypeScript). `src/geometry/` is the canvas's movement rules — carve, protect the minimum, push last; SAT overlap on rotated shapes; door arrows; footprint union — as pure functions with their own unit tests. `src/state/store.ts` is the single source of truth for the arrangement; `Canvas2D.tsx` (SVG plan, pan and zoom), `View3D.tsx` (Three.js, zones or solid massing), `Schedule.tsx` and `StatusBar.tsx` all render from it. Typography is Manrope for the interface and Barlow for drawing annotation, both bundled so the app still works offline. |
-| `start.sh` / `start.bat` | One-click local start: installs dependencies (every run, so new ones arrive), builds the frontend, and starts the server only if that build succeeded. |
-| `src/models.py` | The shared data shapes (`Project`, `Site`, `Room`, ...). |
-| `src/defaults.py` | Room-sizing defaults table (widths/depths per room type). |
-| `src/geometry.py` | Buildable envelope from site + setbacks. |
-| `src/validation.py` | Deterministic constraint checks against the envelope. |
-| `src/extraction.py` | Conversation → structured `Project` (Claude, structured output). |
-| `src/claude_client.py` | Anthropic client + plain-language explanation of issues. |
-| `src/layout_plan.py` | Claude picks room categories + adjacency order (structured output). |
-| `src/layout.py` | Deterministic rectangle packing, footprint compaction, building footprint outline, and circulation graph — no LLM math, unit-tested. `pack_levels` packs every storey with the stair pinned to one rectangle on each. |
-| `src/palette.py` | The zoning colours, and how strongly a room is washed with one (see the module docstring). |
-| `tests/` | Unit tests for the domain layer — geometry, defaults, validation, access, layout, planner, stacking. |
-
-## Roadmap
-
-See [HANDOFF.md](HANDOFF.md) for where the work stands, the gotchas worth
-knowing before touching the geometry, and the ordered list of what to
-build next.
-
-
-- Feedback loop: owner comments in chat → Claude revises the layout,
-  informed by whatever the owner dragged, resized, rotated, or deleted.
-- Phase 2 (massing) and Phase 3 (optimization), out of scope for now.
-
-## Constraints baked in
-
-- Setbacks: flat (not height-dependent). Default 2 m from street-facing
-  edges, 1.5 m from neighbor-facing edges. A corner lot can tag more than
-  one edge as street-facing.
-- Max building height: 15 m. Storey height defaults to 3.0 m.
-- Stair: 1.2 m x 3.0 m in plan by default (minimum 1.0 m x 2.4 m), one
-  per house, pinned to the same rectangle on every level it connects.
-- Hallway width: fixed at 1.2 m (code compliance), enforced in validation.
+| `frontend/src/state/store.ts` | The single source of truth for the arrangement. Everything renders from it and every edit goes through it. |
+| `frontend/src/sample.ts` | The hand-placed sample house the editor opens on, and the sheet size. |
+| `frontend/src/rooms.ts` | Room types: label, minimum and typical size, zone. The only copy of these numbers. |
+| `frontend/src/geometry/` | The canvas's movement rules as pure functions with unit tests: carve, protect the minimum, push last (`carve.ts`, `resolve.ts`); SAT overlap on rotated shapes (`rect.ts`); polygon booleans (`poly.ts`); footprint union; door arrows; stair shafts for the 3D. |
+| `frontend/src/components/` | `Canvas2D.tsx` (SVG plan, gestures, camera), `View3D.tsx` and `Massing.tsx` (Three.js), `Schedule.tsx`, `Sidebar.tsx` (saved layouts), `StatusBar.tsx`. |
+| `api/` | FastAPI: `/api/health`, `/api/projects` (saved layouts in SQLite, stored as the frontend's own boxes). Serves `frontend/dist` at `/`. |
+| `start.sh` / `start.bat` | One-click local start. |
+| `HANDOFF.md` | Where the work stands and what to be careful of. |

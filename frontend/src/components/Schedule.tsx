@@ -2,7 +2,7 @@ import { useMemo } from "react";
 
 import { displayShapes } from "../geometry/carve";
 import { polyArea } from "../geometry/poly";
-import { clampPositionOnly, liveBoxes, resolveOverlaps } from "../geometry/resolve";
+import { liveBoxes, resolveOverlaps } from "../geometry/resolve";
 import type { Box } from "../geometry/types";
 import { fillFor } from "../palette";
 import { useStore } from "../state/store";
@@ -10,9 +10,7 @@ import { useStore } from "../state/store";
 export function Schedule() {
   const boxes = useStore((s) => s.boxes);
   const level = useStore((s) => s.level);
-  const envelope = useStore((s) => s.envelope);
   const selected = useStore((s) => s.selected);
-  const layoutPlan = useStore((s) => s.layoutPlan);
   const select = useStore((s) => s.select);
   const deleteBoxes = useStore((s) => s.deleteBoxes);
   const commitBoxes = useStore((s) => s.commitBoxes);
@@ -25,7 +23,7 @@ export function Schedule() {
   };
 
   const edit = (b: Box, axis: "w" | "h", meters: number) => {
-    if (!isFinite(meters) || meters <= 0 || !envelope) return;
+    if (!isFinite(meters) || meters <= 0) return;
     let next: Box;
     if (axis === "w") {
       const w = Math.max(b.minWidth, meters);
@@ -34,16 +32,9 @@ export function Schedule() {
       const h = Math.max(b.minHeight, meters);
       next = { ...b, top: b.top + (b.height - h) / 2, height: h };
     }
-    next = clampPositionOnly(next, envelope);
-    const resolved = resolveOverlaps(live.map((x) => (x.id === b.id ? next : x)), b.id, envelope);
+    const resolved = resolveOverlaps(live.map((x) => (x.id === b.id ? next : x)), b.id);
     const byId = new Map(resolved.map((x) => [x.id, x]));
     commitBoxes(boxes.map((x) => byId.get(x.id) ?? x));
-  };
-
-  const categoryOf = (b: Box) => {
-    const base = b.name.replace(/ \d+$/, "");
-    const a = layoutPlan?.assignments.find((x) => x.room_name === b.name || x.room_name === base);
-    return a?.category;
   };
 
   return (
@@ -73,7 +64,7 @@ export function Schedule() {
                 }}
               >
                 <td className="name">
-                  <i style={{ background: fillFor(b.roomType, b.kind, categoryOf(b)) }} />
+                  <i style={{ background: fillFor(b.roomType, b.kind) }} />
                   {b.name}
                 </td>
                 <td className="r">

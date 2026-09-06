@@ -13,11 +13,6 @@ die() { printf '\n\033[31m%s\033[0m\n' "$*" >&2; read -r -p "Press Enter to clos
 command -v python3 >/dev/null 2>&1 || die "Python 3 is not installed. Get it from https://www.python.org/downloads/ (3.10 or newer) and run this again."
 command -v npm >/dev/null 2>&1 || die "Node.js is not installed. Get it from https://nodejs.org/ (LTS) and run this again."
 
-if [ ! -f .env ]; then
-  cp .env.example .env
-  say "Created .env — open it in a text editor and paste your Anthropic API key after ANTHROPIC_API_KEY= (the diagram works without it; the chat needs it)."
-fi
-
 if [ ! -d .venv ]; then
   say "Setting up Python (first run only)…"
   python3 -m venv .venv

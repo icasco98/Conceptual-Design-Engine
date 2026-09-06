@@ -10,8 +10,8 @@ export function centerOf(r: Rect): Point {
 
 /** The axis-aligned bounding box of the rotated shape, centered on the
  * same point. Bigger than the true footprint by design: it is what the
- * envelope clamp and push magnitudes work off once a real overlap is
- * established. Whether two boxes really overlap is decided by the SAT
+ * broad-phase overlap test and push magnitudes work off once a real
+ * overlap is established. Whether two boxes really overlap is decided by the SAT
  * test on the true shape (obbsSeparated). */
 export function effectiveRectOf(b: Box): Rect {
   if (!b.rotation) return rectOf(b);

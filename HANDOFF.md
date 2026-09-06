@@ -1,13 +1,14 @@
 # Handoff
 
-Written for whoever picks this up next, human or Claude. It says what the
-tool is, what state it is in, what to be careful of, and what to build
-next. The README covers installation and the domain rules; this file
-covers *where the work stands*.
+Written for whoever picks this up next, human or Claude. The README says
+what the tool is and how to run it; this file says *where the work
+stands* and what to be careful of.
 
-Branch: `claude/design-engine-tool-access-92y89p`. Everything below is on
-it. `main` still holds the old single-storey Streamlit-only version; do
-not develop there.
+Branch: `claude/zoning-editor-rebuild-shnp69`. It was forked from
+`claude/design-engine-tool-access-92y89p`, which still holds the full
+generating version (Claude intake, packers, planner, access and stacking
+checks, site and setbacks). Do not develop there; do not delete it either
+— stage 6 and whatever comes after it will want pieces back.
 
 The owner is not a programmer. Explain changes in plain terms, say when
 they need to pull in GitHub Desktop, and never assume a build step is
@@ -15,321 +16,134 @@ obvious.
 
 ---
 
-## What the tool is
+## Why the fork
 
-A web tool for the **conceptual design phase** of a house — the sketchy
-stage before any detailed floor plan, when you are deciding what goes
-roughly where. The owner describes the project in a chat; the tool returns
-a zoning diagram they can rearrange by hand, in plan and in 3D.
+The generated diagrams were never realistic: a long central hallway every
+time, rigid rectangles only, an unconvincing footprint. The decision was
+to isolate the interactive editor as a clean, manually driven tool, make
+it good on its own, and reintegrate assisted generation afterwards. The
+six stages are listed in the README; this file tracks them.
 
-Three phases were planned. **Phase 1 (zoning) is what exists.** Phase 2
-(massing, fenestration, weather/solar) and Phase 3 (optimization: thermal,
-daylight, view/privacy) are not started, though the massing view's solid
-mode and the orientation scoring are the first pieces of Phase 2.
+## Stage 1 — fork and strip: done
 
-### The one rule the whole design rests on
+Removed, and why:
 
-**Claude handles language and judgement. Python owns every number.**
+- `src/` in its entirety. Extraction, the Claude client, the layout plan,
+  the row and spine packers, the planner and its scoring, access,
+  stacking, orientation, levels, validation, the site envelope, the
+  Python models and defaults. None of it was reachable once nothing
+  packs or checks a plan.
+- `api/serialize.py` — the site-frame ↔ plan-frame contract. There is
+  one frame now (the canvas's, y down) and the backend stores boxes in it
+  untouched.
+- `/api/layout`, `/api/check`, `/api/chat`, `/api/sample`.
+- `frontend/src/api/convert.ts` (frame conversion), `ChatPanel.tsx`,
+  `geometry/rotate.ts` (rotations asked for in words — a chat feature).
+- The envelope clamp (`clampPositionOnly`) and the `Envelope` type. A
+  pushed room simply moves; nothing stops it.
+- The site rectangle, street edges, setback line and north arrow from
+  the plan; the site plane, setback line and street from the 3D.
+- `.env`, the API-key handling in the start scripts, `anthropic` and
+  `shapely` from the requirements.
 
-Claude turns conversation into structured data (`src/extraction.py`),
-groups rooms and proposes pairings and daylight wishes
-(`src/layout_plan.py`), names edits the owner asks for in words
-(`src/edits.py`), and explains problems Python already found
-(`src/claude_client.py`). It never computes a coordinate, an area, a
-setback or a compass direction. Plain Python packs the rectangles, checks
-reachability, and scores the result.
+Moved into the browser, because it is the only place that reads them:
 
-Do not erode this. If a future feature seems to want the model to do
-arithmetic, that is a signal the scoring function needs a new term, not
-that the model needs more rope. The pattern to copy is
-`src/orientation.py`: Claude says a room wants *morning sun*, Python works
-out which way that is on this particular site.
+- Room types, minimum sizes and zone colours: `frontend/src/rooms.ts`.
+  A room's zone used to be chosen by Claude per project; it is now fixed
+  by type (bedrooms private, living shared, garage service, and so on).
+- The sample house: `frontend/src/sample.ts`, hand-placed in plan-frame
+  meters. Two storeys, 11 × 9.5 m, rooms directly adjacent with no
+  corridor spine on the ground floor; a landing and short hall upstairs.
 
----
+Kept as they were: the carve / protect-the-minimum / push rules in
+`geometry/carve.ts` and `resolve.ts` (minus the clamp), door arrows,
+footprint union, stair shafts, the 3D view, the schedule, saved layouts.
 
-## Architecture
+Verified in a browser (headless Chromium against the built app): both
+storeys draw with the ghost of the floor below, both massing modes
+render, dragging a room selects its schedule row, editing a width in the
+schedule resizes the box, save lists the layout and renames the title,
+Reset restores the sample. No console errors. Tests: 4 Python, 17
+TypeScript, all passing; ruff and tsc clean.
 
-Three layers. The domain layer is the valuable part; the other two are
-replaceable.
+## Stages 2–6: not started
 
-### 1. Domain (`src/`) — pure Python, no framework
+The README lists them. Notes for whoever does them:
 
-| File | Holds |
-|---|---|
-| `models.py` | `Project`, `Site`, `Room`. `Site.rotation_deg` is the bearing the front edge faces, clockwise from north. |
-| `defaults.py` | Room-size table (min and typical, per room type). The only source of room dimensions. |
-| `geometry.py` | Buildable envelope from site and setbacks. |
-| `validation.py` | Deterministic checks: sizes, per-level area, entry marked, stair present and reaching every storey. |
-| `access.py` | Which room types you may walk *through*; walks the plan from the entry and names what it cannot serve. Handles cross-level links via the stair. |
-| `layout.py` | The **row packer**. Rooms left to right, wrapping; corridors between rows; a spine down one side when there are several; footprint tracing; per-level packing with a pinned stair. |
-| `spine.py` | The **spine packer**. One corridor down the middle, rooms in bays facing each other across it. Returns None rather than a bad plan when the site is too narrow or a room will not fit beside a corridor. |
-| `orientation.py` | Turns "morning sun" into a direction on this plan, using the site's bearing. Hemisphere-neutral by design. |
-| `stacking.py` | What an upper storey owes the one below: wet rooms over wet rooms, nothing hanging far past the floor below. Uses shapely. |
-| `planner.py` | Packs every candidate ordering **both ways**, thins the row plans' corridors, scores them all, returns the best. **The architectural judgement lives here, in code you can read and argue with.** |
-| `levels.py` | Default storey split when the owner has not said. |
-| `edits.py` | Edits asked for in words. One model so far: a room and the angle it should end up at. |
-| `palette.py` | The zoning colours and how strongly a room is washed with one. |
-| `sample_project.py` | The worked example the app opens on. |
+**Stage 2 (drawing).** The box model is a rectangle plus a rotation. A
+circle needs a `shape` field, and everything that turns a box into a
+polygon goes through `polyOfBox` in `geometry/poly.ts` — that is the one
+place to teach it about circles (a polygon approximation is fine; the
+booleans in polygon-clipping only take polygons). Priority and floor
+columns belong on the `Box`, and the schedule (`Schedule.tsx`) already
+does two-way sync for width and depth: copy that pattern rather than
+adding a second path.
 
-### 2. API (`api/`) — FastAPI, thin
+**Stage 3 (floors).** `storeys` is a store field, `level` the one being
+viewed, and `liveBoxes(boxes, level)` filters. The ghost already draws
+the floor below; the floor above is the same code with `level + 1`. A
+room's floor is `box.level`; changing it in the schedule is a plain edit.
+The stair is mirrored across levels by `syncStairs` in the store.
 
-Every route wraps a domain function. No architecture here.
+**Stage 4 (adjacency and outline).** `doors.ts` finds shared walls with
+`touchingEdge`; it only walks from the entry because that was the
+circulation graph. Arrows between *any* touching pair is the same
+function without the breadth-first walk. The outline (`footprint.ts`)
+already unions every drawn shape.
 
-- `POST /api/layout` — pack and score a project, return the building.
-- `POST /api/check` — run access and stacking on a **hand-made** arrangement.
-- `POST /api/chat` — one conversational turn; also returns any rotations asked for.
-- `GET /api/sample`, `/api/health`, `/api/projects` (SQLite CRUD).
-- Serves `frontend/dist` at `/` so one process is the whole app.
+**Stage 5 (overlap and priority).** The owner's decision on the forked
+branch stands: *rewrite the overlap rules, do not extend them.* The three
+modules `carve.ts`, `resolve.ts` and `rect.ts` hold one question between
+them and the seams are where the bugs were. The new rule is simpler than
+the old one — higher priority carves lower, never below the type minimum,
+red outline when it would have to — and has no "push" at all: rooms are
+allowed to overlap and the person resolves it. `shapeStillUsable` in
+`carve.ts` (minimum area *and* still holds the minimum rectangle) is the
+one test worth keeping.
 
-`api/serialize.py` is the wire contract, and the **one place the two
-coordinate frames meet** (see Gotchas).
-
-### 3. Frontend (`frontend/`) — Vite, React, TypeScript
-
-Layout: a tool rail, the plan, a column carrying the massing over the room
-schedule, then the conversation, with the checks along the foot. Plan and
-massing are on screen together at all times rather than being a mode you
-switch between.
-
-- `src/state/store.ts` — zustand. **The single source of truth for the
-  arrangement.**
-- `src/geometry/` — the canvas's movement rules as pure functions with
-  real unit tests: carve, protect the minimum, push last; SAT overlap on
-  rotated shapes; snapping; door arrows; footprint union; `shafts.ts`
-  (collapsing a stair to one volume); `rotate.ts` (rotations asked for in
-  words).
-- `src/components/Canvas2D.tsx` — SVG plan, all gestures, and the camera
-  (drag the background to pan, scroll to zoom).
-- `src/components/View3D.tsx` — Three.js. Two readings of one arrangement,
-  chosen by the "Colour by zone" checkbox: rooms coloured by category and
-  translucent, or one grey volume per storey.
-- `src/components/StatusBar.tsx` — the checks, one line at rest however
-  broken the plan is.
-
-Typography is Manrope for the interface and Barlow for drawing annotation,
-both bundled rather than fetched so the app works offline.
+**Stage 6 (3D).** `View3D.tsx` extrudes whatever `displayShapes` returns,
+so once stages 2–5 produce polygons it should follow with little change.
+Circles will need their extrusion drawn from the polygon rather than
+`BoxGeometry`.
 
 ---
 
-## Current state
+## Gotchas
 
-- **Tests:** 131 Python, 25 TypeScript. All passing.
-- **CI:** `.github/workflows/ci.yml` runs ruff, pytest, then the
-  frontend's typecheck, tests and build on every push.
-- **Runs locally** via `start.bat` / `start.sh`: one double-click.
-  Dependencies are installed on *every* run, not only the first — skipping
-  that meant a version needing a new package never got it and the build
-  died on an import that read as correct. A failed build now stops the
-  app rather than serving the previous one.
-- **Verified end to end** in a browser: drag, resize, rotate, pan, zoom,
-  level switch, both massing modes, live re-check.
+**One coordinate frame.** Plan frame, y down, origin top-left of the
+sheet. The backend stores boxes as the frontend sends them. If a second
+frame ever comes back (a site, an export), convert in one place only.
 
-### What was done in the most recent session
+**The sheet is not a boundary.** `SHEET` in `sample.ts` is a faint
+rectangle and the 3D ground plane. Nothing clamps to it; a room may sit
+outside it.
 
-Rebuilt the scoring function so that all of it works. Three of its six
-terms could not affect which plan won — see next step 1 for the full
-account, which is worth reading before touching `planner.py`.
+**The stair is one rectangle on every level.** `syncStairs` in the store
+mirrors any edit across levels, and `shafts.ts` collapses the copies into
+one volume for the 3D.
 
-1. **Circulation** is measured against the one-corridor floor
-   (`hallway_width * sqrt(area)`) rather than a fixed 8–12% of built area,
-   because that share falls as a house grows and the old band was
-   unreachable at any size. It now separates candidates instead of
-   condemning all of them equally.
-2. **Privacy** is read across the whole building with a storey counting as
-   depth, instead of one level at a time — which required a level to hold
-   the entry, public rooms and private rooms all at once, something no
-   ordinary two-storey house does.
-3. **Compactness** is perimeter-based: external wall per unit of floor,
-   against the square of equal area. The old area-based measure rewarded
-   whichever packer traced its outline more finely, which handed the spine
-   packer a free 0.000 however ragged its bays were.
-4. **Stacking** is split in two and normalised. Unstacked plumbing (12)
-   and a floor that does not land on the one below (35) are no longer
-   added at one weight, and neither grows just because a house has more
-   bedrooms — both used to be sums, which made the term reach 24 points on
-   the sample and quietly outweigh every stated preference combined.
-5. Every weight is now gathered at the top of `planner.py` with its
-   reasoning, on a common scale where 1.0 means "one whole unit wrong".
-6. Nine tests added, each pinning a term to a case where the right and
-   wrong answers differ — the old suite passed at full green with three
-   terms inert.
-
-Verified in the browser: the sample opens on a sound plan, both levels,
-no access or stacking warnings, no console errors.
-
----
-
-## Gotchas — read before touching anything
-
-**Two coordinate frames.** Python's *site frame* has y running **up** from
-the site's back edge. The canvas's *plan frame* has y running **down**
-from the front (street) edge. They are converted in exactly one place,
-`frontend/src/api/convert.ts`. Do the conversion anywhere else and you
-will produce a plan that looks right and is mirrored.
-
-**The packer's own frame is a third thing.** Inside `layout.py` and
-`spine.py`, local y starts at 0 at the *front* and increases toward the
-back; `to_site_coords` flips it. A rectangle's origin needs `y + its own
-depth` passed in.
-
-**The stair is one rectangle, not one per level.** Packed once, placed
-identically on every level it connects. `store.ts` mirrors any edit across
-levels, and the 3D collapses them into one shaft.
-
-**Corridors are never eaten and never moved.** Circulation's whole job is
-to stay open. This is load bearing for the access guarantee.
+**Corridors are never eaten and never moved** — still true until stage 5
+replaces the rules. A hallway in the sample is `kind: "corridor"`.
 
 **`carvePlanFor` answers two questions at once** — what to draw, and
-whether anything must move. Computing them separately is how the old code
-came to approve one room's cut and draw another's.
+whether anything must move. Computing them separately is how the forked
+branch came to approve one room's cut and draw another's. Stage 5 should
+keep that property whatever else it changes.
 
-**A room only ever gives space up, never takes any.**
+**Rotation works in 5-degree steps, and that is not cosmetic.** Each step
+resolves before the next is tried.
 
-**Rotation only works in 5-degree steps, and that is not cosmetic.** Each
-step resolves before the next is tried, so neighbours are pushed clear a
-little at a time. Jumping straight to a final angle asks every neighbour
-to give way at once and is refused almost always.
+**The editor must never depend on the backend.** `boot()` opens the
+sample before it asks `/api/health`; a missing backend costs only the
+saved-layouts list. Keep it that way so `npm run dev` alone is enough to
+work on the canvas.
 
-**A packing strategy must answer to the placement ordering.** The spine
-packer originally chose sides by whichever was shallower; the result was
-that a pair of rooms came out the same distance apart *however they were
-ordered*, every adjacency scored identically on every candidate, and the
-pairings silently stopped mattering. If you add a third strategy, check
-that two different orderings give two different plans before trusting any
-score computed from it.
-
-**Scoring a preference is worthless if no candidate ever satisfies it.**
-`best_layout` can only choose among the arrangements it generates. Adding
-a scoring term usually means adding a candidate ordering too.
-
-**Every scoring term must be normalised, and you must prove it fires.**
-Penalties are scaled so 1.0 means "one whole unit wrong", and the weights
-live together at the top of `planner.py` so they can be read against each
-other. A term on its own scale is not a term with an unusual weight — it
-is a term that either dominates or does nothing, and which of those it
-does is an accident. Three terms were inert for a whole session behind a
-fully green suite. A test that only checks the plan came out valid cannot
-see this; write one where the right and wrong answers differ.
-
-**A sum grows with the size of the house; a mean does not.** Adjacency and
-orientation are means for this reason, and stacking was changed to match.
-Sum a per-room penalty and you price the same architectural fault
-differently depending on how many bedrooms happen to be upstairs.
-
-**The API key check treats a trailing `...` as absent**, so an untouched
-`.env.example` does not look configured.
-
-**Never commit build caches.** `*.tsbuildinfo` is ignored for this reason:
-tracking it meant every machine that built the app produced a local change
-and every subsequent pull was refused.
-
----
-
-## Next steps
-
-Ordered. Each leaves the app working.
-
-### 1. Widen the search — the scorer can only pick what it is shown
-
-`MAX_CANDIDATES` is 12, and only six orderings are actually generated for
-the sample project. Every candidate is now two full packs, so the clock
-matters, but seeded random perturbations would widen the search
-considerably. This is the remaining half of the "scoring a preference is
-worthless if no candidate ever satisfies it" gotcha below: the weights are
-now sound, so what limits the recommendation is the shortlist.
-
-The previous session's next-step list opened with "re-weigh the scoring
-function" on the strength of a finding that the row packer won at 21%
-circulation while the spine plan sat at 19%. **That diagnosis was wrong in
-its particulars, and the truth was worse.** It guessed compactness was
-over-weighted against circulation. Compactness was in fact scoring the
-spine plan at exactly 0.000 — not over-weighting it, not measuring it at
-all. Three of the six terms could not affect the outcome:
-
-- **Circulation** was `30 * (ratio - 0.12)`, an overshoot of a few
-  hundredths, so the term capped at about 3 points against terms worth 10
-  to 25. And the 8–12% band was unreachable at any size — a corridor has
-  to cross the building, which costs about `hallway_width * sqrt(area)`,
-  or 11% of a 116 m² floor. Every candidate was 18–21%, all equally
-  guilty, and the term separated nothing.
-- **Privacy** was scored one level at a time, and only counted a level
-  holding the entry *and* public rooms *and* private ones. No level of an
-  ordinary two-storey house qualifies. It returned zero on every
-  multi-storey plan the tool had ever produced.
-- **Compactness** compared the traced footprint's *area* to built area,
-  which measured how finely each packer traced its outline rather than how
-  compact its building was. The spine packer follows every jog of every bay
-  — 25 points on the sample's ground floor — so its traced area equalled
-  its built area and it scored 0.000 however ragged it was, while the row
-  packer's coarse 7-point outline was charged 0.122 for the same sprawl.
-
-All 122 tests passed throughout. That is the lesson worth carrying: **a
-scoring term that cannot change the outcome is invisible to a test suite
-that only checks the plan is valid.** The tests added for these pin each
-term to a case where the right and wrong answers differ — copy that
-pattern for any term you add.
-
-The fix, now in place: every term below access is normalised so 1.0 means
-"one whole unit wrong", the weights are gathered at the top of `planner.py`
-to be read against each other, circulation is measured against the
-one-corridor floor rather than a fixed percentage, privacy is read across
-the whole building with a storey counting as depth, compactness is
-perimeter-based (a ragged outline has *more* wall, so raggedness now costs
-instead of paying), and stacking is split — unstacked plumbing at 12,
-a floor that does not land on the one below at 35, where before they were
-one sum at 10 that grew with the number of bedrooms.
-
-### 2. Stair and structure terms
-
-Reward a stair near the entry, and walls that line up between storeys.
-The second is what separates a buildable house from two unrelated floor
-plans stacked up, and `stacking.py` already has the machinery.
-
-### 3. The chat revision loop
-
-`/api/chat` accepts the owner's `arrangement` and does nothing with it.
-Feed it to `plan_layout` as context so "move the kitchen to the back"
-starts from what they dragged rather than from Claude's last suggestion.
-Also stop regenerating the layout when the room program has not changed.
-The owner will feel this daily.
-
-### 4. Rewrite the overlap rules from scratch
-
-**The owner's explicit decision: rewrite, do not extend.** Three modules —
-`carve.ts`, `resolve.ts`, `rect.ts` — each hold part of one question, and
-the seams between them are where the bugs live. The two-functions-
-disagreeing bug fixed last session was a symptom. The current behaviour is
-documented at the top of `carve.ts`; treat that as the specification to
-replace.
-
-Also unresolved and part of the same decision: when a room is dragged onto
-another, it currently *carves* the one underneath. The owner may want
-free overlap flagged by the checks instead — for conceptual design,
-"roughly here, sort it out later" is often what is wanted. Ask before
-choosing.
-
-### 5. Phase 2, massing
-
-3D solid geometry with fenestration, informed by weather and solar data.
-`src/orientation.py` and the 3D view's solid mode are the beginning of it.
-
-### Housekeeping, whenever
-
-- Export the drawing to SVG or PDF. Nothing does this yet, and it is the
-  most obvious missing verb in a drawing tool.
-- Lot coverage ratio check in `validation.py`.
-- Code-split the frontend bundle; it is ~790 kB because of Three.js.
-
----
+**Never commit build caches.** `*.tsbuildinfo` is ignored.
 
 ## Conventions
 
 - Commit messages: what changed and **why**, in prose. No bullet dumps.
-- Comments explain the reasoning that is not visible in the code,
-  especially where a simpler approach was tried and failed. Several
-  modules carry that history; keep it.
+- Comments explain the reasoning that is not visible in the code.
 - Run `ruff check .`, `pytest`, and in `frontend/`, `npm run typecheck`
   and `npm test` before committing.
-- Verify in the running app, not only in tests. Several bugs last session
-  passed every test and were obvious in a browser.
-- Never let the model compute geometry.
+- Verify in the running app, not only in tests.

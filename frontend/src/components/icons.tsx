@@ -74,15 +74,6 @@ export const IconOrbit = ({ size = 14, className }: P) =>
     size,
     className,
   );
-export const IconSend = ({ size = 16, className }: P) =>
-  svg(
-    <>
-      <path d="M12 19V5" />
-      <path d="m5 12 7-7 7 7" />
-    </>,
-    size,
-    className,
-  );
 export const IconTick = ({ size = 14, className }: P) => svg(<path d="M20 6 9 17l-5-5" />, size, className);
 export const IconWarn = ({ size = 14, className }: P) =>
   svg(

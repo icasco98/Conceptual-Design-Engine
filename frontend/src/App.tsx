@@ -1,13 +1,13 @@
 /**
  * Layout: a tool rail, the plan, then a column carrying the massing over the
- * room schedule, then the conversation. Plan and massing are both on screen
+ * room schedule and the saved layouts. Plan and massing are both on screen
  * permanently — the two readings of one arrangement, never a mode you switch
- * between — and the checks run along the foot where they cannot scroll away.
+ * between — and the status line runs along the foot where it cannot scroll
+ * away.
  */
 import { useEffect } from "react";
 
 import { Canvas2D } from "./components/Canvas2D";
-import { ChatPanel } from "./components/ChatPanel";
 import { IconCursor, IconGrid, IconHand, IconLayers, IconReset } from "./components/icons";
 import { Massing } from "./components/Massing";
 import { Schedule } from "./components/Schedule";
@@ -24,7 +24,7 @@ function Rail() {
   const showGhost = useStore((s) => s.showGhost);
   const toggleGhost = useStore((s) => s.toggleGhost);
   const resetLayout = useStore((s) => s.resetLayout);
-  const storeys = useStore((s) => s.project?.storeys ?? 1);
+  const storeys = useStore((s) => s.storeys);
 
   return (
     <div className="rail">
@@ -56,7 +56,7 @@ function Rail() {
           <IconLayers />
         </button>
       )}
-      <button type="button" title="Reset to the recommended layout" aria-label="Reset to the recommended layout" onClick={resetLayout}>
+      <button type="button" title="Reset to the sample layout" aria-label="Reset to the sample layout" onClick={resetLayout}>
         <IconReset />
       </button>
     </div>
@@ -64,7 +64,7 @@ function Rail() {
 }
 
 function Levels() {
-  const storeys = useStore((s) => s.project?.storeys ?? 1);
+  const storeys = useStore((s) => s.storeys);
   const level = useStore((s) => s.level);
   const setLevel = useStore((s) => s.setLevel);
   if (storeys < 2) return null;
@@ -91,16 +91,15 @@ export default function App() {
   const busy = useStore((s) => s.busy);
   const error = useStore((s) => s.error);
   const clearError = useStore((s) => s.clearError);
-  const project = useStore((s) => s.project);
+  const boxes = useStore((s) => s.boxes);
+  const storeys = useStore((s) => s.storeys);
   const savedName = useStore((s) => s.savedName);
 
   useEffect(() => {
     void boot();
   }, [boot]);
 
-  if (!project) return <p className="placeholder">Loading…</p>;
-
-  const spaces = project.rooms.reduce((n, r) => n + r.count, 0);
+  const spaces = boxes.filter((b) => !b.deleted).length;
 
   return (
     <div className="app">
@@ -110,8 +109,7 @@ export default function App() {
         <div className="header-sp" />
         {busy && <div className="busy">{busy}</div>}
         <div className="header-meta">
-          {spaces} {spaces === 1 ? "space" : "spaces"} · {project.storeys}{" "}
-          {project.storeys === 1 ? "storey" : "storeys"}
+          {spaces} {spaces === 1 ? "space" : "spaces"} · {storeys} {storeys === 1 ? "storey" : "storeys"}
         </div>
       </header>
 
@@ -133,9 +131,6 @@ export default function App() {
             <div className="label">Room schedule</div>
             <Schedule />
           </div>
-        </div>
-        <div className="chat-col">
-          <ChatPanel />
           <Sidebar />
         </div>
       </div>

@@ -5,25 +5,27 @@
  * checkbox above:
  *
  *   zones — every live box on every level extruded to the storey height and
- *     coloured by its category, the current level solid and the others
+ *     coloured by its zone, the current level solid and the others
  *     translucent, so the plan you are editing reads inside the whole;
  *   mass  — one grey volume per storey, traced from that storey's own
- *     outline. No rooms, no colour: the shape the building makes on the
- *     site, which is the question massing actually asks.
+ *     outline. No rooms, no colour: the shape the building makes, which
+ *     is the question massing actually asks.
  *
  * The stair is drawn once, floor to top, rather than once per storey, and
  * every floor plate it passes through is cut around it. Vertical
  * circulation is one continuous volume in a building and has to read as
  * one here, not as boxes stacked on each other.
  *
+ * The ground is the drawing sheet: there is no site, so nothing else is
+ * drawn under the building.
+ *
  * Three.js is vendored through npm and bundled; nothing is fetched at
  * runtime, so the view works with no connection.
  */
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
-import type { CategoryKey } from "../api/types";
 import { displayShapes } from "../geometry/carve";
 import { footprintRings } from "../geometry/footprint";
 import { polyOfBox } from "../geometry/poly";
@@ -31,19 +33,36 @@ import { shaftsPiercing, stairShafts } from "../geometry/shafts";
 import { liveBoxes } from "../geometry/resolve";
 import type { Box } from "../geometry/types";
 import { fillFor } from "../palette";
+import { SHEET, STOREY_HEIGHT_M } from "../sample";
 import { useStore } from "../state/store";
 
 const SLAB = 0.22;
 /** The one grey the massing volume is made of, lit rather than shaded flat. */
 const MASS = "#9aa1a6";
 
+/** The rectangle the layout occupies, for framing the camera. */
+function extentOf(boxes: Box[]): { cx: number; cz: number; span: number } {
+  const live = boxes.filter((b) => !b.deleted);
+  if (!live.length) return { cx: SHEET.width / 2, cz: SHEET.depth / 2, span: Math.max(SHEET.width, SHEET.depth) };
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const b of live) {
+    minX = Math.min(minX, b.left);
+    minY = Math.min(minY, b.top);
+    maxX = Math.max(maxX, b.left + b.width);
+    maxY = Math.max(maxY, b.top + b.height);
+  }
+  return { cx: (minX + maxX) / 2, cz: (minY + maxY) / 2, span: Math.max(maxX - minX, maxY - minY, 6) };
+}
+
 export function View3D() {
-  const project = useStore((s) => s.project);
   const boxes = useStore((s) => s.boxes);
+  const recommended = useStore((s) => s.recommended);
+  const storeys = useStore((s) => s.storeys);
   const level = useStore((s) => s.level);
   const selected = useStore((s) => s.selected);
-  const layoutPlan = useStore((s) => s.layoutPlan);
-  const envelope = useStore((s) => s.envelope);
   const massing = useStore((s) => s.massing);
 
   const mount = useRef<HTMLDivElement>(null);
@@ -53,15 +72,7 @@ export function View3D() {
   const camera = useRef<THREE.PerspectiveCamera>();
   const controls = useRef<OrbitControls>();
 
-  const categories = useMemo(() => {
-    const m = new Map<string, CategoryKey>();
-    layoutPlan?.assignments.forEach((a) => m.set(a.room_name, a.category));
-    return m;
-  }, [layoutPlan]);
-
-  const width = project?.site.width_m ?? 20;
-  const depth = project?.site.depth_m ?? 20;
-  const storeyH = project?.storey_height_m ?? 3;
+  const storeyH = STOREY_HEIGHT_M;
 
   // Scene, camera, renderer: once.
   useEffect(() => {
@@ -118,21 +129,22 @@ export function View3D() {
     };
   }, []);
 
-  // Frame the site whenever it changes size.
+  // Frame the layout when a new one is loaded -- not on every edit, which
+  // would snatch the view away from wherever you had orbited it to.
   useEffect(() => {
     const cam = camera.current;
     const ctl = controls.current;
     if (!cam || !ctl) return;
-    const span = Math.max(width, depth);
-    cam.position.set(width / 2 + span * 0.9, span * 0.9, depth / 2 + span * 1.1);
-    ctl.target.set(width / 2, storeyH * 0.6, depth / 2);
+    const { cx, cz, span } = extentOf(recommended);
+    cam.position.set(cx + span * 0.9, span * 0.9, cz + span * 1.1);
+    ctl.target.set(cx, storeyH * 0.6, cz);
     ctl.update();
-  }, [width, depth, storeyH]);
+  }, [recommended, storeyH]);
 
   // Rebuild the building whenever the boxes change.
   useEffect(() => {
     const group = building.current;
-    if (!group || !project) return;
+    if (!group) return;
     for (const child of [...group.children]) {
       group.remove(child);
       child.traverse((o) => {
@@ -144,35 +156,18 @@ export function View3D() {
       });
     }
 
-    // Site and setback line.
-    const site = new THREE.Mesh(
-      new THREE.PlaneGeometry(width, depth),
+    // The sheet, as the ground.
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(SHEET.width, SHEET.depth),
       new THREE.MeshLambertMaterial({ color: "#e7e4da" }),
     );
-    site.rotation.x = -Math.PI / 2;
-    site.position.set(width / 2, -0.01, depth / 2);
-    group.add(site);
-    if (envelope) {
-      const pts = [
-        new THREE.Vector3(envelope.left, 0.01, envelope.top),
-        new THREE.Vector3(envelope.right, 0.01, envelope.top),
-        new THREE.Vector3(envelope.right, 0.01, envelope.bottom),
-        new THREE.Vector3(envelope.left, 0.01, envelope.bottom),
-        new THREE.Vector3(envelope.left, 0.01, envelope.top),
-      ];
-      group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineDashedMaterial({ color: "#c9a227", dashSize: 0.4, gapSize: 0.25 })));
-    }
-    // Street edge.
-    if (project.site.edges.some((e) => e.position === "front" && e.adjacency === "street")) {
-      const street = new THREE.Mesh(new THREE.PlaneGeometry(width, 0.6), new THREE.MeshBasicMaterial({ color: "#c0392b" }));
-      street.rotation.x = -Math.PI / 2;
-      street.position.set(width / 2, 0.005, -0.3);
-      group.add(street);
-    }
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.set(SHEET.width / 2, -0.01, SHEET.depth / 2);
+    group.add(ground);
 
-    const shafts = stairShafts(boxes, project.storeys);
+    const shafts = stairShafts(boxes, storeys);
 
-    for (let lv = 0; lv < project.storeys; lv++) {
+    for (let lv = 0; lv < storeys; lv++) {
       const live = liveBoxes(boxes, lv);
       const shapes = displayShapes(live, null);
       const y0 = lv * storeyH;
@@ -224,7 +219,7 @@ export function View3D() {
         if (b.roomType === "stair") continue; // drawn once as a shaft below
         const h = storeyH - SLAB;
         const geo = new THREE.BoxGeometry(b.width, h, b.height);
-        const color = fillFor(b.roomType, b.kind, categories.get(b.name) ?? categories.get(b.name.replace(/ \d+$/, "")));
+        const color = fillFor(b.roomType, b.kind);
         const mat = new THREE.MeshLambertMaterial({
           color,
           transparent: true,
@@ -255,7 +250,7 @@ export function View3D() {
         const h = (shaft.to - shaft.from + 1) * storeyH - SLAB;
         const geo = new THREE.BoxGeometry(b.width, h, b.height);
         const mat = new THREE.MeshLambertMaterial({
-          color: fillFor(b.roomType, b.kind, undefined),
+          color: fillFor(b.roomType, b.kind),
           transparent: true,
           // Slightly firmer than a room: it is one object passing through
           // every storey, so it should not fade out on the ones you are not
@@ -279,7 +274,7 @@ export function View3D() {
         group.add(edges);
       }
     }
-  }, [boxes, level, project, storeyH, width, depth, envelope, categories, selected, massing]);
+  }, [boxes, storeys, level, storeyH, selected, massing]);
 
   return <div className="view3d" ref={mount} />;
 }

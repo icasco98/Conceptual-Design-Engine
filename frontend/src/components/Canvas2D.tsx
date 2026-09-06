@@ -1,9 +1,13 @@
 /**
  * The plan: every room and hallway on the current storey as a box you can
  * drag, resize (corner handles), rotate (top handle, 5° steps) and delete,
- * over the site outline, the setback line and, on an upper level, a ghost
- * of the storey below. The building outline and door arrows recompute
- * from wherever the boxes are now.
+ * over a blank sheet and, on an upper level, a ghost of the storey below.
+ * The building outline and door arrows recompute from wherever the boxes
+ * are now.
+ *
+ * There is no site and no setback line. The sheet is a faint rectangle
+ * for reference and the ground plane of the 3D view; a room may be drawn
+ * anywhere, on it or off it.
  *
  * All geometry is in plan-frame meters (geometry/types.ts). The SVG's
  * inner group scales meters to pixels, so pointer positions are read back
@@ -18,26 +22,18 @@ import type { CategoryKey } from "../api/types";
 import { displayShapes } from "../geometry/carve";
 import { doorArrows } from "../geometry/doors";
 import { footprintRings, ringsToPath } from "../geometry/footprint";
-import {
-  clamp,
-  clampPositionOnly,
-  liveBoxes,
-  resolveOverlaps,
-  rotationIsAllowed,
-  snapToGrid,
-  snapToNearbyNeighbors,
-} from "../geometry/resolve";
-import { effectiveRectOf } from "../geometry/rect";
+import { liveBoxes, resolveOverlaps, rotationIsAllowed, snapToGrid, snapToNearbyNeighbors } from "../geometry/resolve";
 import { GRID_M, type Box, type Poly, type Rect } from "../geometry/types";
 import { IconFit, IconMinus, IconPlus } from "./icons";
-import { CATEGORY_WASH, INK, fillFor } from "../palette";
+import { CATEGORY_WASH, INK, fillFor, zoneFill } from "../palette";
+import { ZONE_LABELS } from "../rooms";
+import { SHEET } from "../sample";
 import { useStore } from "../state/store";
 
 const PX = 26;
 const MARGIN = 40;
 const HEADROOM = 26;
-/** Room to the right for the north point, and below for the scale bar. */
-const GUTTER_R = 96;
+/** Room below for the scale bar. */
 const GUTTER_B = 86;
 const MIN_ZOOM = 0.4;
 const MAX_ZOOM = 12;
@@ -56,10 +52,9 @@ function pointsOf(poly: Poly): string {
 }
 
 export function Canvas2D() {
-  const project = useStore((s) => s.project);
   const boxes = useStore((s) => s.boxes);
   const level = useStore((s) => s.level);
-  const envelope = useStore((s) => s.envelope);
+  const storeys = useStore((s) => s.storeys);
   const selected = useStore((s) => s.selected);
   const select = useStore((s) => s.select);
   const setBoxes = useStore((s) => s.setBoxes);
@@ -67,7 +62,6 @@ export function Canvas2D() {
   const deleteBoxes = useStore((s) => s.deleteBoxes);
   const showGrid = useStore((s) => s.showGrid);
   const showGhost = useStore((s) => s.showGhost);
-  const layoutPlan = useStore((s) => s.layoutPlan);
 
   const gRef = useRef<SVGGElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -87,15 +81,10 @@ export function Canvas2D() {
   const shapes = useMemo(() => displayShapes(live, pinnedId), [live, pinnedId]);
   const footprint = useMemo(() => ringsToPath(footprintRings(shapes.map((s) => s.page))), [shapes]);
   const arrows = useMemo(() => doorArrows(live), [live]);
-  const categories = useMemo(() => {
-    const m = new Map<string, CategoryKey>();
-    layoutPlan?.assignments.forEach((a) => m.set(a.room_name, a.category));
-    return m;
-  }, [layoutPlan]);
 
-  const width = project?.site.width_m ?? 0;
-  const depth = project?.site.depth_m ?? 0;
-  const svgW = width * PX + MARGIN + GUTTER_R;
+  const width = SHEET.width;
+  const depth = SHEET.depth;
+  const svgW = width * PX + MARGIN * 2;
   const svgH = depth * PX + MARGIN + HEADROOM + GUTTER_B;
 
   /** Pointer position in plan-frame meters. */
@@ -118,39 +107,25 @@ export function Canvas2D() {
   const mergeRef = useRef(mergeLevel);
   mergeRef.current = mergeLevel;
 
-  const categoryOf = (b: Box) => {
-    const base = b.name.replace(/ \d+$/, "");
-    return categories.get(b.name) ?? categories.get(base);
-  };
-
   // ---- gestures ---------------------------------------------------------
 
   const runFrame = useCallback(() => {
     frame.current = 0;
     const g = gesture.current;
     const p = pending.current;
-    if (!g || !p || !envelope) return;
+    if (!g || !p) return;
     pending.current = null;
     const restored = g.snapshot;
 
     if (g.kind === "move") {
       const active = restored.find((b) => b.id === g.id)!;
       let next: Box = { ...active, left: p.x - g.offX, top: p.y - g.offY };
-      const eff = effectiveRectOf(next);
-      const padLeft = next.left - eff.left;
-      const padTop = next.top - eff.top;
-      next = {
-        ...next,
-        left: clamp(next.left, envelope.left + padLeft, envelope.right - eff.width + padLeft),
-        top: clamp(next.top, envelope.top + padTop, envelope.bottom - eff.height + padTop),
-      };
       const others = restored.filter((b) => b.id !== g.id);
       if (!next.rotation) {
         next = { ...next, left: snapToGrid(next.left), top: snapToGrid(next.top) };
         next = snapToNearbyNeighbors(next, [...others, next]);
       }
-      next = clampPositionOnly(next, envelope);
-      const resolved = resolveOverlaps(restored.map((b) => (b.id === g.id ? next : b)), g.id, envelope);
+      const resolved = resolveOverlaps(restored.map((b) => (b.id === g.id ? next : b)), g.id);
       setBoxes(mergeRef.current(resolved));
     } else if (g.kind === "resize") {
       const box = restored.find((b) => b.id === g.id)!;
@@ -175,8 +150,8 @@ export function Canvas2D() {
         h = Math.max(box.minHeight, g.start.top + g.start.height - newTop);
         top = g.start.top + g.start.height - h;
       }
-      const next = clampPositionOnly({ ...box, left, top, width: w, height: h }, envelope);
-      const resolved = resolveOverlaps(restored.map((b) => (b.id === g.id ? next : b)), g.id, envelope);
+      const next = { ...box, left, top, width: w, height: h };
+      const resolved = resolveOverlaps(restored.map((b) => (b.id === g.id ? next : b)), g.id);
       setBoxes(mergeRef.current(resolved));
     } else {
       const angle = (Math.atan2(p.y - g.cy, p.x - g.cx) * 180) / Math.PI + 90;
@@ -185,7 +160,7 @@ export function Canvas2D() {
       let turned = g.lastGood.map((b) => {
         if (!targets.has(b.id)) return b;
         const i = g.ids.indexOf(b.id);
-        return clampPositionOnly({ ...b, rotation: g.startRotations[i] + delta }, envelope);
+        return { ...b, rotation: g.startRotations[i] + delta };
       });
       if (!rotationIsAllowed(turned.filter((b) => targets.has(b.id)), turned)) {
         turned = g.lastGood;
@@ -196,12 +171,12 @@ export function Canvas2D() {
         // at once, and can refuse where the pairwise question said yes.
         // Without this the turn is approved and the overlap simply stands --
         // the two-questions-at-once trap the carve module warns about.
-        turned = resolveOverlaps(turned, g.ids.length === 1 ? g.ids[0] : null, envelope);
+        turned = resolveOverlaps(turned, g.ids.length === 1 ? g.ids[0] : null);
         g.lastGood = turned;
       }
       setBoxes(mergeRef.current(turned));
     }
-  }, [envelope, setBoxes]);
+  }, [setBoxes]);
 
   const onPointerMove = useCallback(
     (e: React.PointerEvent) => {
@@ -222,14 +197,14 @@ export function Canvas2D() {
     const g = gesture.current;
     gesture.current = null;
     setPinnedId(null);
-    if (!g || !envelope) return;
+    if (!g) return;
     const state = useStore.getState();
     const current = liveBoxes(state.boxes, state.level);
     const pinned = g.kind === "rotate" ? (g.ids.length === 1 ? g.ids[0] : null) : g.id;
-    const settled = resolveOverlaps(current, pinned, envelope);
+    const settled = resolveOverlaps(current, pinned);
     const byId = new Map(settled.map((b) => [b.id, b]));
     commitBoxes(state.boxes.map((b) => byId.get(b.id) ?? b));
-  }, [commitBoxes, envelope, runFrame]);
+  }, [commitBoxes, runFrame]);
 
   useEffect(() => {
     const up = () => endGesture();
@@ -349,33 +324,22 @@ export function Canvas2D() {
 
   const fit = useCallback(() => setCam({ z: 1, x: 0, y: 0 }), []);
 
-  if (!project || !envelope) return null;
-
-  const streetEdges = new Set(project.site.edges.filter((e) => e.adjacency === "street").map((e) => e.position));
-
   const scaleBarM = 5;
-  const northX = width + 1.6;
-  // Screen-up is the direction the front edge faces, so north sits that
-  // many degrees back the other way. Nothing read the bearing while it
-  // scored nothing; now the planner places rooms by it, a drawing that
-  // always claimed north was up would be contradicting the plan it shows.
-  const northTurn = -(project.site.rotation_deg ?? 0);
 
   return (
     <div className={`plan-pane${panning ? " panning" : ""}`}>
       <div className="pane-tag label">Plan</div>
       <div className="legend" style={{ position: "absolute", top: 12, right: 16, maxWidth: 300, justifyContent: "flex-end" }}>
-        {layoutPlan &&
-          (["category_a", "category_b", "category_c"] as CategoryKey[]).map((k) => (
-            <span key={k} className="legend-item">
-              <i style={{ background: fillFor("x", "room", k) }} /> {layoutPlan.category_labels[k]}
-            </span>
-          ))}
+        {(["category_a", "category_b", "category_c"] as CategoryKey[]).map((k) => (
+          <span key={k} className="legend-item">
+            <i style={{ background: zoneFill(k) }} /> {ZONE_LABELS[k]}
+          </span>
+        ))}
         <span className="legend-item">
           <i className="legend-hall" /> Hallway
         </span>
         <span className="legend-item">
-          <i style={{ background: fillFor("stair", "room", undefined) }} /> Stair
+          <i style={{ background: fillFor("stair", "room") }} /> Stair
         </span>
         <span className="legend-item">
           <i className="legend-entry" /> Entry
@@ -408,35 +372,10 @@ export function Canvas2D() {
           </marker>
         </defs>
         <g transform={`translate(${cam.x} ${cam.y}) scale(${cam.z})`}>
-        <text
-          x={MARGIN + (width * PX) / 2}
-          y={MARGIN + HEADROOM - 8}
-          textAnchor="middle"
-          className="anno"
-          style={{ fontSize: 13, letterSpacing: "0.22em", fill: INK.street }}
-        >
-          {streetEdges.has("front") ? "Street" : ""}
-        </text>
         <g ref={gRef} transform={`translate(${MARGIN} ${MARGIN + HEADROOM}) scale(${PX})`}>
-          {/* site */}
-          <rect x={0} y={0} width={width} height={depth} fill={INK.sheet} stroke={INK.site} strokeWidth={0.06} />
+          {/* the sheet: a reference area, not a boundary */}
+          <rect x={0} y={0} width={width} height={depth} fill={INK.sheet} stroke={INK.site} strokeWidth={0.04} strokeDasharray="0.3 0.3" />
           {showGrid && <rect x={0} y={0} width={width} height={depth} fill="url(#grid)" />}
-          {/* street edges */}
-          {streetEdges.has("front") && <line x1={0} y1={0} x2={width} y2={0} stroke={INK.street} strokeWidth={0.2} />}
-          {streetEdges.has("back") && <line x1={0} y1={depth} x2={width} y2={depth} stroke={INK.street} strokeWidth={0.2} />}
-          {streetEdges.has("left") && <line x1={0} y1={0} x2={0} y2={depth} stroke={INK.street} strokeWidth={0.2} />}
-          {streetEdges.has("right") && <line x1={width} y1={0} x2={width} y2={depth} stroke={INK.street} strokeWidth={0.2} />}
-          {/* setback line */}
-          <rect
-            x={envelope.left}
-            y={envelope.top}
-            width={envelope.right - envelope.left}
-            height={envelope.bottom - envelope.top}
-            fill="none"
-            stroke={INK.setback}
-            strokeWidth={0.05}
-            strokeDasharray="0.4 0.25"
-          />
           {/* ghost of the level below */}
           {below.map((b) => {
             const cx = b.left + b.width / 2;
@@ -476,13 +415,12 @@ export function Canvas2D() {
             const cy = b.top + b.height / 2;
             const isSel = selected.includes(b.id);
             const solo = isSel && selected.length === 1;
-            const fill = fillFor(b.roomType, b.kind, categoryOf(b));
-            const sharedStair = b.roomType === "stair" && project.storeys > 1;
+            const fill = fillFor(b.roomType, b.kind);
+            const sharedStair = b.roomType === "stair" && storeys > 1;
             // Labels shrink to fit narrow rooms rather than spilling over
             // the neighbour; below ~0.28 m they turn vertical instead.
             const labelText = b.name + (sharedStair ? " ⇅" : "");
-            const fitWidth = Math.max(b.width, b.rotation ? b.width : 0);
-            let fontSize = Math.min(0.5, fitWidth / (labelText.length * 0.6));
+            let fontSize = Math.min(0.5, b.width / (labelText.length * 0.6));
             const vertical = fontSize < 0.28 && b.height > b.width * 1.6;
             // The area only fits under the name when the room has room for it.
             const showArea = !vertical && b.kind === "room" && b.height > 2.2 && b.width > 2.2;
@@ -567,25 +505,8 @@ export function Canvas2D() {
             />
           ))}
 
-          {/* The conventions that make a drawing read as a drawing: which
-              way is north, and how long a metre is. Both sit outside the
-              site rectangle so they never cover a room. */}
-          <g pointerEvents="none">
-            <circle cx={northX} cy={1.6} r={1.02} fill="none" stroke={INK.labelSub} strokeWidth={0.05} />
-            <path
-              d={`M ${northX} ${1.6 - 0.76} L ${northX + 0.34} ${1.6 + 0.48} L ${northX} ${1.6 + 0.18} L ${northX - 0.34} ${1.6 + 0.48} Z`}
-              fill={INK.footprint}
-              transform={`rotate(${northTurn} ${northX} ${1.6})`}
-            />
-            <text x={northX} y={3.5} textAnchor="middle" className="anno" style={{ fontSize: 0.52 }}>
-              North
-            </text>
-            {project.site.rotation_deg != null && (
-              <text x={northX} y={4.3} textAnchor="middle" className="anno" style={{ fontSize: 0.42 }}>
-                front {Math.round(project.site.rotation_deg)}°
-              </text>
-            )}
-          </g>
+          {/* How long a metre is. Sits below the sheet so it never covers
+              a room. */}
           <g pointerEvents="none" transform={`translate(0 ${depth + 1.3})`}>
             {[0, 1, 2, 3].map((i) => (
               <rect
@@ -622,7 +543,7 @@ export function Canvas2D() {
           <IconPlus />
         </button>
         <span className="sep" />
-        <button type="button" title="Fit the whole site" aria-label="Fit the whole site" onClick={fit}>
+        <button type="button" title="Fit the whole sheet" aria-label="Fit the whole sheet" onClick={fit}>
           <IconFit />
         </button>
       </div>

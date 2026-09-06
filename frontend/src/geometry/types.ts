@@ -1,12 +1,12 @@
 /**
  * The canvas's own data model, in PLAN FRAME meters.
  *
- * Plan frame: x runs right, y runs DOWN the screen, origin at the site's
- * FRONT-left corner, so the street runs along the top of the drawing --
- * exactly how the diagram has always been drawn. Every module under
- * geometry/ works in this frame and nothing else; the conversion to the
- * site frame the Python backend uses (y up from the site's back edge, so
- * the front edge is at y = site depth) happens once, in api/convert.ts.
+ * Plan frame: x runs right, y runs DOWN the screen, origin at the top-left
+ * of the sheet. There is no site and no setback line in this tool: the
+ * sheet is an unbounded drawing surface and a box may sit anywhere on it.
+ * Every module under geometry/ works in this frame and nothing else, and
+ * because nothing outside the browser owns the arrangement any more there
+ * is no second frame to convert to.
  */
 
 export interface Rect {
@@ -38,16 +38,8 @@ export interface Box {
   /** Degrees, clockwise on screen. */
   rotation: number;
   deleted: boolean;
-  /** Where the recommendation put it, for Reset. */
+  /** Where the sample put it, for Reset. */
   initial: Rect;
-}
-
-/** The buildable envelope (setback line) in plan frame meters. */
-export interface Envelope {
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
 }
 
 /** Oriented bounding box: center, half extents, and its own unit axes. */

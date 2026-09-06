@@ -1,15 +1,13 @@
 /**
- * Moving boxes: envelope clamp, grid and gap snapping, and the push that
- * happens only where a room cannot give the space up (see carve.ts).
- * Everything here returns new Box objects; nothing is mutated.
+ * Moving boxes: grid and gap snapping, and the push that happens only
+ * where a room cannot give the space up (see carve.ts). There is no
+ * boundary to clamp against: the sheet is unbounded and a pushed room
+ * simply moves. Everything here returns new Box objects; nothing is
+ * mutated.
  */
 import { carvePlanFor, CarveContext } from "./carve";
 import { boxesTrulyIntersect, effectiveRectOf, obbOf, obbPenetration, rectOf } from "./rect";
-import { GAP_SNAP_M, GRID_M, OVERLAP_EPS, type Box, type Envelope } from "./types";
-
-export function clamp(v: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(v, hi));
-}
+import { GAP_SNAP_M, GRID_M, OVERLAP_EPS, type Box } from "./types";
 
 export function snapToGrid(v: number): number {
   return Math.round(v / GRID_M) * GRID_M;
@@ -17,21 +15,6 @@ export function snapToGrid(v: number): number {
 
 export function liveBoxes(boxes: Box[], level: number): Box[] {
   return boxes.filter((b) => !b.deleted && b.level === level);
-}
-
-/** Translate-only envelope clamp on the box's effective (rotation-aware)
- * rect. A box pushed against the setback line stops at it; nothing but
- * the owner resizes a room. */
-export function clampPositionOnly(b: Box, env: Envelope): Box {
-  const eff = effectiveRectOf(b);
-  let dLeft = 0;
-  let dTop = 0;
-  if (eff.left < env.left) dLeft = env.left - eff.left;
-  else if (eff.left + eff.width > env.right) dLeft = env.right - (eff.left + eff.width);
-  if (eff.top < env.top) dTop = env.top - eff.top;
-  else if (eff.top + eff.height > env.bottom) dTop = env.bottom - (eff.top + eff.height);
-  if (!dLeft && !dTop) return b;
-  return { ...b, left: b.left + dLeft, top: b.top + dTop };
 }
 
 /** Sub-meter gap to the nearest facing neighbour along one axis, if any. */
@@ -106,7 +89,7 @@ export function anyBoxesOverlap(live: Box[]): boolean {
  * room, one step, once. The pinned box is never touched, corridors never
  * move, and a push never triggers another. Returns the level's live boxes
  * with any moves applied. */
-export function resolveOverlaps(live: Box[], pinnedId: string | null, env: Envelope): Box[] {
+export function resolveOverlaps(live: Box[], pinnedId: string | null): Box[] {
   if (!anyBoxesOverlap(live)) return live;
   const ctx = new CarveContext(pinnedId);
   const byId = new Map(live.map((b) => [b.id, b]));
@@ -124,7 +107,7 @@ export function resolveOverlaps(live: Box[], pinnedId: string | null, env: Envel
       const against = mover.id === stuck.id ? other : stuck;
       const mtv = obbPenetration(obbOf(mover), obbOf(against));
       if (!mtv) continue;
-      const moved = clampPositionOnly({ ...mover, left: mover.left + mtv[0], top: mover.top + mtv[1] }, env);
+      const moved = { ...mover, left: mover.left + mtv[0], top: mover.top + mtv[1] };
       byId.set(moved.id, moved);
       movedAlready.add(moved.id);
     }
