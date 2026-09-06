@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { carvePlanFor, CarveContext, displayShapes } from "./carve";
+import { carveWith, displayShapes, releaseCarve, shapeStillUsable, subtractKeepLargest } from "./carve";
 import { doorArrows, touchingEdge } from "./doors";
 import { footprintRings } from "./footprint";
-import { polyArea } from "./poly";
-import { boxesTrulyIntersect, obbPenetration, obbOf, obbsSeparated } from "./rect";
-import { resolveOverlaps, rotationIsAllowed, snapToGrid, snapToNearbyNeighbors } from "./resolve";
+import { polyArea, rectPolyOf } from "./poly";
+import { boxesTrulyIntersect, obbOf, obbsSeparated } from "./rect";
 import { shaftsPiercing, stairShafts } from "./shafts";
+import { snapToGrid, snapToNearbyNeighbors } from "./snap";
 import type { Box } from "./types";
 
 function box(partial: Partial<Box> & { id: string; left: number; top: number; width: number; height: number }): Box {
@@ -19,11 +19,14 @@ function box(partial: Partial<Box> & { id: string; left: number; top: number; wi
     minWidth: 2.7,
     minHeight: 3.0,
     rotation: 0,
+    carvedBy: [],
     deleted: false,
     initial: { left: partial.left, top: partial.top, width: partial.width, height: partial.height },
     ...partial,
   };
 }
+
+const shapeOf = (live: Box[], id: string) => displayShapes(live).find((s) => s.id === id)!;
 
 describe("oriented boxes", () => {
   it("rotated squares near each other are separated even when their bounding boxes overlap", () => {
@@ -38,101 +41,117 @@ describe("oriented boxes", () => {
     expect(boxesTrulyIntersect(a, { ...b, left: 2.8, top: 2.8 })).toBe(true);
   });
 
-  it("penetration is along the shallowest axis and just clears the pair", () => {
+  it("boxes that only touch along an edge do not overlap", () => {
     const a = box({ id: "a", left: 0, top: 0, width: 4, height: 4 });
-    const b = box({ id: "b", left: 3.5, top: 0.2, width: 4, height: 4 });
-    const mtv = obbPenetration(obbOf(a), obbOf(b))!;
-    // 0.5 of overlap, plus enough to clear the tolerance obbsSeparated uses.
-    expect(mtv[0]).toBeCloseTo(-0.504, 5);
-    expect(mtv[1]).toBeCloseTo(0, 5);
-    const moved = { ...a, left: a.left + mtv[0], top: a.top + mtv[1] };
-    expect(obbsSeparated(obbOf(moved), obbOf(b))).toBe(true);
+    const b = box({ id: "b", left: 4, top: 0, width: 4, height: 4 });
+    expect(boxesTrulyIntersect(a, b)).toBe(false);
   });
 });
 
-describe("carving", () => {
-  it("a room gives up a corner to a rotated neighbour and keeps its minimum", () => {
-    const victim = box({ id: "v", left: 0, top: 0, width: 5, height: 5 });
-    const biter = box({ id: "b", left: 4, top: 4, width: 3, height: 3, rotation: 30 });
-    const ctx = new CarveContext("b");
-    expect(ctx.chooseBiteVictim(victim, biter)?.id).toBe("v");
-    const plan = carvePlanFor(victim, [victim, biter], ctx);
-    expect(plan.taking.map((b) => b.id)).toEqual(["b"]);
-    expect(polyArea(plan.poly)).toBeLessThan(25);
-    expect(polyArea(plan.poly)).toBeGreaterThan(2.7 * 3.0);
+describe("overlap is free; carving is asked for", () => {
+  const under = box({ id: "under", left: 0, top: 0, width: 5, height: 5 });
+  const over = box({ id: "over", left: 4, top: 4, width: 3, height: 3 });
+
+  it("two overlapping rooms are drawn whole until someone carves", () => {
+    const shapes = displayShapes([under, over]);
+    expect(shapes.every((s) => !s.carved)).toBe(true);
+    expect(polyArea(shapeOf([under, over], "under").page)).toBeCloseTo(25);
   });
 
-  it("a bathroom at its minimum cannot absorb anything, so the pair is pushed", () => {
-    const bath = box({ id: "bath", left: 5, top: 5, width: 1.8, height: 2.4, minWidth: 1.5, minHeight: 1.75 });
-    const bed = box({ id: "bed", left: 6.0, top: 5.5, width: 3.3, height: 3.6 });
-    const ctx = new CarveContext("bed");
-    // The bed is pinned so the bath should give way, but it can't; the
-    // bed isn't asked to (it's pinned) -> nobody.
-    expect(ctx.chooseBiteVictim(bath, bed)).toBeNull();
-    const resolved = resolveOverlaps([bath, bed], "bed");
-    const movedBath = resolved.find((b) => b.id === "bath")!;
-    expect(movedBath.left).toBeCloseTo(4.2);
-    expect(resolved.find((b) => b.id === "bed")).toEqual(bed);
-    expect(boxesTrulyIntersect(movedBath, bed)).toBe(false);
+  it("carving with the top room cuts the room beneath it and nothing else", () => {
+    const far = box({ id: "far", left: 20, top: 20, width: 3, height: 3 });
+    const live = carveWith(over, [under, over, far]);
+    expect(live.find((b) => b.id === "under")!.carvedBy).toEqual(["over"]);
+    expect(live.find((b) => b.id === "far")!.carvedBy).toEqual([]);
+    expect(live.find((b) => b.id === "over")!.carvedBy).toEqual([]);
+    const s = shapeOf(live, "under");
+    expect(s.carved).toBe(true);
+    expect(s.flagged).toBe(false);
+    expect(polyArea(s.page)).toBeCloseTo(25 - 1);
+    // The carver keeps its whole rectangle.
+    expect(polyArea(shapeOf(live, "over").page)).toBeCloseTo(9);
   });
 
-  it("with no boundary, a room at the edge of the sheet is still pushed clear", () => {
-    // There is no setback line any more: the sheet is unbounded, so a room
-    // that cannot absorb a bite always has somewhere to go.
+  it("the cut follows the carver: move it away and the space comes back", () => {
+    const live = carveWith(over, [under, over]);
+    const moved = live.map((b) => (b.id === "over" ? { ...b, left: 10 } : b));
+    const s = shapeOf(moved, "under");
+    expect(s.carved).toBe(false);
+    expect(polyArea(s.page)).toBeCloseTo(25);
+  });
+
+  it("carving with the other room turns the cut around", () => {
+    let live = carveWith(over, [under, over]);
+    live = carveWith(live.find((b) => b.id === "under")!, live);
+    expect(live.find((b) => b.id === "under")!.carvedBy).toEqual([]);
+    expect(live.find((b) => b.id === "over")!.carvedBy).toEqual(["under"]);
+    expect(polyArea(shapeOf(live, "over").page)).toBeCloseTo(8);
+    expect(polyArea(shapeOf(live, "under").page)).toBeCloseTo(25);
+  });
+
+  it("release undoes a carve", () => {
+    const live = releaseCarve("over", carveWith(over, [under, over]));
+    expect(live.find((b) => b.id === "under")!.carvedBy).toEqual([]);
+    expect(shapeOf(live, "under").carved).toBe(false);
+  });
+
+  it("a rotated carver cuts a slanted notch", () => {
+    const turned = { ...over, rotation: 30 };
+    const live = carveWith(turned, [under, turned]);
+    const s = shapeOf(live, "under");
+    expect(s.carved).toBe(true);
+    expect(s.page.length).toBeGreaterThan(4);
+    expect(polyArea(s.page)).toBeLessThan(25);
+  });
+});
+
+describe("the minimum is reported, not enforced", () => {
+  it("a room cut below its minimum keeps the cut and is flagged", () => {
     const bath = box({ id: "bath", left: 0, top: 0, width: 1.8, height: 2.4, minWidth: 1.5, minHeight: 1.75 });
-    const bed = box({ id: "bed", left: 1.0, top: 0.5, width: 3.3, height: 3.6 });
-    const resolved = resolveOverlaps([bath, bed], "bed");
-    const movedBath = resolved.find((b) => b.id === "bath")!;
-    expect(movedBath.left).toBeLessThan(0);
-    expect(boxesTrulyIntersect(movedBath, bed)).toBe(false);
+    const bed = box({ id: "bed", left: 1.0, top: 0, width: 3.3, height: 3.6 });
+    const live = carveWith(bed, [bath, bed]);
+    const s = shapeOf(live, "bath");
+    expect(s.carved).toBe(true);
+    expect(s.flagged).toBe(true);
+    // The cut still happened: what is left is the 1.0 m strip.
+    expect(polyArea(s.page)).toBeCloseTo(1.0 * 2.4);
   });
 
-  it("corridors never move and never get eaten", () => {
-    const hall = box({ id: "hall", kind: "corridor", roomType: "hallway", left: 0, top: 5, width: 12, height: 1.2, minWidth: 1.2, minHeight: 1.2 });
-    const bed = box({ id: "bed", left: 2, top: 5.7, width: 3.3, height: 3.6 });
-    const resolved = resolveOverlaps([hall, bed], "bed");
-    expect(resolved.find((b) => b.id === "hall")).toEqual(hall);
-    // The bed is pinned too, so nothing moved; the bed draws itself carved.
-    const shapes = displayShapes([hall, bed], "bed");
-    const bedShape = shapes.find((s) => s.id === "bed")!;
-    expect(bedShape.carved).toBe(true);
-    expect(polyArea(bedShape.page)).toBeCloseTo(3.3 * 3.6 - 3.3 * 0.5, 3);
+  it("a room cut in two keeps its larger piece and is flagged", () => {
+    const wide = box({ id: "wide", left: 0, top: 0, width: 10, height: 4, minWidth: 2.7, minHeight: 3 });
+    const bar = box({ id: "bar", left: 6, top: -1, width: 1, height: 6, minWidth: 0.9, minHeight: 0.6 });
+    const live = carveWith(bar, [wide, bar]);
+    const s = shapeOf(live, "wide");
+    expect(s.flagged).toBe(true);
+    expect(polyArea(s.page)).toBeCloseTo(6 * 4);
   });
 
-  it("a permitted rotation still has to be resolved, or the overlap just stands", () => {
-    // The reported case: a living room turned 45 degrees onto two neighbours
-    // that cannot both give way. rotationIsAllowed asks pair by pair whether
-    // SOME victim could be chosen and says yes; carvePlanFor, which the
-    // drawing uses, weighs all of a room's cuts together and refuses. The
-    // rotate gesture used to trust the first answer and skip resolveOverlaps,
-    // leaving rooms drawn on top of each other.
-    const living = box({ id: "living", left: 6, top: 6, width: 4.7, height: 4.7, rotation: 45 });
-    const driver = box({ id: "driver", left: 4.2, top: 8.2, width: 3.0, height: 3.2, minWidth: 2.8, minHeight: 3.0 });
-    const laundry = box({ id: "laundry", left: 4.4, top: 5.4, width: 2.8, height: 2.4, minWidth: 2.6, minHeight: 2.2 });
-    const live = [living, driver, laundry];
-
-    expect(rotationIsAllowed([living], live)).toBe(true);
-
-    const settled = resolveOverlaps(live, "living");
-    const turned = settled.find((b) => b.id === "living")!;
-    expect(turned.left).toBe(living.left);
-    expect(turned.top).toBe(living.top);
-
-    // Whatever could not be carved has been pushed clear: nothing is left
-    // sitting inside the turned room's true, rotated shape.
-    for (const other of settled.filter((b) => b.id !== "living")) {
-      expect(boxesTrulyIntersect(turned, other)).toBe(false);
-    }
+  it("a room completely covered is flagged and still drawn so it can be grabbed", () => {
+    const small = box({ id: "small", left: 1, top: 1, width: 2, height: 2, minWidth: 1, minHeight: 1 });
+    const big = box({ id: "big", left: 0, top: 0, width: 6, height: 6 });
+    const live = carveWith(big, [small, big]);
+    const s = shapeOf(live, "small");
+    expect(s.flagged).toBe(true);
+    expect(s.page.length).toBe(4);
   });
 
-  it("a rotation that would need a refused bite is not allowed", () => {
-    const bath = box({ id: "bath", left: 5, top: 5, width: 1.8, height: 2.4, minWidth: 1.5, minHeight: 1.75 });
-    const bed = box({ id: "bed", left: 5.5, top: 6, width: 3.3, height: 3.6, rotation: 40 });
-    expect(rotationIsAllowed([bed], [bath, bed])).toBe(false);
+  it("shapeStillUsable wants the minimum area and the minimum rectangle", () => {
+    const b = box({ id: "b", left: 0, top: 0, width: 4, height: 4, minWidth: 2.7, minHeight: 3 });
+    expect(shapeStillUsable(b, rectPolyOf({ left: 0, top: 0, width: 4, height: 4 }))).toBe(true);
+    // Same area as 2.7 x 3, but nothing that size fits in it.
+    expect(shapeStillUsable(b, rectPolyOf({ left: 0, top: 0, width: 8.1, height: 1 }))).toBe(false);
+  });
+
+  it("subtractKeepLargest keeps the biggest piece and reports a split", () => {
+    const subject = rectPolyOf({ left: 0, top: 0, width: 10, height: 2 });
+    const cutter = rectPolyOf({ left: 3, top: -1, width: 1, height: 4 });
+    const { poly, split } = subtractKeepLargest(subject, [cutter]);
+    expect(split).toBe(true);
+    expect(polyArea(poly)).toBeCloseTo(12);
   });
 });
 
-describe("snapping and clamping", () => {
+describe("snapping", () => {
   it("grid snaps to 0.25m", () => {
     expect(snapToGrid(1.13)).toBeCloseTo(1.25);
     expect(snapToGrid(1.12)).toBeCloseTo(1.0);
@@ -165,9 +184,17 @@ describe("doors and footprint", () => {
   it("the outline is one ring around touching boxes", () => {
     const a = box({ id: "a", left: 0, top: 0, width: 4, height: 4 });
     const b = box({ id: "b", left: 4, top: 0, width: 4, height: 4 });
-    const rings = footprintRings(displayShapes([a, b], null).map((s) => s.page));
+    const rings = footprintRings(displayShapes([a, b]).map((s) => s.page));
     expect(rings).toHaveLength(1);
     expect(polyArea(rings[0])).toBeCloseTo(32);
+  });
+
+  it("the outline of overlapping boxes counts the overlap once", () => {
+    const a = box({ id: "a", left: 0, top: 0, width: 4, height: 4 });
+    const b = box({ id: "b", left: 3, top: 0, width: 4, height: 4 });
+    const rings = footprintRings(displayShapes([a, b]).map((s) => s.page));
+    expect(rings).toHaveLength(1);
+    expect(polyArea(rings[0])).toBeCloseTo(28);
   });
 });
 

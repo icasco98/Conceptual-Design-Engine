@@ -10,7 +10,7 @@
  * This collapses those boxes back into the shaft they describe: one entry
  * per stair, carrying the storeys it spans.
  */
-import { liveBoxes } from "./resolve";
+import { liveBoxes } from "./snap";
 import type { Box } from "./types";
 
 export interface Shaft {

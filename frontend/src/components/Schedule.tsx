@@ -2,7 +2,7 @@ import { useMemo } from "react";
 
 import { displayShapes } from "../geometry/carve";
 import { polyArea } from "../geometry/poly";
-import { liveBoxes, resolveOverlaps } from "../geometry/resolve";
+import { liveBoxes } from "../geometry/snap";
 import type { Box } from "../geometry/types";
 import { fillFor } from "../palette";
 import { useStore } from "../state/store";
@@ -14,9 +14,12 @@ export function Schedule() {
   const select = useStore((s) => s.select);
   const deleteBoxes = useStore((s) => s.deleteBoxes);
   const commitBoxes = useStore((s) => s.commitBoxes);
+  const carve = useStore((s) => s.carve);
+  const release = useStore((s) => s.release);
 
   const live = useMemo(() => liveBoxes(boxes, level), [boxes, level]);
-  const shapes = useMemo(() => displayShapes(live, null), [live]);
+  const shapes = useMemo(() => displayShapes(live), [live]);
+  const carvesSomething = (b: Box) => live.some((o) => o.carvedBy.includes(b.id));
   const areaOf = (b: Box) => {
     const s = shapes.find((x) => x.id === b.id);
     return s ? polyArea(s.page) : b.width * b.height;
@@ -32,9 +35,7 @@ export function Schedule() {
       const h = Math.max(b.minHeight, meters);
       next = { ...b, top: b.top + (b.height - h) / 2, height: h };
     }
-    const resolved = resolveOverlaps(live.map((x) => (x.id === b.id ? next : x)), b.id);
-    const byId = new Map(resolved.map((x) => [x.id, x]));
-    commitBoxes(boxes.map((x) => byId.get(x.id) ?? x));
+    commitBoxes(boxes.map((x) => (x.id === b.id ? next : x)));
   };
 
   return (
@@ -48,15 +49,19 @@ export function Schedule() {
             <th className="r">Area</th>
             <th className="r">Rot.</th>
             <th />
+            <th />
           </tr>
         </thead>
         <tbody>
           {live.map((b) => {
-            const carved = shapes.find((s) => s.id === b.id)?.carved;
+            const shape = shapes.find((s) => s.id === b.id);
+            const carved = shape?.carved;
+            const flagged = shape?.flagged;
+            const carving = carvesSomething(b);
             return (
               <tr
                 key={b.id}
-                className={selected.includes(b.id) ? "selected" : ""}
+                className={`${selected.includes(b.id) ? "selected" : ""} ${flagged ? "flagged" : ""}`}
                 onClick={(e) => {
                   const t = e.target as HTMLElement;
                   if (t.tagName === "INPUT" || t.tagName === "BUTTON") return;
@@ -89,10 +94,24 @@ export function Schedule() {
                     onChange={(e) => edit(b, "h", parseFloat(e.target.value))}
                   />
                 </td>
-                <td className={`r num ${carved ? "carved" : ""}`} title={carved ? "Shaped around a neighbour" : ""}>
+                <td
+                  className={`r num ${flagged ? "flag" : carved ? "carved" : ""}`}
+                  title={flagged ? "Carved below its minimum size, or cut in two" : carved ? "Carved by another room" : ""}
+                >
+                  {flagged ? "! " : ""}
                   {areaOf(b).toFixed(1)} m²
                 </td>
                 <td className="r num">{b.rotation}°</td>
+                <td>
+                  <button
+                    type="button"
+                    className={`carve-btn ${carving ? "on" : ""}`}
+                    title={carving ? "Stop carving the rooms under this one" : "Carve the rooms under this one"}
+                    onClick={() => (carving ? release(b.id) : carve(b.id))}
+                  >
+                    {carving ? "Release" : "Carve"}
+                  </button>
+                </td>
                 <td>
                   <button
                     type="button"

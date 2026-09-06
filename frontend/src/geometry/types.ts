@@ -37,6 +37,9 @@ export interface Box {
   minHeight: number;
   /** Degrees, clockwise on screen. */
   rotation: number;
+  /** Ids of the boxes that have been asked to carve this one. Their
+   * current shape is cut out of it wherever they still overlap. */
+  carvedBy: string[];
   deleted: boolean;
   /** Where the sample put it, for Reset. */
   initial: Rect;
@@ -71,5 +74,3 @@ export const GRID_M = 0.25;
 export const GAP_SNAP_M = 1.0;
 /** Door arrow endpoints sit this far either side of the wall. */
 export const DOOR_INSET_M = 0.35;
-/** The most of itself a room may give up to a bite. */
-export const BITE_MAX_FRACTION = 0.45;

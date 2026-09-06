@@ -45,11 +45,10 @@ the next begins.
    ghosted outline of the floors above and below, to line up walls.
 4. **Adjacency and outline.** Arrows between rooms placed next to each
    other, and the building envelope traced around everything placed.
-5. **Overlap and priority.** Rooms may overlap. Each has a numeric
-   priority; a higher-priority room carves a lower-priority one, never
-   below that room type's hard minimum — a room that would have to go
-   below it is flagged with a red outline for the person to resolve, not
-   auto-resized and not blocked.
+5. **Priority.** Each room gets a numeric priority in the schedule, so
+   that where rooms overlap the tool can tell which one carves which
+   without being asked each time. Overlap and manual carving are already
+   in (see below); this stage adds the ordering.
 6. **3D.** Confirm the finished 2D editor converts into the massing view.
 
 ## What the editor does today (after stage 1)
@@ -60,12 +59,15 @@ the next begins.
   to pan, scroll to zoom. A 0.25 m grid can be shown from the rail, and
   positions snap to it whether or not it is visible; a box dragged within
   1 m of a facing neighbour snaps to touch it.
-- **Overlaps, for now.** The carve rules from the forked branch are still
-  in place until stage 5 replaces them: the box under the cursor keeps
-  its place and whatever it overlaps gives up the space, never below its
-  minimum; where a room cannot give the space up, the other room is pushed
-  one step. Hallways are never carved and never move. Stage 5 rewrites
-  this around the schedule's priority column.
+- **Overlap and carving.** Rooms overlap freely and nothing is ever
+  pushed: a room goes exactly where you put it and nothing else moves.
+  To cut, select a room and press its carve handle (top-left corner) or
+  the Carve button on its schedule row: it cuts every room it sits over.
+  The cut follows the carver, so moving it moves the notch and moving it
+  away gives the space back; press again to release. A cut never resizes
+  a room for you — a room cut below its type's minimum, or cut in two,
+  keeps the cut and is outlined in red, named in the status bar, and
+  marked with ! in the schedule, for you to resolve.
 - **Schedule.** Width and depth are editable in place and the box follows
   (growing from its centre); area is read from the shape actually drawn.
   Clicking a row selects the box and vice versa.

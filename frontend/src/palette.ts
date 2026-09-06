@@ -23,6 +23,8 @@ export const INK = {
   label: "#151817",
   labelSub: "#7C8079",
   dim: "#7C8079",
+  /** A room cut below its minimum, or in two. */
+  flag: "#C0392B",
 } as const;
 
 export function fillFor(roomType: string, kind: "room" | "corridor"): string {

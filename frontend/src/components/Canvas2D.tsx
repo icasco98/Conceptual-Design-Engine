@@ -5,6 +5,10 @@
  * The building outline and door arrows recompute from wherever the boxes
  * are now.
  *
+ * Boxes overlap freely and nothing is ever pushed. The carve handle on a
+ * selected box (top-left) cuts every room under it; pressing it again
+ * releases the cut. A room cut below its minimum is outlined in red.
+ *
  * There is no site and no setback line. The sheet is a faint rectangle
  * for reference and the ground plane of the 3D view; a room may be drawn
  * anywhere, on it or off it.
@@ -22,7 +26,8 @@ import type { CategoryKey } from "../api/types";
 import { displayShapes } from "../geometry/carve";
 import { doorArrows } from "../geometry/doors";
 import { footprintRings, ringsToPath } from "../geometry/footprint";
-import { liveBoxes, resolveOverlaps, rotationIsAllowed, snapToGrid, snapToNearbyNeighbors } from "../geometry/resolve";
+import { polyArea } from "../geometry/poly";
+import { liveBoxes, snapToGrid, snapToNearbyNeighbors } from "../geometry/snap";
 import { GRID_M, type Box, type Poly, type Rect } from "../geometry/types";
 import { IconFit, IconMinus, IconPlus } from "./icons";
 import { CATEGORY_WASH, INK, fillFor, zoneFill } from "../palette";
@@ -45,7 +50,17 @@ type Corner = "nw" | "ne" | "sw" | "se";
 type Gesture =
   | { kind: "move"; id: string; offX: number; offY: number; snapshot: Box[] }
   | { kind: "resize"; id: string; corner: Corner; start: Rect; startX: number; startY: number; snapshot: Box[] }
-  | { kind: "rotate"; ids: string[]; cx: number; cy: number; startAngle: number; startRotations: number[]; lastGood: Box[]; snapshot: Box[] };
+  | { kind: "rotate"; ids: string[]; cx: number; cy: number; startAngle: number; startRotations: number[]; snapshot: Box[] };
+
+/** Keep the gesture even when the pointer leaves the element. A synthetic
+ *  event has no pointer to capture, and that is not worth an exception. */
+function capture(e: React.PointerEvent) {
+  try {
+    (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+  } catch {
+    /* no live pointer */
+  }
+}
 
 function pointsOf(poly: Poly): string {
   return poly.map((p) => `${p[0].toFixed(3)},${p[1].toFixed(3)}`).join(" ");
@@ -60,6 +75,8 @@ export function Canvas2D() {
   const setBoxes = useStore((s) => s.setBoxes);
   const commitBoxes = useStore((s) => s.commitBoxes);
   const deleteBoxes = useStore((s) => s.deleteBoxes);
+  const carve = useStore((s) => s.carve);
+  const release = useStore((s) => s.release);
   const showGrid = useStore((s) => s.showGrid);
   const showGhost = useStore((s) => s.showGhost);
 
@@ -71,14 +88,13 @@ export function Canvas2D() {
   const [panning, setPanning] = useState(false);
   const pending = useRef<{ x: number; y: number } | null>(null);
   const frame = useRef(0);
-  const [pinnedId, setPinnedId] = useState<string | null>(null);
 
   const live = useMemo(() => liveBoxes(boxes, level), [boxes, level]);
   const below = useMemo(
     () => (showGhost && level > 0 ? liveBoxes(boxes, level - 1) : []),
     [boxes, level, showGhost],
   );
-  const shapes = useMemo(() => displayShapes(live, pinnedId), [live, pinnedId]);
+  const shapes = useMemo(() => displayShapes(live), [live]);
   const footprint = useMemo(() => ringsToPath(footprintRings(shapes.map((s) => s.page))), [shapes]);
   const arrows = useMemo(() => doorArrows(live), [live]);
 
@@ -125,8 +141,7 @@ export function Canvas2D() {
         next = { ...next, left: snapToGrid(next.left), top: snapToGrid(next.top) };
         next = snapToNearbyNeighbors(next, [...others, next]);
       }
-      const resolved = resolveOverlaps(restored.map((b) => (b.id === g.id ? next : b)), g.id);
-      setBoxes(mergeRef.current(resolved));
+      setBoxes(mergeRef.current(restored.map((b) => (b.id === g.id ? next : b))));
     } else if (g.kind === "resize") {
       const box = restored.find((b) => b.id === g.id)!;
       const dx = p.x - g.startX;
@@ -151,29 +166,16 @@ export function Canvas2D() {
         top = g.start.top + g.start.height - h;
       }
       const next = { ...box, left, top, width: w, height: h };
-      const resolved = resolveOverlaps(restored.map((b) => (b.id === g.id ? next : b)), g.id);
-      setBoxes(mergeRef.current(resolved));
+      setBoxes(mergeRef.current(restored.map((b) => (b.id === g.id ? next : b))));
     } else {
       const angle = (Math.atan2(p.y - g.cy, p.x - g.cx) * 180) / Math.PI + 90;
       const delta = Math.round((angle - g.startAngle) / 5) * 5;
       const targets = new Set(g.ids);
-      let turned = g.lastGood.map((b) => {
+      const turned = restored.map((b) => {
         if (!targets.has(b.id)) return b;
         const i = g.ids.indexOf(b.id);
         return { ...b, rotation: g.startRotations[i] + delta };
       });
-      if (!rotationIsAllowed(turned.filter((b) => targets.has(b.id)), turned)) {
-        turned = g.lastGood;
-      } else {
-        // Resolve, exactly as move and resize do. rotationIsAllowed only
-        // asks, pair by pair, whether *some* victim could be chosen; the
-        // drawing asks carvePlanFor whether a room survives all of its cuts
-        // at once, and can refuse where the pairwise question said yes.
-        // Without this the turn is approved and the overlap simply stands --
-        // the two-questions-at-once trap the carve module warns about.
-        turned = resolveOverlaps(turned, g.ids.length === 1 ? g.ids[0] : null);
-        g.lastGood = turned;
-      }
       setBoxes(mergeRef.current(turned));
     }
   }, [setBoxes]);
@@ -196,14 +198,8 @@ export function Canvas2D() {
     }
     const g = gesture.current;
     gesture.current = null;
-    setPinnedId(null);
     if (!g) return;
-    const state = useStore.getState();
-    const current = liveBoxes(state.boxes, state.level);
-    const pinned = g.kind === "rotate" ? (g.ids.length === 1 ? g.ids[0] : null) : g.id;
-    const settled = resolveOverlaps(current, pinned);
-    const byId = new Map(settled.map((b) => [b.id, b]));
-    commitBoxes(state.boxes.map((b) => byId.get(b.id) ?? b));
+    commitBoxes(useStore.getState().boxes);
   }, [commitBoxes, runFrame]);
 
   useEffect(() => {
@@ -222,8 +218,7 @@ export function Canvas2D() {
     select(b.id, e.shiftKey);
     const p = toMeters(e);
     gesture.current = { kind: "move", id: b.id, offX: p.x - b.left, offY: p.y - b.top, snapshot: live };
-    setPinnedId(b.id);
-    (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+    capture(e);
   };
 
   const startResize = (e: React.PointerEvent, b: Box, corner: Corner) => {
@@ -239,8 +234,7 @@ export function Canvas2D() {
       startY: p.y,
       snapshot: live,
     };
-    setPinnedId(b.id);
-    (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+    capture(e);
   };
 
   const startRotate = (e: React.PointerEvent, b: Box) => {
@@ -258,11 +252,9 @@ export function Canvas2D() {
       cy,
       startAngle,
       startRotations: ids.map((id) => live.find((x) => x.id === id)?.rotation ?? 0),
-      lastGood: live,
       snapshot: live,
     };
-    setPinnedId(ids.length === 1 ? ids[0] : null);
-    (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+    capture(e);
   };
 
   const onDelete = (e: React.PointerEvent, b: Box) => {
@@ -270,6 +262,16 @@ export function Canvas2D() {
     e.preventDefault();
     deleteBoxes(selected.includes(b.id) && selected.length > 1 ? selected : [b.id]);
   };
+
+  /** Carve with this box, or release its cuts if it already carves
+   *  everything it sits over. */
+  const onCarve = (e: React.PointerEvent, b: Box) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (carvesSomething(b)) release(b.id);
+    else carve(b.id);
+  };
+  const carvesSomething = (b: Box) => live.some((o) => o.carvedBy.includes(b.id));
 
   // ---- camera -----------------------------------------------------------
 
@@ -415,6 +417,8 @@ export function Canvas2D() {
             const cy = b.top + b.height / 2;
             const isSel = selected.includes(b.id);
             const solo = isSel && selected.length === 1;
+            const flagged = shape?.flagged ?? false;
+            const carving = carvesSomething(b);
             const fill = fillFor(b.roomType, b.kind);
             const sharedStair = b.roomType === "stair" && storeys > 1;
             // Labels shrink to fit narrow rooms rather than spilling over
@@ -429,7 +433,7 @@ export function Canvas2D() {
             return (
               <g
                 key={b.id}
-                className={`box ${b.kind} ${b.isEntry ? "entry" : ""} ${isSel ? "selected" : ""} ${shape?.carved ? "carved" : ""}`}
+                className={`box ${b.kind} ${b.isEntry ? "entry" : ""} ${isSel ? "selected" : ""} ${shape?.carved ? "carved" : ""} ${flagged ? "flagged" : ""}`}
                 transform={`rotate(${b.rotation} ${cx} ${cy})`}
                 onPointerDown={(e) => startMove(e, b)}
               >
@@ -437,8 +441,8 @@ export function Canvas2D() {
                   points={pointsOf(poly)}
                   fill={b.kind === "corridor" ? "url(#hatch)" : fill}
                   fillOpacity={b.kind === "corridor" ? 1 : isSel ? CATEGORY_WASH * 2 : CATEGORY_WASH}
-                  stroke={b.isEntry || isSel ? "#0b0b0b" : INK.room}
-                  strokeWidth={b.isEntry ? 0.12 : isSel ? 0.12 : 0.05}
+                  stroke={flagged ? INK.flag : b.isEntry || isSel ? "#0b0b0b" : INK.room}
+                  strokeWidth={flagged || b.isEntry || isSel ? 0.12 : 0.05}
                   strokeDasharray={b.isEntry ? "0.35 0.2" : undefined}
                   strokeLinejoin="round"
                 />
@@ -458,7 +462,7 @@ export function Canvas2D() {
                 </text>
                 {showArea && (
                   <text x={cx} y={cy + 0.82} className="area-label" textAnchor="middle" style={{ fontSize: 0.44 }}>
-                    {(b.width * b.height).toFixed(1)} m²
+                    {(shape ? polyArea(shape.page) : b.width * b.height).toFixed(1)} m²
                   </text>
                 )}
                 {solo &&
@@ -484,6 +488,21 @@ export function Canvas2D() {
                     <text x={b.left + b.width + 0.55} y={b.top - 0.55} className="handle-glyph" textAnchor="middle" dominantBaseline="middle">
                       ×
                     </text>
+                    {solo && (
+                      <>
+                        <title>{carving ? "Release: stop carving the rooms under this one" : "Carve the rooms under this one"}</title>
+                        <circle
+                          className={`handle carve ${carving ? "on" : ""}`}
+                          cx={b.left - 0.55}
+                          cy={b.top - 0.55}
+                          r={HANDLE / 2}
+                          onPointerDown={(e) => onCarve(e, b)}
+                        />
+                        <text x={b.left - 0.55} y={b.top - 0.55} className="handle-glyph" textAnchor="middle" dominantBaseline="middle">
+                          {carving ? "⊟" : "⊠"}
+                        </text>
+                      </>
+                    )}
                   </>
                 )}
               </g>

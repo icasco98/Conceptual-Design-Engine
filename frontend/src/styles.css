@@ -90,7 +90,7 @@ input { font: inherit; }
 .pane-tools { position: absolute; right: 16px; bottom: 14px; }
 
 /* right column: massing over schedule */
-.right-col { display: flex; flex-direction: column; width: 400px; flex: none; background: var(--panel); }
+.right-col { display: flex; flex-direction: column; width: 440px; flex: none; background: var(--panel); }
 .massing {
   display: flex; flex-direction: column; height: 322px; flex: none;
   background: var(--sunk); border-bottom: 1px solid var(--rule);
@@ -188,14 +188,22 @@ input { font: inherit; }
   color: var(--muted); border-bottom: 1px solid var(--rule);
 }
 .schedule th.r, .schedule td.r { text-align: right; }
-.schedule td { padding: 5px 4px; border-bottom: 1px solid var(--rule-soft); color: var(--ink-2); }
+.schedule td { padding: 5px 4px; border-bottom: 1px solid var(--rule-soft); color: var(--ink-2); white-space: nowrap; }
 .schedule td.name { display: flex; align-items: center; gap: 8px; color: var(--ink); }
 .schedule td.name i { width: 9px; height: 9px; flex: none; border-radius: 2px; opacity: 0.75; }
 .schedule tr { cursor: pointer; }
 .schedule tr.selected td { background: var(--accent-soft); }
 .schedule td.carved { color: var(--accent); }
+.schedule td.flag { color: var(--err); font-weight: 600; }
+.schedule tr.flagged td.name { color: var(--err); }
+.carve-btn {
+  padding: 2px 8px; font-size: 11px; font-weight: 600; white-space: nowrap;
+  border: 1px solid var(--rule); background: var(--panel); border-radius: 10px; color: var(--ink-2);
+}
+.carve-btn:hover { background: var(--sunk); }
+.carve-btn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 .schedule input {
-  width: 52px; padding: 2px 4px; font-family: var(--dr); font-variant-numeric: tabular-nums;
+  width: 50px; padding: 2px 4px; font-family: var(--dr); font-variant-numeric: tabular-nums;
   text-align: right; border: 1px solid var(--rule); border-radius: 4px; background: var(--panel);
 }
 
@@ -227,6 +235,8 @@ button.icon:hover { color: var(--err); }
 .plan-svg .handle.resize.ne, .plan-svg .handle.resize.sw { cursor: nesw-resize; }
 .plan-svg .handle.rotate { cursor: grab; }
 .plan-svg .handle.delete { fill: #fbeeec; cursor: pointer; }
+.plan-svg .handle.carve { fill: #f2f6f9; cursor: pointer; }
+.plan-svg .handle.carve.on { fill: #2f5d7c; }
 .plan-svg .handle-glyph { font-size: 0.34px; pointer-events: none; fill: #111; }
 .plan-svg .ghost { pointer-events: none; }
 
@@ -239,5 +249,5 @@ button.icon:hover { color: var(--err); }
 .placeholder { padding: 24px; color: var(--muted); }
 
 @media (max-width: 1200px) {
-  .right-col { width: 340px; }
+  .right-col { width: 380px; }
 }

@@ -84,6 +84,7 @@ export function sampleBoxes(): Box[] {
       minWidth: kind === "corridor" ? 1.2 : info.minWidth,
       minHeight: kind === "corridor" ? 1.2 : info.minHeight,
       rotation: 0,
+      carvedBy: [],
       deleted: false,
       initial: rect,
     };

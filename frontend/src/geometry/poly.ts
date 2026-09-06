@@ -34,23 +34,6 @@ export function polyArea(poly: Poly): number {
   return Math.abs(a) / 2;
 }
 
-/** Subtract `clippers` from `subject`. Null when the result is anything a
- * single polygon can't draw -- more than one piece, or a piece with a
- * hole -- which is also what keeps a room from being cut in two. */
-export function subtractPolys(subject: Poly, clippers: Poly[]): Poly | null {
-  if (!clippers.length) return subject;
-  let out;
-  try {
-    out = polygonClipping.difference(polyToGeom(subject), ...clippers.map(polyToGeom));
-  } catch {
-    return null;
-  }
-  if (!out || out.length !== 1) return null;
-  if (out[0].length !== 1) return null;
-  const ring = ringToPoly(out[0][0]);
-  return ring.length >= 3 ? ring : null;
-}
-
 /** Union of many polygons, as a list of polygons each [outer, ...holes]. */
 export function unionPolys(polys: Poly[]): Poly[][] {
   if (!polys.length) return [];
@@ -60,33 +43,6 @@ export function unionPolys(polys: Poly[]): Poly[][] {
   } catch {
     return geoms.map((g) => g.map(ringToPoly));
   }
-}
-
-export function intersectionArea(a: Poly, b: Poly): number {
-  let out;
-  try {
-    out = polygonClipping.intersection(polyToGeom(a), polyToGeom(b));
-  } catch {
-    return 0;
-  }
-  let total = 0;
-  for (const poly of out ?? []) {
-    poly.forEach((ring, idx) => {
-      const area = polyArea(ringToPoly(ring));
-      total += idx === 0 ? area : -area;
-    });
-  }
-  return total;
-}
-
-export function intersectionPoly(a: Poly, b: Poly): Poly | null {
-  try {
-    const out = polygonClipping.intersection(polyToGeom(a), polyToGeom(b));
-    if (out && out.length && out[0].length) return ringToPoly(out[0][0]);
-  } catch {
-    /* fall through */
-  }
-  return null;
 }
 
 export interface BBox {
@@ -168,10 +124,3 @@ export function largestFreeStrip(rect: Rect, bite: BBox): { w: number; h: number
   ];
 }
 
-export function samePolygon(a: Poly, b: Poly, tol = 0.002): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (Math.abs(a[i][0] - b[i][0]) > tol || Math.abs(a[i][1] - b[i][1]) > tol) return false;
-  }
-  return true;
-}

@@ -55,15 +55,39 @@ Moved into the browser, because it is the only place that reads them:
   meters. Two storeys, 11 × 9.5 m, rooms directly adjacent with no
   corridor spine on the ground floor; a landing and short hall upstairs.
 
-Kept as they were: the carve / protect-the-minimum / push rules in
-`geometry/carve.ts` and `resolve.ts` (minus the clamp), door arrows,
-footprint union, stair shafts, the 3D view, the schedule, saved layouts.
+Kept as they were: door arrows, footprint union, stair shafts, the 3D
+view, the schedule, saved layouts.
+
+## Overlap rules rewritten: done (owner's request after trying stage 1)
+
+The forked branch's rules -- carve first, protect the minimum, push last
+-- moved rooms the person had not touched and made the canvas
+unpredictable. They are gone (`resolve.ts` deleted, `carve.ts` rewritten,
+`rect.ts` down to the SAT overlap test). The new rules:
+
+- Rooms overlap freely. Nothing is ever pushed or resized by the tool.
+- A carve is asked for: `store.carve(id)` adds the carver to the
+  `carvedBy` list of every room it overlaps on its storey, and removes
+  those rooms from its own list (the carver is on top). `release(id)`
+  takes it out of every list.
+- `displayShapes` subtracts each carver's *current* polygon, so the cut
+  follows the carver; a carver moved clear leaves nothing behind.
+- The minimum is reported, never enforced: `flagged` on a display shape
+  means cut below the type minimum (`shapeStillUsable`, with a 5 mm
+  tolerance because the booleans land vertices a hair off) or cut in
+  two (the larger piece is kept). The plan outlines it red, the schedule
+  marks it !, the status bar names it.
+- The 3D extrudes the drawn polygon, so a carve reads in three
+  dimensions too.
+
+Stage 5 is now only the priority column: an ordering that decides who
+carves whom without pressing Carve, on top of this machinery.
 
 Verified in a browser (headless Chromium against the built app): both
 storeys draw with the ghost of the floor below, both massing modes
 render, dragging a room selects its schedule row, editing a width in the
 schedule resizes the box, save lists the layout and renames the title,
-Reset restores the sample. No console errors. Tests: 4 Python, 17
+Reset restores the sample. No console errors. Tests: 4 Python, 23
 TypeScript, all passing; ruff and tsc clean.
 
 ## Stages 2–6: not started
@@ -91,15 +115,12 @@ circulation graph. Arrows between *any* touching pair is the same
 function without the breadth-first walk. The outline (`footprint.ts`)
 already unions every drawn shape.
 
-**Stage 5 (overlap and priority).** The owner's decision on the forked
-branch stands: *rewrite the overlap rules, do not extend them.* The three
-modules `carve.ts`, `resolve.ts` and `rect.ts` hold one question between
-them and the seams are where the bugs were. The new rule is simpler than
-the old one — higher priority carves lower, never below the type minimum,
-red outline when it would have to — and has no "push" at all: rooms are
-allowed to overlap and the person resolves it. `shapeStillUsable` in
-`carve.ts` (minimum area *and* still holds the minimum rectangle) is the
-one test worth keeping.
+**Stage 5 (priority).** The overlap rewrite is done (above). What is
+left is a `priority` field on the box, a schedule column, and a rule
+that when two rooms overlap the higher priority is added to the lower's
+`carvedBy` automatically -- the same list `carve()` writes, so manual
+and automatic carving stay one mechanism. Decide with the owner whether
+a manual Carve should override priority or be replaced by it.
 
 **Stage 6 (3D).** `View3D.tsx` extrudes whatever `displayShapes` returns,
 so once stages 2–5 produce polygons it should follow with little change.
@@ -122,16 +143,17 @@ outside it.
 mirrors any edit across levels, and `shafts.ts` collapses the copies into
 one volume for the 3D.
 
-**Corridors are never eaten and never moved** — still true until stage 5
-replaces the rules. A hallway in the sample is `kind: "corridor"`.
+**Corridors are ordinary rooms now.** `kind: "corridor"` only picks the
+hatch fill and the 1.2 m minimum; a hallway can be carved like anything
+else.
 
-**`carvePlanFor` answers two questions at once** — what to draw, and
-whether anything must move. Computing them separately is how the forked
-branch came to approve one room's cut and draw another's. Stage 5 should
-keep that property whatever else it changes.
+**The tool never moves or resizes a room on its own.** That is the
+promise the rewrite makes. Anything that seems to need it should become
+a flag instead.
 
-**Rotation works in 5-degree steps, and that is not cosmetic.** Each step
-resolves before the next is tried.
+**Rotation is in 5-degree steps** only because the handle rounds to
+them; stage 2's "freely rotated" can drop that without touching anything
+else.
 
 **The editor must never depend on the backend.** `boot()` opens the
 sample before it asks `/api/health`; a missing backend costs only the

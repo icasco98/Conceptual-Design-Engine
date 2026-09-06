@@ -30,7 +30,7 @@ import { displayShapes } from "../geometry/carve";
 import { footprintRings } from "../geometry/footprint";
 import { polyOfBox } from "../geometry/poly";
 import { shaftsPiercing, stairShafts } from "../geometry/shafts";
-import { liveBoxes } from "../geometry/resolve";
+import { liveBoxes } from "../geometry/snap";
 import type { Box } from "../geometry/types";
 import { fillFor } from "../palette";
 import { SHEET, STOREY_HEIGHT_M } from "../sample";
@@ -169,7 +169,7 @@ export function View3D() {
 
     for (let lv = 0; lv < storeys; lv++) {
       const live = liveBoxes(boxes, lv);
-      const shapes = displayShapes(live, null);
+      const shapes = displayShapes(live);
       const y0 = lv * storeyH;
       const current = lv === level;
 
@@ -217,8 +217,13 @@ export function View3D() {
 
       for (const b of live) {
         if (b.roomType === "stair") continue; // drawn once as a shaft below
+        // The room's drawn shape -- rectangle minus whatever carves it,
+        // rotation already applied -- extruded, so a carved room reads as
+        // carved in three dimensions too.
+        const page = shapes.find((s) => s.id === b.id)?.page ?? polyOfBox(b);
         const h = storeyH - SLAB;
-        const geo = new THREE.BoxGeometry(b.width, h, b.height);
+        const shape = new THREE.Shape(page.map((p) => new THREE.Vector2(p[0], p[1])));
+        const geo = new THREE.ExtrudeGeometry(shape, { depth: h, bevelEnabled: false });
         const color = fillFor(b.roomType, b.kind);
         const mat = new THREE.MeshLambertMaterial({
           color,
@@ -226,10 +231,8 @@ export function View3D() {
           opacity: current ? 0.55 : 0.16,
         });
         const mesh = new THREE.Mesh(geo, mat);
-        const cx = b.left + b.width / 2;
-        const cz = b.top + b.height / 2;
-        mesh.position.set(cx, y0 + SLAB + h / 2, cz);
-        mesh.rotation.y = (-b.rotation * Math.PI) / 180;
+        mesh.rotation.x = Math.PI / 2; // shape y -> world +z; extrude -> world -y
+        mesh.position.set(0, y0 + SLAB + h, 0);
         group.add(mesh);
         const edges = new THREE.LineSegments(
           new THREE.EdgesGeometry(geo),

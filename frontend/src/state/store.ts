@@ -10,6 +10,8 @@ import { create } from "zustand";
 
 import { api } from "../api/client";
 import type { ProjectSummary } from "../api/types";
+import { carveWith, releaseCarve } from "../geometry/carve";
+import { liveBoxes } from "../geometry/snap";
 import type { Box } from "../geometry/types";
 import { SAMPLE_STOREYS, sampleBoxes } from "../sample";
 
@@ -37,6 +39,10 @@ export interface State {
   commitBoxes: (boxes: Box[]) => void;
   select: (id: string | null, additive?: boolean) => void;
   deleteBoxes: (ids: string[]) => void;
+  /** The box cuts every room it sits over, on its own storey. */
+  carve: (id: string) => void;
+  /** The box stops cutting anything. */
+  release: (id: string) => void;
   resetLayout: () => void;
   setLevel: (level: number) => void;
   setMassing: (massing: MassingMode) => void;
@@ -127,6 +133,19 @@ export const useStore = create<State>((set, get) => ({
     set({ selected: get().selected.filter((s) => !idSet.has(s)) });
   },
 
+  carve(id) {
+    const boxes = get().boxes;
+    const carver = boxes.find((b) => b.id === id);
+    if (!carver) return;
+    const settled = carveWith(carver, liveBoxes(boxes, carver.level));
+    const byId = new Map(settled.map((b) => [b.id, b]));
+    set({ boxes: boxes.map((b) => byId.get(b.id) ?? b) });
+  },
+
+  release(id) {
+    set({ boxes: releaseCarve(id, get().boxes) });
+  },
+
   resetLayout() {
     set({ boxes: get().recommended, selected: [] });
   },
@@ -168,9 +187,11 @@ export const useStore = create<State>((set, get) => ({
     set({ busy: "Loading…" });
     try {
       const saved = await api.getProject(id);
+      // Layouts saved before carving existed have no carvedBy list.
+      const boxes = saved.boxes.map((b) => ({ ...b, carvedBy: b.carvedBy ?? [] }));
       set({
-        boxes: saved.boxes,
-        recommended: saved.boxes,
+        boxes,
+        recommended: boxes,
         storeys: saved.storeys,
         level: Math.min(get().level, Math.max(0, saved.storeys - 1)),
         selected: [],
