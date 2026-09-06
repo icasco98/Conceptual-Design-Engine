@@ -6,7 +6,6 @@ import { touchingEdge } from "./doors";
 import { footprintRings } from "./footprint";
 import { polyArea, polyOfBox, rectPolyOf } from "./poly";
 import { boxesTrulyIntersect, obbOf, obbsSeparated } from "./rect";
-import { shaftsPiercing, stairShafts } from "./shafts";
 import { liveBoxes, snapToGrid, snapToNearbyNeighbors } from "./snap";
 import { polyGap, touchDelta, touchSelected } from "./touch";
 import type { Box } from "./types";
@@ -347,18 +346,13 @@ describe("vertical masses", () => {
     expect(liveBoxes([stair, bed], 3)).toEqual([]);
   });
 
-  it("a spanning zone is one shaft, not one per storey", () => {
-    const shafts = stairShafts([stair, box({ id: "bed", left: 8, top: 2, width: 3, height: 4, level: 1 })]);
-    expect(shafts).toHaveLength(1);
-    expect(shafts[0].from).toBe(0);
-    expect(shafts[0].to).toBe(2);
-  });
-
-  it("a shaft pierces the floors above its base, and stands on its own", () => {
-    const shafts = stairShafts([stair]);
-    expect(shaftsPiercing(shafts, 0)).toHaveLength(0);
-    expect(shaftsPiercing(shafts, 1)).toHaveLength(1);
-    expect(shaftsPiercing(shafts, 2)).toHaveLength(1);
-    expect(shaftsPiercing(shafts, 3)).toHaveLength(0);
+  it("a zone that starts below a storey pierces its floor plate", () => {
+    // What the 3D cuts a hole for: anything whose base is under the plate
+    // and which is still live on that storey.
+    const pierces = (lv: number) => liveBoxes([stair], lv).filter((b) => b.level < lv).length;
+    expect(pierces(0)).toBe(0);
+    expect(pierces(1)).toBe(1);
+    expect(pierces(2)).toBe(1);
+    expect(pierces(3)).toBe(0);
   });
 });

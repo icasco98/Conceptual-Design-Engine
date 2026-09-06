@@ -27,7 +27,7 @@ export function Massing() {
       </div>
       <View3D />
       <div className="massing-foot">
-        <IconOrbit /> Drag to orbit · scroll to zoom
+        <IconOrbit /> Drag to orbit · scroll to zoom · click a zone to select it
       </div>
     </section>
   );

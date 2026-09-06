@@ -1,22 +1,30 @@
 /**
- * The building in three dimensions, from the same boxes the plan edits.
+ * The building in three dimensions, from the same zones the plan edits.
+ *
+ * Every zone is drawn ONCE, from its own floor to its own ceiling. Nothing
+ * here works storey by storey, because a zone's height is its own: a 7 m
+ * room is one 7 m volume, not a storey's worth of volume repeated on each
+ * floor it happens to reach. (It was exactly that, and read as a stack of
+ * boxes.) Storeys only decide where a zone starts and where the floor
+ * plates go.
  *
  * Two readings of the same arrangement, chosen with the "Colour by zone"
  * checkbox above:
  *
- *   zones — every live box on every level extruded to the storey height and
- *     coloured by its zone, the current level solid and the others
- *     translucent, so the plan you are editing reads inside the whole;
- *   mass  — one grey volume per storey, traced from that storey's own
- *     outline. No rooms, no colour: the shape the building makes, which
- *     is the question massing actually asks.
+ *   zones — every zone coloured by its category, the storey you are
+ *     editing solid and the rest translucent, with floor plates between
+ *     them, so the plan you are editing reads inside the whole;
+ *   mass  — the same volumes in one grey, no plates and no colour: the
+ *     shape the building makes, which is what massing actually asks. The
+ *     only lines are each storey's own outline, so the silhouette reads
+ *     without every room joint showing through it.
  *
- * A zone that spans several storeys (the stair) is one box in the model
- * and one mass here: drawn once, floor of its lowest storey to ceiling of
- * its highest, with every floor plate it passes through cut around it.
+ * A floor plate is cut around any zone that passes through it, so a tall
+ * volume stays continuous rather than being sliced into storeys.
  *
- * The ground is the drawing sheet: there is no site, so nothing else is
- * drawn under the building.
+ * Click a zone to select it: the schedule and the plan follow, and the
+ * plan switches to that zone's floor if it is not the one on screen.
+ * Shift-click adds to the selection. A click on nothing clears it.
  *
  * Three.js is vendored through npm and bundled; nothing is fetched at
  * runtime, so the view works with no connection.
@@ -25,12 +33,11 @@ import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
-import { displayShapes } from "../geometry/carve";
+import { displayShapes, type DisplayShape } from "../geometry/carve";
 import { footprintRings } from "../geometry/footprint";
 import { polyOfBox } from "../geometry/poly";
-import { shaftsPiercing, stairShafts } from "../geometry/shafts";
 import { liveBoxes } from "../geometry/snap";
-import type { Box } from "../geometry/types";
+import type { Box, Poly } from "../geometry/types";
 import { fillFor } from "../palette";
 import { SHEET, STOREY_HEIGHT_M } from "../sample";
 import { useStore } from "../state/store";
@@ -38,6 +45,8 @@ import { useStore } from "../state/store";
 const SLAB = 0.22;
 /** The one grey the massing volume is made of, lit rather than shaded flat. */
 const MASS = "#9aa1a6";
+/** A drag longer than this many pixels is an orbit, not a click. */
+const CLICK_SLOP_PX = 4;
 
 /** The rectangle the layout occupies, for framing the camera. */
 function extentOf(boxes: Box[]): { cx: number; cz: number; span: number } {
@@ -56,6 +65,19 @@ function extentOf(boxes: Box[]): { cx: number; cz: number; span: number } {
   return { cx: (minX + maxX) / 2, cz: (minY + maxY) / 2, span: Math.max(maxX - minX, maxY - minY, 6) };
 }
 
+/** A polygon extruded between two heights. The shape is in plan-frame x/y,
+ * so it is laid down flat and the extrusion runs up the world's y. */
+function prism(poly: Poly, base: number, height: number, holes: Poly[] = []): THREE.ExtrudeGeometry {
+  const shape = new THREE.Shape(poly.map((p) => new THREE.Vector2(p[0], p[1])));
+  for (const h of holes) shape.holes.push(new THREE.Path(h.map((p) => new THREE.Vector2(p[0], p[1]))));
+  const geo = new THREE.ExtrudeGeometry(shape, { depth: height, bevelEnabled: false });
+  // shape y -> world +z, extrude -> world -y, so turn it down and lift it
+  // to put the extrusion's far face at `base`.
+  geo.rotateX(Math.PI / 2);
+  geo.translate(0, base + height, 0);
+  return geo;
+}
+
 export function View3D() {
   const boxes = useStore((s) => s.boxes);
   const recommended = useStore((s) => s.recommended);
@@ -65,7 +87,6 @@ export function View3D() {
   const massing = useStore((s) => s.massing);
 
   const mount = useRef<HTMLDivElement>(null);
-  const scene = useRef<THREE.Scene>();
   const building = useRef<THREE.Group>();
   const renderer = useRef<THREE.WebGLRenderer>();
   const camera = useRef<THREE.PerspectiveCamera>();
@@ -76,7 +97,7 @@ export function View3D() {
 
   const storeyH = STOREY_HEIGHT_M;
 
-  // Scene, camera, renderer: once.
+  // Scene, camera, renderer, and picking: once.
   useEffect(() => {
     const el = mount.current;
     if (!el) return;
@@ -98,11 +119,44 @@ export function View3D() {
     const group = new THREE.Group();
     s.add(group);
 
-    scene.current = s;
     building.current = group;
     renderer.current = r;
     camera.current = cam;
     controls.current = ctl;
+
+    // ---- picking: a click that did not orbit selects what is under it.
+    const ray = new THREE.Raycaster();
+    let down: { x: number; y: number } | null = null;
+    const onDown = (e: PointerEvent) => {
+      down = { x: e.clientX, y: e.clientY };
+    };
+    const onUp = (e: PointerEvent) => {
+      const start = down;
+      down = null;
+      if (!start) return;
+      if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > CLICK_SLOP_PX) return; // orbited
+      const rect = r.domElement.getBoundingClientRect();
+      const pointer = new THREE.Vector2(
+        ((e.clientX - rect.left) / rect.width) * 2 - 1,
+        -((e.clientY - rect.top) / rect.height) * 2 + 1,
+      );
+      ray.setFromCamera(pointer, cam);
+      const store = useStore.getState();
+      for (const hit of ray.intersectObjects(group.children, false)) {
+        const id = hit.object.userData.boxId as string | undefined;
+        if (!id) continue; // the ground, a slab, an outline
+        const box = store.boxes.find((b) => b.id === id);
+        if (!box) continue;
+        // Show the floor the zone starts on, so what you picked is on the
+        // plan and in the schedule beside it.
+        if (box.level > store.level || store.level > box.levelTo) store.setLevel(box.level);
+        store.select(id, e.shiftKey);
+        return;
+      }
+      store.select(null);
+    };
+    r.domElement.addEventListener("pointerdown", onDown);
+    r.domElement.addEventListener("pointerup", onUp);
 
     let alive = true;
     const resize = () => {
@@ -126,6 +180,8 @@ export function View3D() {
     return () => {
       alive = false;
       ro.disconnect();
+      r.domElement.removeEventListener("pointerdown", onDown);
+      r.domElement.removeEventListener("pointerup", onUp);
       ctl.dispose();
       r.dispose();
       el.removeChild(r.domElement);
@@ -156,19 +212,17 @@ export function View3D() {
     frameRef.current();
   }, [recommended, storeyH]);
 
-  // Rebuild the building whenever the boxes change.
+  // Rebuild whenever the zones change.
   useEffect(() => {
     const group = building.current;
     if (!group) return;
     for (const child of [...group.children]) {
       group.remove(child);
-      child.traverse((o) => {
-        const m = o as THREE.Mesh;
-        m.geometry?.dispose();
-        const mat = m.material as THREE.Material | THREE.Material[] | undefined;
-        if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
-        else mat?.dispose();
-      });
+      const m = child as THREE.Mesh;
+      m.geometry?.dispose();
+      const mat = m.material as THREE.Material | THREE.Material[] | undefined;
+      if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
+      else mat?.dispose();
     }
 
     // The sheet, as the ground.
@@ -180,119 +234,78 @@ export function View3D() {
     ground.position.set(SHEET.width / 2, -0.01, SHEET.depth / 2);
     group.add(ground);
 
-    const shafts = stairShafts(boxes);
+    // Each storey's drawn shapes, computed once: the carve on a storey
+    // depends on what else is on that storey.
+    const perLevel = new Map<number, DisplayShape[]>();
+    for (let lv = 0; lv < storeys; lv++) perLevel.set(lv, displayShapes(liveBoxes(boxes, lv)));
+    /** A zone's outline, taken from the storey it stands on. */
+    const pageOf = (b: Box): Poly => perLevel.get(b.level)?.find((s) => s.id === b.id)?.page ?? polyOfBox(b);
 
+    const live = boxes.filter((b) => !b.deleted);
+
+    // ---- the volumes: one per zone, floor to ceiling, whatever its height
+    for (const b of live) {
+      const base = b.level * storeyH + SLAB;
+      const height = Math.max(0.3, b.heightM - SLAB);
+      const geo = prism(pageOf(b), base, height);
+      // A zone reaching the storey on screen is drawn solid; the rest are
+      // faint, so the floor you are editing stands out inside the whole.
+      const onScreen = b.level <= level && level <= b.levelTo;
+      const isSel = selected.includes(b.id);
+      const mesh = new THREE.Mesh(
+        geo,
+        new THREE.MeshLambertMaterial({
+          color: massing === "mass" ? MASS : fillFor(b.roomType, b.kind),
+          transparent: massing === "zones",
+          opacity: massing === "mass" ? 1 : onScreen ? (isSel ? 0.72 : 0.55) : 0.16,
+        }),
+      );
+      mesh.userData.boxId = b.id;
+      group.add(mesh);
+      if (massing === "zones") {
+        group.add(
+          new THREE.LineSegments(
+            new THREE.EdgesGeometry(geo),
+            new THREE.LineBasicMaterial({
+              color: isSel ? "#0b0b0b" : "#333333",
+              transparent: true,
+              opacity: isSel ? 1 : onScreen ? 0.9 : 0.25,
+            }),
+          ),
+        );
+      }
+    }
+
+    // ---- the storeys: floor plates in zones mode, outlines in mass mode
     for (let lv = 0; lv < storeys; lv++) {
-      const live = liveBoxes(boxes, lv);
-      const shapes = displayShapes(live);
+      const onThis = liveBoxes(boxes, lv);
+      if (!onThis.length) continue;
+      const rings = footprintRings((perLevel.get(lv) ?? []).map((s) => s.page));
       const y0 = lv * storeyH;
-      const current = lv === level;
-
-      const rings = footprintRings(shapes.map((s) => s.page));
 
       if (massing === "mass") {
-        // One solid per storey, the storey's own outline taken to full
-        // height. Stacked they read as a single volume, because each
-        // storey's top face is buried under the next storey's base.
+        // The silhouette, storey by storey, and nothing else: no plates
+        // and no room joints to break the volume up.
         for (const ring of rings) {
-          const shape = new THREE.Shape(ring.map((p) => new THREE.Vector2(p[0], p[1])));
-          const geo = new THREE.ExtrudeGeometry(shape, { depth: storeyH, bevelEnabled: false });
-          const solid = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: MASS }));
-          solid.rotation.x = Math.PI / 2;
-          solid.position.set(0, y0 + storeyH, 0);
-          group.add(solid);
-          // Only the storey's outline is drawn, so the volume keeps its
-          // silhouette without the room joints showing through it.
-          const outline = new THREE.Line(
-            new THREE.BufferGeometry().setFromPoints(
-              ring.concat([ring[0]]).map((pt) => new THREE.Vector3(pt[0], y0 + storeyH + 0.005, pt[1])),
+          group.add(
+            new THREE.Line(
+              new THREE.BufferGeometry().setFromPoints(
+                ring.concat([ring[0]]).map((pt) => new THREE.Vector3(pt[0], y0 + 0.01, pt[1])),
+              ),
+              new THREE.LineBasicMaterial({ color: "#5c6469" }),
             ),
-            new THREE.LineBasicMaterial({ color: "#5c6469" }),
           );
-          group.add(outline);
         }
         continue;
       }
 
-      // Slab from the level's own outline, with a void where a stair comes
-      // up through it — a floor plate with no opening would slice the shaft
-      // into the stacked boxes this is meant to stop.
-      const voids = shaftsPiercing(shafts, lv);
+      // A plate is cut around every zone that passes through it -- a plate
+      // with no opening would slice a tall volume into stacked boxes.
+      const holes = onThis.filter((b) => b.level < lv).map(pageOf);
       for (const ring of rings) {
-        const shape = new THREE.Shape(ring.map((p) => new THREE.Vector2(p[0], p[1])));
-        for (const v of voids) {
-          shape.holes.push(new THREE.Path(polyOfBox(v.box).map((p) => new THREE.Vector2(p[0], p[1]))));
-        }
-        const geo = new THREE.ExtrudeGeometry(shape, { depth: SLAB, bevelEnabled: false });
-        const slab = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: "#d9d4c7" }));
-        slab.rotation.x = Math.PI / 2; // shape y -> world +z; extrude -> world -y
-        slab.position.set(0, y0, 0);
-        group.add(slab);
-      }
-
-      for (const b of live) {
-        if (b.levelTo > b.level) continue; // one mass, drawn once below
-        // The room's drawn shape -- rectangle minus whatever carves it,
-        // rotation already applied -- extruded to the zone's own height,
-        // so a carved room reads as carved in three dimensions too.
-        const page = shapes.find((s) => s.id === b.id)?.page ?? polyOfBox(b);
-        const h = Math.max(0.3, b.heightM - SLAB);
-        const shape = new THREE.Shape(page.map((p) => new THREE.Vector2(p[0], p[1])));
-        const geo = new THREE.ExtrudeGeometry(shape, { depth: h, bevelEnabled: false });
-        const color = fillFor(b.roomType, b.kind);
-        const mat = new THREE.MeshLambertMaterial({
-          color,
-          transparent: true,
-          opacity: current ? 0.55 : 0.16,
-        });
-        const mesh = new THREE.Mesh(geo, mat);
-        mesh.rotation.x = Math.PI / 2; // shape y -> world +z; extrude -> world -y
-        mesh.position.set(0, y0 + SLAB + h, 0);
-        group.add(mesh);
-        const edges = new THREE.LineSegments(
-          new THREE.EdgesGeometry(geo),
-          new THREE.LineBasicMaterial({ color: selected.includes(b.id) ? "#000000" : "#333333", transparent: true, opacity: current ? 0.9 : 0.25 }),
+        group.add(
+          new THREE.Mesh(prism(ring, y0, SLAB, holes), new THREE.MeshLambertMaterial({ color: "#d9d4c7" })),
         );
-        edges.position.copy(mesh.position);
-        edges.rotation.copy(mesh.rotation);
-        group.add(edges);
-      }
-    }
-
-    // Each spanning zone once, from the floor of its lowest storey to the
-    // ceiling of its highest. Drawn after the rooms so its edges read
-    // through them, and only in zones mode — the massing volume already
-    // contains it.
-    if (massing === "zones") {
-      for (const shaft of shafts) {
-        const b = shaft.box;
-        const h = Math.max(0.3, b.heightM - SLAB);
-        const page = displayShapes(liveBoxes(boxes, shaft.from)).find((s) => s.id === b.id)?.page ?? polyOfBox(b);
-        const shape = new THREE.Shape(page.map((p) => new THREE.Vector2(p[0], p[1])));
-        const geo = new THREE.ExtrudeGeometry(shape, { depth: h, bevelEnabled: false });
-        const mat = new THREE.MeshLambertMaterial({
-          color: fillFor(b.roomType, b.kind),
-          transparent: true,
-          // Slightly firmer than a room: it is one object passing through
-          // every storey, so it should not fade out on the ones you are not
-          // looking at.
-          opacity: 0.62,
-        });
-        const mesh = new THREE.Mesh(geo, mat);
-        mesh.rotation.x = Math.PI / 2;
-        mesh.position.set(0, shaft.from * storeyH + SLAB + h, 0);
-        group.add(mesh);
-        const edges = new THREE.LineSegments(
-          new THREE.EdgesGeometry(geo),
-          new THREE.LineBasicMaterial({
-            color: selected.includes(b.id) ? "#000000" : "#333333",
-            transparent: true,
-            opacity: 0.9,
-          }),
-        );
-        edges.position.copy(mesh.position);
-        edges.rotation.copy(mesh.rotation);
-        group.add(edges);
       }
     }
   }, [boxes, storeys, level, storeyH, selected, massing]);
