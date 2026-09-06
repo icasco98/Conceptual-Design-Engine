@@ -16,6 +16,12 @@
 import type { Box, BoxKind, Rect } from "./geometry/types";
 import { roomTypeInfo } from "./rooms";
 
+/** Priority when nothing else is said: see `Box.priority`. Circulation
+ *  is given the higher rank, because a corridor that gives way stops
+ *  being a corridor. */
+export const DEFAULT_PRIORITY = 2;
+export const CIRCULATION_PRIORITY = 1;
+
 /** How many storeys the sample has. Rooms are assigned a level; the count
  *  is what the level tabs and the 3D view are built from. */
 export const SAMPLE_STOREYS = 2;
@@ -95,6 +101,7 @@ export function sampleBoxes(): Box[] {
       minWidth: kind === "corridor" ? 1.2 : info.minWidth,
       minHeight: kind === "corridor" ? 1.2 : info.minHeight,
       rotation: 0,
+      priority: kind === "corridor" || p.roomType === "stair" ? CIRCULATION_PRIORITY : DEFAULT_PRIORITY,
       carvedBy: [],
       deleted: false,
       initial: rect,

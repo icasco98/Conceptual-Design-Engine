@@ -128,12 +128,10 @@ storey is derived; `storeys` is a store field.
 touching pair are wanted rather than one per zone, drop the `covered`
 check in `suggestArrows`.
 
-**Stage 5 (priority).** The overlap rewrite is done (above). What is
-left is a `priority` field on the box, a schedule column, and a rule
-that when two rooms overlap the higher priority is added to the lower's
-`carvedBy` automatically -- the same list `carve()` writes, so manual
-and automatic carving stay one mechanism. Decide with the owner whether
-a manual Carve should override priority or be replaced by it.
+**Stage 5 (priority).** Done -- see above. Note the one design decision
+in it: automatic carving is *derived*, not written into `carvedBy`. Do
+not be tempted to "apply" it into the data; that is what makes the
+toggle reversible.
 
 **Stage 6 (3D).** `View3D.tsx` extrudes whatever `displayShapes` returns,
 so once stages 2–5 produce polygons it should follow with little change.
@@ -168,7 +166,13 @@ else.
 
 **The tool never moves or resizes a room on its own.** That is the
 promise the rewrite makes. Anything that seems to need it should become
-a flag instead.
+a flag instead. Automatic carving does not break it: it changes what is
+*drawn*, never a zone's rectangle.
+
+**Undo needs the state from before a gesture, not during it.** Gestures
+stream through `setBoxes` and finish with `commitBoxes`, so by commit
+time the pre-gesture state is gone. That is why `remember()` is public
+and called at pointerdown.
 
 **Rotation is free**, with Shift holding 15-degree steps.
 

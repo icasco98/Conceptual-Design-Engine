@@ -16,7 +16,18 @@ import { isOpenToBelow, liveBoxes } from "../geometry/snap";
 import { touchSelected } from "../geometry/touch";
 import type { Arrow, Box, BoxShape, Point } from "../geometry/types";
 import { roomTypeInfo } from "../rooms";
-import { SAMPLE_STOREYS, STOREY_HEIGHT_M, sampleBoxes, storeysSpanned } from "../sample";
+import { DEFAULT_PRIORITY, SAMPLE_STOREYS, STOREY_HEIGHT_M, sampleBoxes, storeysSpanned } from "../sample";
+
+/** What undo restores. The camera, the selection and the toggles are not
+ * in it: undo is for the drawing, not for where you were looking. */
+interface Snapshot {
+  boxes: Box[];
+  arrows: Arrow[];
+  storeys: number;
+}
+
+/** How many steps back you can go. */
+const HISTORY_MAX = 60;
 
 /** What the 3D pane draws: coloured zones per room, or one grey volume. */
 export type MassingMode = "zones" | "mass";
@@ -42,7 +53,15 @@ export interface State {
   error: string | null;
   showGrid: boolean;
   massing: MassingMode;
+  /** The outline of the storey below, and of the one above. */
   showGhost: boolean;
+  showAbove: boolean;
+  /** Dragging a zone in the 3D view moves it; off, the drag orbits. */
+  moveIn3D: boolean;
+  /** A zone is carved by anything it overlaps that outranks it. */
+  autoCarve: boolean;
+  past: Snapshot[];
+  future: Snapshot[];
   savedId: string | null;
   savedName: string;
   projects: ProjectSummary[];
@@ -72,11 +91,22 @@ export interface State {
   /** Propose arrows for zones that have none yet (arrows.ts). */
   suggestArrows: () => void;
   resetLayout: () => void;
+  /** Record the drawing as it stands, before something changes it. Every
+   * discrete action does this itself; a gesture calls it as it starts. */
+  remember: () => void;
+  undo: () => void;
+  redo: () => void;
+  addStorey: () => void;
+  /** Remove the top storey, if nothing is up there. */
+  removeStorey: () => void;
   setLevel: (level: number) => void;
   setTool: (tool: Tool) => void;
   setMassing: (massing: MassingMode) => void;
   toggleGrid: () => void;
   toggleGhost: () => void;
+  toggleAbove: () => void;
+  toggleMoveIn3D: () => void;
+  toggleAutoCarve: () => void;
   refreshProjects: () => Promise<void>;
   saveProject: (name: string) => Promise<void>;
   loadProject: (id: string) => Promise<void>;
@@ -91,7 +121,14 @@ let nextZone = 1;
 function normalise(b: Partial<Box> & Box): Box {
   const levelTo = b.levelTo ?? b.level;
   const heightM = b.heightM ?? (levelTo - b.level + 1) * STOREY_HEIGHT_M;
-  return { ...b, shape: b.shape ?? "rect", carvedBy: b.carvedBy ?? [], heightM, levelTo: b.level + storeysSpanned(heightM) - 1 };
+  return {
+    ...b,
+    shape: b.shape ?? "rect",
+    carvedBy: b.carvedBy ?? [],
+    priority: b.priority ?? DEFAULT_PRIORITY,
+    heightM,
+    levelTo: b.level + storeysSpanned(heightM) - 1,
+  };
 }
 
 /** The storeys a set of boxes needs: at least what the layout says, and
@@ -115,6 +152,11 @@ export const useStore = create<State>((set, get) => ({
   showGrid: false,
   massing: "zones",
   showGhost: true,
+  showAbove: false,
+  moveIn3D: false,
+  autoCarve: false,
+  past: [],
+  future: [],
   savedId: null,
   savedName: "",
   projects: [],
@@ -133,6 +175,7 @@ export const useStore = create<State>((set, get) => ({
   },
 
   newProject() {
+    get().remember();
     const boxes = sampleBoxes();
     // The sample's arrows are its suggested ones: one door per room.
     let arrows: Arrow[] = [];
@@ -183,6 +226,7 @@ export const useStore = create<State>((set, get) => ({
   },
 
   addBox(shape, left, top, width, height) {
+    get().remember();
     const level = get().level;
     const info = roomTypeInfo("other");
     const id = `zone:${Date.now().toString(36)}:${nextZone}`;
@@ -197,6 +241,7 @@ export const useStore = create<State>((set, get) => ({
       level,
       levelTo: level,
       heightM: STOREY_HEIGHT_M,
+      priority: DEFAULT_PRIORITY,
       ...rect,
       minWidth: info.minWidth,
       minHeight: info.minHeight,
@@ -210,6 +255,7 @@ export const useStore = create<State>((set, get) => ({
   },
 
   updateBox(id, patch) {
+    get().remember();
     const boxes = get().boxes.map((b) => {
       if (b.id !== id) return b;
       let next = { ...b, ...patch };
@@ -235,6 +281,7 @@ export const useStore = create<State>((set, get) => ({
   },
 
   deleteBoxes(ids) {
+    get().remember();
     const idSet = new Set(ids);
     get().commitBoxes(get().boxes.map((b) => (idSet.has(b.id) ? { ...b, deleted: true } : b)));
     set({
@@ -247,6 +294,7 @@ export const useStore = create<State>((set, get) => ({
   touchSelected() {
     const { boxes, selected, level } = get();
     if (!selected.length) return;
+    get().remember();
     const settled = touchSelected(liveBoxes(boxes, level), selected);
     const byId = new Map(settled.map((b) => [b.id, b]));
     set({ boxes: boxes.map((b) => byId.get(b.id) ?? b) });
@@ -257,6 +305,7 @@ export const useStore = create<State>((set, get) => ({
     // No door into a void: on a storey above its own floor a zone is
     // open to below, and there is no floor there to walk on.
     if (!host || isOpenToBelow(host, get().level)) return;
+    get().remember();
     const { side, t } = nearestWallPoint(host, at);
     const arrow: Arrow = { id: newArrowId(), level: get().level, hostId, side, t, dir: 1 };
     set({ arrows: [...get().arrows, arrow], selectedArrow: arrow.id, selected: [] });
@@ -272,10 +321,12 @@ export const useStore = create<State>((set, get) => ({
   },
 
   flipArrow(id) {
+    get().remember();
     set({ arrows: get().arrows.map((a) => (a.id === id ? { ...a, dir: a.dir === 1 ? -1 : 1 } : a)) });
   },
 
   deleteArrow(id) {
+    get().remember();
     set({ arrows: get().arrows.filter((a) => a.id !== id), selectedArrow: get().selectedArrow === id ? null : get().selectedArrow });
   },
 
@@ -284,6 +335,7 @@ export const useStore = create<State>((set, get) => ({
   },
 
   suggestArrows() {
+    get().remember();
     const { boxes, arrows, level } = get();
     const mine = arrows.filter((a) => a.level === level);
     set({ arrows: [...arrows, ...suggestArrows(liveBoxes(boxes, level), mine, level)] });
@@ -293,6 +345,7 @@ export const useStore = create<State>((set, get) => ({
     const boxes = get().boxes;
     const carver = boxes.find((b) => b.id === id);
     if (!carver) return;
+    get().remember();
     // A box spanning several storeys carves on each of them.
     let out = boxes;
     for (let lv = carver.level; lv <= carver.levelTo; lv++) {
@@ -304,12 +357,62 @@ export const useStore = create<State>((set, get) => ({
   },
 
   release(id) {
+    get().remember();
     set({ boxes: releaseCarve(id, get().boxes) });
   },
 
   resetLayout() {
+    get().remember();
     const boxes = get().recommended;
     set({ boxes, arrows: get().recommendedArrows, storeys: storeysFor(boxes, SAMPLE_STOREYS), selected: [], selectedArrow: null });
+  },
+
+  remember() {
+    const { boxes, arrows, storeys, past } = get();
+    set({ past: [...past.slice(-(HISTORY_MAX - 1)), { boxes, arrows, storeys }], future: [] });
+  },
+
+  undo() {
+    const { past, future, boxes, arrows, storeys, level } = get();
+    if (!past.length) return;
+    const prev = past[past.length - 1];
+    set({
+      ...prev,
+      past: past.slice(0, -1),
+      future: [...future, { boxes, arrows, storeys }],
+      level: Math.min(level, prev.storeys - 1),
+      selected: [],
+      selectedArrow: null,
+    });
+  },
+
+  redo() {
+    const { past, future, boxes, arrows, storeys, level } = get();
+    if (!future.length) return;
+    const next = future[future.length - 1];
+    set({
+      ...next,
+      future: future.slice(0, -1),
+      past: [...past, { boxes, arrows, storeys }],
+      level: Math.min(level, next.storeys - 1),
+      selected: [],
+      selectedArrow: null,
+    });
+  },
+
+  addStorey() {
+    get().remember();
+    set({ storeys: get().storeys + 1, level: get().storeys });
+  },
+
+  removeStorey() {
+    const { storeys, boxes } = get();
+    const top = storeys - 1;
+    // Only an empty top storey goes: a zone reaching it would have
+    // nowhere to be, and quietly deleting rooms is not this tool's job.
+    if (storeys <= 1 || liveBoxes(boxes, top).length) return;
+    get().remember();
+    set({ storeys: top, level: Math.min(get().level, top - 1), selected: [], selectedArrow: null });
   },
 
   setLevel(level) {
@@ -326,6 +429,15 @@ export const useStore = create<State>((set, get) => ({
   },
   toggleGhost() {
     set({ showGhost: !get().showGhost });
+  },
+  toggleAbove() {
+    set({ showAbove: !get().showAbove });
+  },
+  toggleMoveIn3D() {
+    set({ moveIn3D: !get().moveIn3D });
+  },
+  toggleAutoCarve() {
+    set({ autoCarve: !get().autoCarve });
   },
 
   async refreshProjects() {
@@ -352,6 +464,7 @@ export const useStore = create<State>((set, get) => ({
     set({ busy: "Loading…" });
     try {
       const saved = await api.getProject(id);
+      get().remember();
       const boxes = saved.boxes.map(normalise);
       const arrows = saved.arrows ?? [];
       const storeys = storeysFor(boxes, saved.storeys);

@@ -17,14 +17,15 @@ import { useStore } from "../state/store";
 export function StatusBar() {
   const boxes = useStore((s) => s.boxes);
   const level = useStore((s) => s.level);
+  const autoCarve = useStore((s) => s.autoCarve);
 
   const { spaces, area, flagged } = useMemo(() => {
     const live = liveBoxes(boxes, level);
-    const shapes = displayShapes(live);
+    const shapes = displayShapes(live, autoCarve);
     const total = shapes.reduce((sum, s) => sum + polyArea(s.page), 0);
     const names = shapes.filter((s) => s.flagged).map((s) => live.find((b) => b.id === s.id)?.name ?? s.id);
     return { spaces: live.length, area: total, flagged: names };
-  }, [boxes, level]);
+  }, [boxes, level, autoCarve]);
 
   return (
     <footer className="status">

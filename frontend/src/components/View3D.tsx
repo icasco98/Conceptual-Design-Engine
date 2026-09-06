@@ -26,10 +26,11 @@
  * plan switches to that zone's floor if it is not the one on screen.
  * Shift-click adds to the selection. A click on nothing clears it.
  *
- * Drag a zone and it moves in plan, on the ground plane through the point
- * you grabbed, snapping to the same grid the plan uses and taking the
- * whole selection with it. Dragging anywhere else orbits, as before: the
- * orbit control is switched off only while a zone is under the pointer.
+ * With "Move zones" ticked above, dragging a zone moves it in plan, on
+ * the ground plane through the point you grabbed, snapping to the same
+ * grid the plan uses and taking the whole selection with it; the orbit
+ * control is switched off only while a zone is under the pointer.
+ * Unticked, every drag orbits and the view is safe to turn.
  * Nothing here changes a zone's height or its storey -- a drag in a view
  * you can orbit has no unambiguous up, and the schedule has a height
  * field for that.
@@ -93,6 +94,7 @@ export function View3D() {
   const level = useStore((s) => s.level);
   const selected = useStore((s) => s.selected);
   const massing = useStore((s) => s.massing);
+  const autoCarve = useStore((s) => s.autoCarve);
 
   const mount = useRef<HTMLDivElement>(null);
   const building = useRef<THREE.Group>();
@@ -162,9 +164,10 @@ export function View3D() {
     const onDown = (e: PointerEvent) => {
       const hit = pick(e);
       down = { x: e.clientX, y: e.clientY, id: hit?.id ?? null };
-      // Shift is for adding to the selection, so it never starts a move.
-      if (!hit || e.shiftKey) return;
+      // Shift is for adding to the selection, so it never starts a move;
+      // nor does anything, unless moving in 3D has been turned on.
       const store = useStore.getState();
+      if (!hit || e.shiftKey || !store.moveIn3D) return;
       const ids = store.selected.includes(hit.id) ? [hit.id, ...store.selected.filter((s) => s !== hit.id)] : [hit.id];
       plane.setFromNormalAndCoplanarPoint(new THREE.Vector3(0, 1, 0), hit.point);
       drag = { ids, snapshot: store.boxes, x0: hit.point.x, z0: hit.point.z, moved: false };
@@ -196,6 +199,7 @@ export function View3D() {
     const onMove = (e: PointerEvent) => {
       if (!drag || !down) return;
       if (!drag.moved && Math.hypot(e.clientX - down.x, e.clientY - down.y) <= CLICK_SLOP_PX) return;
+      if (!drag.moved) useStore.getState().remember();
       drag.moved = true;
       queued = e;
       if (!frame) frame = requestAnimationFrame(applyDrag);
@@ -213,7 +217,8 @@ export function View3D() {
         applyDrag();
       }
       if (gesture?.moved) {
-        useStore.getState().commitBoxes(useStore.getState().boxes);
+        const store = useStore.getState();
+        store.commitBoxes(store.boxes);
         return;
       }
       if (!start) return;
@@ -315,7 +320,7 @@ export function View3D() {
     // Each storey's drawn shapes, computed once: the carve on a storey
     // depends on what else is on that storey.
     const perLevel = new Map<number, DisplayShape[]>();
-    for (let lv = 0; lv < storeys; lv++) perLevel.set(lv, displayShapes(liveBoxes(boxes, lv)));
+    for (let lv = 0; lv < storeys; lv++) perLevel.set(lv, displayShapes(liveBoxes(boxes, lv), autoCarve));
     /** A zone's outline, taken from the storey it stands on. */
     const pageOf = (b: Box): Poly => perLevel.get(b.level)?.find((s) => s.id === b.id)?.page ?? polyOfBox(b);
 
@@ -386,7 +391,7 @@ export function View3D() {
         );
       }
     }
-  }, [boxes, storeys, level, storeyH, selected, massing]);
+  }, [boxes, storeys, level, storeyH, selected, massing, autoCarve]);
 
   return <div className="view3d" ref={mount} />;
 }

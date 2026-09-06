@@ -83,6 +83,16 @@ export const IconSuggest = ({ size = 17, className }: P) =>
     size,
     className,
   );
+export const IconUndo = ({ size = 17, className }: P) =>
+  svg(<><path d="M9 14 4 9l5-5" /><path d="M4 9h10a6 6 0 0 1 0 12h-3" /></>, size, className);
+export const IconRedo = ({ size = 17, className }: P) =>
+  svg(<><path d="m15 14 5-5-5-5" /><path d="M20 9H10a6 6 0 0 0 0 12h3" /></>, size, className);
+export const IconLayersUp = ({ size = 17, className }: P) =>
+  svg(<><path d="m12 3 9 5-9 5-9-5z" /><path d="M12 21v-6" /><path d="m9 18 3 3 3-3" /></>, size, className);
+export const IconCarveAuto = ({ size = 17, className }: P) =>
+  svg(<><path d="M4 5h9v9H4z" /><path d="M10 10h10v10H10z" /></>, size, className);
+export const IconMove3D = ({ size = 17, className }: P) =>
+  svg(<><path d="M12 3v18" /><path d="M3 12h18" /><path d="m9 6 3-3 3 3" /><path d="m9 18 3 3 3-3" /><path d="m6 9-3 3 3 3" /><path d="m18 9 3 3-3 3" /></>, size, className);
 export const IconMinus = ({ size = 15, className }: P) => svg(<path d="M5 12h14" />, size, className);
 export const IconPlus = ({ size = 15, className }: P) => svg(<path d="M12 5v14M5 12h14" />, size, className);
 export const IconFit = ({ size = 15, className }: P) =>

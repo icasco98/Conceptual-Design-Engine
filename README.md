@@ -48,10 +48,9 @@ the next begins.
    the floor *above* as well, and adding or removing storeys by hand.
 4. **Adjacency and outline.** Done. Door arrows are objects you own, and
    the building envelope traces everything placed.
-5. **Priority.** Each room gets a numeric priority in the schedule, so
-   that where rooms overlap the tool can tell which one carves which
-   without being asked each time. Overlap and manual carving are already
-   in (see below); this stage adds the ordering.
+5. **Priority.** Done. Each zone has a numeric priority in the schedule,
+   and the automatic-carving toggle uses it to decide which zone gives
+   way where two overlap.
 6. **3D.** Confirm the finished 2D editor converts into the massing view.
 
 ## What the editor does today
@@ -72,6 +71,10 @@ screen at once, all three readings of the one arrangement.
   removes them all. A 0.25 m grid can be shown from the rail, and
   positions snap to it whether or not it is visible; a single zone
   dragged within 1 m of a facing neighbour snaps to touch it.
+- **Undo and redo.** Ctrl+Z and Ctrl+Shift+Z (or Ctrl+Y), and the two
+  arrows on the rail. Everything that changes the drawing is covered:
+  moves, resizes, rotations, drawing, deleting, schedule edits, carving,
+  arrows, the magnet, adding and removing storeys, and Reset.
 - **Overlap and carving.** Rooms overlap freely and nothing is ever
   pushed: a room goes exactly where you put it and nothing else moves.
   To cut, select a room and press its carve handle (top-left corner) or
@@ -81,6 +84,12 @@ screen at once, all three readings of the one arrangement.
   a room for you — a room cut below its type's minimum, or cut in two,
   keeps the cut and is outlined in red, named in the status bar, and
   marked with ! in the schedule, for you to resolve.
+- **Automatic carving.** The toggle on the rail, off by default. With it
+  on, a zone is carved by anything it overlaps that has a higher priority
+  (1 is the highest; circulation and stairs start at 1, everything else
+  at 2). Equal priorities never carve each other — the tool does not
+  guess. It is computed rather than stored, so turning it off restores
+  every zone exactly, and cuts made by hand survive either way.
 - **Schedule.** Name, type, floor, width, depth and rotation are edited
   in place and the zone follows; width and depth grow from the centre;
   area is read from the shape actually drawn. Clicking a row selects the
@@ -103,7 +112,8 @@ screen at once, all three readings of the one arrangement.
   click a zone to select it — the plan and the schedule follow, switching
   floors if the zone you picked lives on another one. Drag a zone and it
   moves in plan, snapping to the same grid and taking the whole selection
-  with it; dragging anywhere else still orbits.
+  with it — but only while "Move zones" is ticked above the view, so the
+  model is safe to turn by default. Dragging anywhere else always orbits.
 - **Open to below.** On the storeys above its own floor, a tall zone is
   not a room — it is the void it leaves. It is drawn crossed through and
   labelled "Open to below", the schedule shows its area as *void*, and no

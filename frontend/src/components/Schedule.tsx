@@ -25,30 +25,30 @@ export function Schedule() {
   const selected = useStore((s) => s.selected);
   const select = useStore((s) => s.select);
   const deleteBoxes = useStore((s) => s.deleteBoxes);
-  const commitBoxes = useStore((s) => s.commitBoxes);
   const updateBox = useStore((s) => s.updateBox);
   const carve = useStore((s) => s.carve);
   const release = useStore((s) => s.release);
+  const autoCarve = useStore((s) => s.autoCarve);
 
   const live = useMemo(() => liveBoxes(boxes, level), [boxes, level]);
-  const shapes = useMemo(() => displayShapes(live), [live]);
+  const shapes = useMemo(() => displayShapes(live, autoCarve), [live, autoCarve]);
   const carvesSomething = (b: Box) => live.some((o) => o.carvedBy.includes(b.id));
   const areaOf = (b: Box) => {
     const s = shapes.find((x) => x.id === b.id);
     return s ? polyArea(s.page) : b.width * b.height;
   };
 
+  /** Resize about the zone's own centre, so a number typed here does not
+   *  also move it. Through updateBox, so it joins the undo history. */
   const edit = (b: Box, axis: "w" | "h", meters: number) => {
     if (!isFinite(meters) || meters <= 0) return;
-    let next: Box;
     if (axis === "w") {
       const w = Math.max(b.minWidth, meters);
-      next = { ...b, left: b.left + (b.width - w) / 2, width: w };
+      updateBox(b.id, { left: b.left + (b.width - w) / 2, width: w });
     } else {
       const h = Math.max(b.minHeight, meters);
-      next = { ...b, top: b.top + (b.height - h) / 2, height: h };
+      updateBox(b.id, { top: b.top + (b.height - h) / 2, height: h });
     }
-    commitBoxes(boxes.map((x) => (x.id === b.id ? next : x)));
   };
 
   const editRotation = (b: Box, degrees: number) => {
@@ -69,6 +69,9 @@ export function Schedule() {
             <th className="r" title="Vertical height. Taller than a storey and the zone reaches the storey above.">Height</th>
             <th className="r">Area</th>
             <th className="r">Rot.</th>
+            <th className="r" title="1 is the highest. With automatic carving on, a zone is carved by anything it overlaps that outranks it.">
+              Pri.
+            </th>
             <th />
             <th />
           </tr>
@@ -197,6 +200,22 @@ export function Schedule() {
                     onChange={(e) => editRotation(b, parseFloat(e.target.value))}
                   />
                 </td>
+                <td className="r">
+                  <input
+                    type="number"
+                    step="1"
+                    min="1"
+                    className="rot"
+                    defaultValue={b.priority}
+                    key={`p${b.priority}`}
+                    title="Priority: 1 is the highest"
+                    onFocus={() => select(b.id)}
+                    onChange={(e) => {
+                      const v = parseInt(e.target.value, 10);
+                      if (isFinite(v) && v >= 1) updateBox(b.id, { priority: v });
+                    }}
+                  />
+                </td>
                 <td>
                   <button
                     type="button"
@@ -223,7 +242,10 @@ export function Schedule() {
           })}
         </tbody>
       </table>
-      <p className="schedule-foot muted">Width, depth and height in m, area in m², rotation in degrees. A zone taller than 3.0 m reaches the storey above.</p>
+      <p className="schedule-foot muted">
+        Width, depth and height in m, area in m², rotation in degrees. A zone taller than 3.0 m reaches the storey above.
+        Priority 1 is the highest; it decides which zone gives way when automatic carving is on.
+      </p>
     </div>
   );
 }

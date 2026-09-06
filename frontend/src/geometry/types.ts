@@ -42,6 +42,10 @@ export interface Box {
   levelTo: number;
   /** Vertical height, meters. Defaults to the storey height. */
   heightM: number;
+  /** Which zone gives way where two overlap, when automatic carving is
+   * on: 1 is the highest, and a higher priority carves a lower one. Equal
+   * priorities never carve each other -- the tool is not guessing. */
+  priority: number;
   left: number;
   top: number;
   width: number;

@@ -23,6 +23,7 @@ function box(partial: Partial<Box> & { id: string; left: number; top: number; wi
     minWidth: 2.7,
     minHeight: 3.0,
     rotation: 0,
+    priority: 2,
     carvedBy: [],
     deleted: false,
     initial: { left: partial.left, top: partial.top, width: partial.width, height: partial.height },
@@ -30,7 +31,8 @@ function box(partial: Partial<Box> & { id: string; left: number; top: number; wi
   };
 }
 
-const shapeOf = (live: Box[], id: string) => displayShapes(live).find((s) => s.id === id)!;
+const shapeOf = (live: Box[], id: string, autoCarve = false) =>
+  displayShapes(live, autoCarve).find((s) => s.id === id)!;
 
 describe("oriented boxes", () => {
   it("rotated squares near each other are separated even when their bounding boxes overlap", () => {
@@ -106,6 +108,42 @@ describe("overlap is free; carving is asked for", () => {
     expect(s.carved).toBe(true);
     expect(s.page.length).toBeGreaterThan(4);
     expect(polyArea(s.page)).toBeLessThan(25);
+  });
+});
+
+describe("automatic carving, by priority", () => {
+  const hall = box({ id: "hall", left: 0, top: 0, width: 8, height: 2, priority: 1, minWidth: 1.2, minHeight: 1.2 });
+  const room = box({ id: "room", left: 3, top: 1, width: 5, height: 5, priority: 2 });
+
+  it("does nothing until it is switched on", () => {
+    expect(shapeOf([hall, room], "room").carved).toBe(false);
+    expect(polyArea(shapeOf([hall, room], "room").page)).toBeCloseTo(25);
+  });
+
+  it("carves the lower priority where they overlap, and only that one", () => {
+    expect(shapeOf([hall, room], "room", true).carved).toBe(true);
+    expect(polyArea(shapeOf([hall, room], "room", true).page)).toBeCloseTo(25 - 5);
+    // The corridor keeps everything: nothing outranks it.
+    expect(shapeOf([hall, room], "hall", true).carved).toBe(false);
+  });
+
+  it("leaves equal priorities alone rather than guessing", () => {
+    const tie = { ...room, priority: hall.priority };
+    expect(shapeOf([hall, tie], tie.id, true).carved).toBe(false);
+    expect(shapeOf([hall, tie], hall.id, true).carved).toBe(false);
+  });
+
+  it("is computed, not stored: switching it off restores the zone", () => {
+    const live = [hall, room];
+    expect(shapeOf(live, "room", true).carved).toBe(true);
+    expect(shapeOf(live, "room", false).carved).toBe(false);
+    expect(live.find((b) => b.id === "room")!.carvedBy).toEqual([]);
+  });
+
+  it("a cut asked for by hand stands whether it is on or off", () => {
+    const asked = carveWith(room, [hall, room]);
+    expect(shapeOf(asked, "hall", false).carved).toBe(true);
+    expect(shapeOf(asked, "hall", true).carved).toBe(true);
   });
 });
 

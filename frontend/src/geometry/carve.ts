@@ -13,6 +13,12 @@
  * The minimum is not enforced, it is reported: a room cut below its
  * type's minimum size, or cut in two, keeps the cut and is flagged so
  * the person can decide what to do about it.
+ *
+ * Automatic carving is the same cut asked for by a rule instead of by
+ * hand: with it on, a zone is carved by anything it overlaps that has a
+ * higher priority. It is computed at drawing time (`effectiveCarvers`)
+ * rather than written into `carvedBy`, so turning it off restores every
+ * zone exactly, and a cut made by hand survives either way.
  */
 import polygonClipping from "polygon-clipping";
 
@@ -102,21 +108,31 @@ export interface DisplayShape {
   flagged: boolean;
 }
 
+/** Everything cutting `el` right now: the zones it was told to give way
+ * to, plus -- when automatic carving is on -- anything it overlaps that
+ * outranks it. Priority 1 is the highest; equal priorities never carve. */
+export function effectiveCarvers(el: Box, live: Box[], autoCarve: boolean): Box[] {
+  const out: Box[] = [];
+  for (const other of live) {
+    if (other.id === el.id) continue;
+    const asked = el.carvedBy.includes(other.id);
+    const outranks = autoCarve && other.priority < el.priority;
+    if (!asked && !outranks) continue;
+    if (!boxesTrulyIntersect(el, other)) continue;
+    out.push(other);
+  }
+  return out;
+}
+
 /** Every live box's display polygon: its own outline (rectangle or
- * ellipse) minus whatever the rooms in its `carvedBy` list currently
- * cover, and nothing more. */
-export function displayShapes(live: Box[]): DisplayShape[] {
-  const byId = new Map(live.map((b) => [b.id, b]));
+ * ellipse) minus whatever is currently cutting it, and nothing more. */
+export function displayShapes(live: Box[], autoCarve = false): DisplayShape[] {
   return live.map((el) => {
     const fr = frameOf(el);
     const base = localPolyOf(el);
-    const clippers: Poly[] = [];
-    for (const id of el.carvedBy) {
-      const carver = byId.get(id);
-      if (!carver || carver.id === el.id) continue;
-      if (!boxesTrulyIntersect(el, carver)) continue;
-      clippers.push(pageToLocalPoly(polyOfBox(carver), fr));
-    }
+    const clippers: Poly[] = effectiveCarvers(el, live, autoCarve).map((carver) =>
+      pageToLocalPoly(polyOfBox(carver), fr),
+    );
     if (!clippers.length) {
       return { id: el.id, local: base, page: localToPagePoly(base, fr), carved: false, flagged: false };
     }

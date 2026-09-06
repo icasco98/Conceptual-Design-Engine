@@ -118,6 +118,10 @@ export function Canvas2D() {
   const release = useStore((s) => s.release);
   const showGrid = useStore((s) => s.showGrid);
   const showGhost = useStore((s) => s.showGhost);
+  const showAbove = useStore((s) => s.showAbove);
+  const autoCarve = useStore((s) => s.autoCarve);
+  const storeys = useStore((s) => s.storeys);
+  const remember = useStore((s) => s.remember);
   const arrows = useStore((s) => s.arrows);
   const selectedArrow = useStore((s) => s.selectedArrow);
   const selectArrow = useStore((s) => s.selectArrow);
@@ -145,15 +149,21 @@ export function Canvas2D() {
   }, []);
 
   const live = useMemo(() => liveBoxes(boxes, level), [boxes, level]);
-  const shapes = useMemo(() => displayShapes(live), [live]);
+  const shapes = useMemo(() => displayShapes(live, autoCarve), [live, autoCarve]);
   const footprint = useMemo(() => ringsToPath(footprintRings(shapes.map((s) => s.page))), [shapes]);
-  /** The building outline of the storey below, to line walls up against.
-   *  Only the outline: room names and walls from below were clutter. */
+  /** The building outline of the storey below, and of the one above, to
+   *  line walls up against. Only the outlines: room names and walls from
+   *  another floor were clutter. */
   const belowOutline = useMemo(() => {
     if (!showGhost || level === 0) return "";
-    const under = displayShapes(liveBoxes(boxes, level - 1));
+    const under = displayShapes(liveBoxes(boxes, level - 1), autoCarve);
     return ringsToPath(footprintRings(under.map((s) => s.page)));
-  }, [boxes, level, showGhost]);
+  }, [boxes, level, showGhost, autoCarve]);
+  const aboveOutline = useMemo(() => {
+    if (!showAbove || level >= storeys - 1) return "";
+    const over = displayShapes(liveBoxes(boxes, level + 1), autoCarve);
+    return ringsToPath(footprintRings(over.map((s) => s.page)));
+  }, [boxes, level, showAbove, storeys, autoCarve]);
   const liveArrows = useMemo(() => {
     const here = new Map(live.filter((b) => !isOpenToBelow(b, level)).map((b) => [b.id, b]));
     return arrows.filter((a) => a.level === level && here.has(a.hostId)).map((a) => ({ arrow: a, host: here.get(a.hostId)! }));
@@ -344,6 +354,17 @@ export function Canvas2D() {
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA")) return;
       const state = useStore.getState();
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        if (e.shiftKey) state.redo();
+        else state.undo();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
+        e.preventDefault();
+        state.redo();
+        return;
+      }
       if ((e.key === "Delete" || e.key === "Backspace") && state.selectedArrow) {
         e.preventDefault();
         deleteArrow(state.selectedArrow);
@@ -383,6 +404,7 @@ export function Canvas2D() {
     const p = toMeters(e);
     // The grabbed box leads: its corner is what snaps to the grid.
     const ids = inGroup ? [b.id, ...selected.filter((id) => id !== b.id)] : [b.id];
+    remember();
     gesture.current = { kind: "move", ids, startX: p.x, startY: p.y, snapshot: live };
     capture(e);
   };
@@ -391,6 +413,7 @@ export function Canvas2D() {
     e.stopPropagation();
     e.preventDefault();
     const p = toMeters(e);
+    remember();
     gesture.current = {
       kind: "resize",
       id: b.id,
@@ -416,6 +439,7 @@ export function Canvas2D() {
     const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
     const p = toMeters(e);
     const startAngle = (Math.atan2(p.y - cy, p.x - cx) * 180) / Math.PI + 90;
+    remember();
     gesture.current = { kind: "rotate", ids, cx, cy, startAngle, snapshot: live };
     capture(e);
   };
@@ -432,6 +456,7 @@ export function Canvas2D() {
     e.stopPropagation();
     e.preventDefault();
     selectArrow(a.id);
+    remember();
     gesture.current = { kind: "arrow", id: a.id };
     capture(e);
   };
@@ -600,9 +625,12 @@ export function Canvas2D() {
           {/* the sheet: a reference area, not a boundary */}
           <rect x={0} y={0} width={width} height={depth} fill={INK.sheet} stroke={INK.site} strokeWidth={0.04} strokeDasharray="0.3 0.3" />
           {showGrid && <rect x={0} y={0} width={width} height={depth} fill="url(#grid)" />}
-          {/* the outline of the storey below */}
+          {/* the outlines of the storeys below and above */}
           {belowOutline && (
-            <path d={belowOutline} className="ghost" fill="none" stroke="#8a8f8b" strokeWidth={0.07} strokeDasharray="0.45 0.25" strokeLinejoin="round" />
+            <path d={belowOutline} className="ghost below" fill="none" stroke="#8a8f8b" strokeWidth={0.07} strokeDasharray="0.45 0.25" strokeLinejoin="round" />
+          )}
+          {aboveOutline && (
+            <path d={aboveOutline} className="ghost above" fill="none" stroke="#7e86a6" strokeWidth={0.07} strokeDasharray="0.12 0.2" strokeLinejoin="round" />
           )}
           {/* footprint */}
           <path d={footprint} fill="none" stroke={INK.footprint} strokeWidth={0.2} strokeLinejoin="round" />

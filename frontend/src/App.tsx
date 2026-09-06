@@ -8,11 +8,27 @@
 import { useEffect } from "react";
 
 import { Canvas2D } from "./components/Canvas2D";
-import { IconArrow, IconCircle, IconCursor, IconGrid, IconHand, IconLayers, IconMagnet, IconRect, IconReset, IconSuggest } from "./components/icons";
+import {
+  IconArrow,
+  IconCarveAuto,
+  IconCircle,
+  IconCursor,
+  IconGrid,
+  IconHand,
+  IconLayers,
+  IconLayersUp,
+  IconMagnet,
+  IconRect,
+  IconRedo,
+  IconReset,
+  IconSuggest,
+  IconUndo,
+} from "./components/icons";
 import { Massing } from "./components/Massing";
 import { Schedule } from "./components/Schedule";
 import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
+import { liveBoxes } from "./geometry/snap";
 import { useStore, type Tool } from "./state/store";
 
 /** The rail: the pointer tools (select, pan, draw a rectangle, draw a
@@ -25,11 +41,19 @@ function Rail() {
   const toggleGrid = useStore((s) => s.toggleGrid);
   const showGhost = useStore((s) => s.showGhost);
   const toggleGhost = useStore((s) => s.toggleGhost);
+  const showAbove = useStore((s) => s.showAbove);
+  const toggleAbove = useStore((s) => s.toggleAbove);
+  const autoCarve = useStore((s) => s.autoCarve);
+  const toggleAutoCarve = useStore((s) => s.toggleAutoCarve);
   const resetLayout = useStore((s) => s.resetLayout);
   const storeys = useStore((s) => s.storeys);
   const selected = useStore((s) => s.selected);
   const touchSelected = useStore((s) => s.touchSelected);
   const suggestArrows = useStore((s) => s.suggestArrows);
+  const undo = useStore((s) => s.undo);
+  const redo = useStore((s) => s.redo);
+  const canUndo = useStore((s) => s.past.length > 0);
+  const canRedo = useStore((s) => s.future.length > 0);
 
   const toolButton = (t: Tool, title: string, icon: React.ReactNode) => (
     <button type="button" className={tool === t ? "on" : ""} aria-pressed={tool === t} title={title} aria-label={title} onClick={() => setTool(t)}>
@@ -57,6 +81,23 @@ function Rail() {
       <button type="button" title="Suggest door arrows for zones that have none" aria-label="Suggest door arrows" onClick={suggestArrows}>
         <IconSuggest />
       </button>
+      <button
+        type="button"
+        className={autoCarve ? "on" : ""}
+        aria-pressed={autoCarve}
+        title="Automatic carving: where zones overlap, the higher priority carves the lower (priorities are in the schedule)"
+        aria-label="Automatic carving"
+        onClick={toggleAutoCarve}
+      >
+        <IconCarveAuto />
+      </button>
+      <span className="rail-sep" />
+      <button type="button" disabled={!canUndo} title="Undo (Ctrl+Z)" aria-label="Undo" onClick={undo}>
+        <IconUndo />
+      </button>
+      <button type="button" disabled={!canRedo} title="Redo (Ctrl+Shift+Z)" aria-label="Redo" onClick={redo}>
+        <IconRedo />
+      </button>
       <span className="rail-sep" />
       <button
         type="button"
@@ -69,16 +110,28 @@ function Rail() {
         <IconGrid />
       </button>
       {storeys > 1 && (
-        <button
-          type="button"
-          className={showGhost ? "on" : ""}
-          aria-pressed={showGhost}
-          title="Show the storey below"
-          aria-label="Show the storey below"
-          onClick={toggleGhost}
-        >
-          <IconLayers />
-        </button>
+        <>
+          <button
+            type="button"
+            className={showGhost ? "on" : ""}
+            aria-pressed={showGhost}
+            title="Outline the storey below"
+            aria-label="Outline the storey below"
+            onClick={toggleGhost}
+          >
+            <IconLayers />
+          </button>
+          <button
+            type="button"
+            className={showAbove ? "on" : ""}
+            aria-pressed={showAbove}
+            title="Outline the storey above"
+            aria-label="Outline the storey above"
+            onClick={toggleAbove}
+          >
+            <IconLayersUp />
+          </button>
+        </>
       )}
       <span className="rail-sep" />
       <button type="button" title="Reset to the sample layout" aria-label="Reset to the sample layout" onClick={resetLayout}>
@@ -88,25 +141,47 @@ function Rail() {
   );
 }
 
+/** The storey tabs, and adding or removing one. The top storey can only
+ *  go when nothing is on it: quietly deleting rooms is not this tool's
+ *  job, and a zone tall enough to reach it holds it open. */
 function Levels() {
   const storeys = useStore((s) => s.storeys);
   const level = useStore((s) => s.level);
   const setLevel = useStore((s) => s.setLevel);
-  if (storeys < 2) return null;
+  const addStorey = useStore((s) => s.addStorey);
+  const removeStorey = useStore((s) => s.removeStorey);
+  const topIsEmpty = useStore((s) => !liveBoxes(s.boxes, s.storeys - 1).length);
+
   return (
-    <div className="seg" role="tablist" aria-label="Storey">
-      {Array.from({ length: storeys }, (_, i) => (
-        <button
-          key={i}
-          type="button"
-          role="tab"
-          aria-selected={level === i}
-          className={level === i ? "on" : ""}
-          onClick={() => setLevel(i)}
-        >
-          {i === 0 ? "Ground floor" : `Level ${i}`}
-        </button>
-      ))}
+    <div className="levels">
+      {storeys > 1 && (
+        <div className="seg" role="tablist" aria-label="Storey">
+          {Array.from({ length: storeys }, (_, i) => (
+            <button
+              key={i}
+              type="button"
+              role="tab"
+              aria-selected={level === i}
+              className={level === i ? "on" : ""}
+              onClick={() => setLevel(i)}
+            >
+              {i === 0 ? "Ground floor" : `Level ${i}`}
+            </button>
+          ))}
+        </div>
+      )}
+      <button type="button" className="ghost-btn tight" title="Add a storey on top" onClick={addStorey}>
+        + Storey
+      </button>
+      <button
+        type="button"
+        className="ghost-btn tight"
+        disabled={storeys < 2 || !topIsEmpty}
+        title={storeys < 2 ? "There is only one storey" : topIsEmpty ? "Remove the top storey" : "The top storey is not empty"}
+        onClick={removeStorey}
+      >
+        − Storey
+      </button>
     </div>
   );
 }
