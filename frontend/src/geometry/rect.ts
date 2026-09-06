@@ -1,4 +1,5 @@
-import { OVERLAP_EPS, type Box, type Obb, type Point, type Rect } from "./types";
+import { polyOfBox } from "./poly";
+import { OVERLAP_EPS, type Box, type Obb, type Point, type Poly, type Rect } from "./types";
 
 export function rectOf(b: Box): Rect {
   return { left: b.left, top: b.top, width: b.width, height: b.height };
@@ -61,10 +62,42 @@ export function rectsOverlap(a: Rect, b: Rect): boolean {
   );
 }
 
-/** The real overlap test: AABBs when neither is rotated (they agree with
- * the shape exactly), SAT on the true shapes otherwise. Touching edges do
- * not count. */
+/** Separating axis theorem for two convex polygons: true when a gap
+ * exists along some edge normal of either. Touching does not count. */
+export function convexPolysSeparated(a: Poly, b: Poly): boolean {
+  for (const poly of [a, b]) {
+    for (let i = 0; i < poly.length; i++) {
+      const p = poly[i];
+      const q = poly[(i + 1) % poly.length];
+      const nx = q[1] - p[1];
+      const ny = -(q[0] - p[0]);
+      const len = Math.hypot(nx, ny);
+      if (!len) continue;
+      const ax = nx / len;
+      const ay = ny / len;
+      let aMin = Infinity, aMax = -Infinity, bMin = Infinity, bMax = -Infinity;
+      for (const v of a) {
+        const d = v[0] * ax + v[1] * ay;
+        aMin = Math.min(aMin, d);
+        aMax = Math.max(aMax, d);
+      }
+      for (const v of b) {
+        const d = v[0] * ax + v[1] * ay;
+        bMin = Math.min(bMin, d);
+        bMax = Math.max(bMax, d);
+      }
+      if (aMax < bMin + OVERLAP_EPS || bMax < aMin + OVERLAP_EPS) return true;
+    }
+  }
+  return false;
+}
+
+/** The real overlap test: AABBs when both are unrotated rectangles (they
+ * agree with the shape exactly), SAT on the true outlines otherwise --
+ * rectangles and ellipses are both convex. Touching edges do not count. */
 export function boxesTrulyIntersect(a: Box, b: Box): boolean {
-  if (!a.rotation && !b.rotation) return rectsOverlap(rectOf(a), rectOf(b));
-  return !obbsSeparated(obbOf(a), obbOf(b));
+  const plain = a.shape === "rect" && b.shape === "rect";
+  if (plain && !a.rotation && !b.rotation) return rectsOverlap(rectOf(a), rectOf(b));
+  if (plain) return !obbsSeparated(obbOf(a), obbOf(b));
+  return !convexPolysSeparated(polyOfBox(a), polyOfBox(b));
 }

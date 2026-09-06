@@ -12,11 +12,16 @@ import { api } from "../api/client";
 import type { ProjectSummary } from "../api/types";
 import { carveWith, releaseCarve } from "../geometry/carve";
 import { liveBoxes } from "../geometry/snap";
-import type { Box } from "../geometry/types";
+import type { Box, BoxShape } from "../geometry/types";
+import { roomTypeInfo } from "../rooms";
 import { SAMPLE_STOREYS, sampleBoxes } from "../sample";
 
 /** What the 3D pane draws: coloured zones per room, or one grey volume. */
 export type MassingMode = "zones" | "mass";
+
+/** What a drag on empty sheet does. `select` rubber-bands a selection,
+ * `pan` moves the view, `rect` and `circle` draw a new zone. */
+export type Tool = "select" | "pan" | "rect" | "circle";
 
 export interface State {
   boxes: Box[];
@@ -25,6 +30,7 @@ export interface State {
   storeys: number;
   level: number;
   selected: string[];
+  tool: Tool;
   busy: string | null;
   error: string | null;
   showGrid: boolean;
@@ -38,6 +44,11 @@ export interface State {
   setBoxes: (boxes: Box[]) => void;
   commitBoxes: (boxes: Box[]) => void;
   select: (id: string | null, additive?: boolean) => void;
+  selectMany: (ids: string[], additive?: boolean) => void;
+  /** A new zone drawn on the current storey. Returns its id. */
+  addBox: (shape: BoxShape, left: number, top: number, width: number, height: number) => string;
+  /** A schedule edit: name, type, floor, rotation, size. */
+  updateBox: (id: string, patch: Partial<Box>) => void;
   deleteBoxes: (ids: string[]) => void;
   /** The box cuts every room it sits over, on its own storey. */
   carve: (id: string) => void;
@@ -45,6 +56,7 @@ export interface State {
   release: (id: string) => void;
   resetLayout: () => void;
   setLevel: (level: number) => void;
+  setTool: (tool: Tool) => void;
   setMassing: (massing: MassingMode) => void;
   toggleGrid: () => void;
   toggleGhost: () => void;
@@ -56,17 +68,11 @@ export interface State {
   clearError: () => void;
 }
 
-/** The stair is one rectangle on every level it connects. Whatever
- * happened to it on one level happens to it on the others. */
-function syncStairs(boxes: Box[], changedIds: Set<string>): Box[] {
-  const changedStairs = boxes.filter((b) => changedIds.has(b.id) && b.roomType === "stair");
-  if (!changedStairs.length) return boxes;
-  return boxes.map((b) => {
-    if (b.roomType !== "stair") return b;
-    const source = changedStairs.find((s) => s.name === b.name && s.id !== b.id);
-    if (!source) return b;
-    return { ...b, left: source.left, top: source.top, width: source.width, height: source.height, rotation: source.rotation, deleted: source.deleted };
-  });
+let nextZone = 1;
+
+/** Layouts saved by earlier versions lack the newer fields. */
+function normalise(b: Partial<Box> & Box): Box {
+  return { ...b, shape: b.shape ?? "rect", levelTo: b.levelTo ?? b.level, carvedBy: b.carvedBy ?? [] };
 }
 
 export const useStore = create<State>((set, get) => ({
@@ -75,6 +81,7 @@ export const useStore = create<State>((set, get) => ({
   storeys: SAMPLE_STOREYS,
   level: 0,
   selected: [],
+  tool: "select",
   busy: null,
   error: null,
   showGrid: false,
@@ -102,16 +109,15 @@ export const useStore = create<State>((set, get) => ({
     set({ boxes, recommended: boxes, storeys: SAMPLE_STOREYS, selected: [], level: 0, savedId: null, savedName: "" });
   },
 
-  /** Mid-gesture: every frame. No stair sync. */
+  /** Mid-gesture: every frame. */
   setBoxes(boxes) {
     set({ boxes });
   },
 
-  /** Gesture over: stairs mirrored across levels. */
+  /** Gesture over. One entry point for every committed edit, so anything
+   * that must happen on every edit happens here. */
   commitBoxes(boxes) {
-    const before = new Map(get().boxes.map((b) => [b.id, b]));
-    const changed = new Set(boxes.filter((b) => before.get(b.id) !== b).map((b) => b.id));
-    set({ boxes: syncStairs(boxes, changed) });
+    set({ boxes });
   },
 
   select(id, additive = false) {
@@ -127,6 +133,55 @@ export const useStore = create<State>((set, get) => ({
     }
   },
 
+  selectMany(ids, additive = false) {
+    const current = additive ? get().selected : [];
+    set({ selected: [...current, ...ids.filter((id) => !current.includes(id))] });
+  },
+
+  addBox(shape, left, top, width, height) {
+    const level = get().level;
+    const info = roomTypeInfo("other");
+    const id = `zone:${Date.now().toString(36)}:${nextZone}`;
+    const rect = { left, top, width, height };
+    const box: Box = {
+      id,
+      name: `Zone ${nextZone++}`,
+      kind: "room",
+      shape,
+      roomType: "other",
+      isEntry: false,
+      level,
+      levelTo: level,
+      ...rect,
+      minWidth: info.minWidth,
+      minHeight: info.minHeight,
+      rotation: 0,
+      carvedBy: [],
+      deleted: false,
+      initial: rect,
+    };
+    set({ boxes: [...get().boxes, box], selected: [id] });
+    return id;
+  },
+
+  updateBox(id, patch) {
+    set({
+      boxes: get().boxes.map((b) => {
+        if (b.id !== id) return b;
+        let next = { ...b, ...patch };
+        if (patch.roomType && patch.roomType !== b.roomType) {
+          const info = roomTypeInfo(patch.roomType);
+          next = { ...next, minWidth: info.minWidth, minHeight: info.minHeight, kind: patch.roomType === "hallway" ? "corridor" : "room" };
+        }
+        if (patch.level !== undefined && patch.levelTo === undefined) {
+          // Moving a room to another floor keeps a span's height.
+          next = { ...next, levelTo: patch.level + (b.levelTo - b.level) };
+        }
+        return next;
+      }),
+    });
+  },
+
   deleteBoxes(ids) {
     const idSet = new Set(ids);
     get().commitBoxes(get().boxes.map((b) => (idSet.has(b.id) ? { ...b, deleted: true } : b)));
@@ -137,9 +192,14 @@ export const useStore = create<State>((set, get) => ({
     const boxes = get().boxes;
     const carver = boxes.find((b) => b.id === id);
     if (!carver) return;
-    const settled = carveWith(carver, liveBoxes(boxes, carver.level));
-    const byId = new Map(settled.map((b) => [b.id, b]));
-    set({ boxes: boxes.map((b) => byId.get(b.id) ?? b) });
+    // A box spanning several storeys carves on each of them.
+    let out = boxes;
+    for (let lv = carver.level; lv <= carver.levelTo; lv++) {
+      const settled = carveWith(carver, liveBoxes(out, lv));
+      const byId = new Map(settled.map((b) => [b.id, b]));
+      out = out.map((b) => byId.get(b.id) ?? b);
+    }
+    set({ boxes: out });
   },
 
   release(id) {
@@ -152,6 +212,9 @@ export const useStore = create<State>((set, get) => ({
 
   setLevel(level) {
     set({ level, selected: [] });
+  },
+  setTool(tool) {
+    set({ tool });
   },
   setMassing(massing) {
     set({ massing });
@@ -187,8 +250,7 @@ export const useStore = create<State>((set, get) => ({
     set({ busy: "Loading…" });
     try {
       const saved = await api.getProject(id);
-      // Layouts saved before carving existed have no carvedBy list.
-      const boxes = saved.boxes.map((b) => ({ ...b, carvedBy: b.carvedBy ?? [] }));
+      const boxes = saved.boxes.map(normalise);
       set({
         boxes,
         recommended: boxes,

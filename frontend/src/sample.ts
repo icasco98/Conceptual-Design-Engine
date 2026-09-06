@@ -7,9 +7,9 @@
  * that trying the editor never means building a plan from nothing first.
  *
  * Two storeys, a compact 11 × 9.5 m footprint with the rooms directly
- * against each other rather than strung along a corridor, the stair on the
- * same rectangle on both floors, and the upper floor a little smaller than
- * the ground floor so the ghost of the level below has something to show.
+ * against each other rather than strung along a corridor, one stair
+ * spanning both floors, and the upper floor a little smaller than the
+ * ground floor so the ghost of the level below has something to show.
  *
  * "Reset to the sample layout" brings all of this back.
  */
@@ -35,6 +35,8 @@ interface Placed {
   name: string;
   roomType: string;
   level: number;
+  /** Highest storey the box reaches; the stair spans both. */
+  levelTo?: number;
   rect: [number, number, number, number];
   kind?: BoxKind;
   isEntry?: boolean;
@@ -50,7 +52,7 @@ const PLACED: Placed[] = [
   { name: "Living Room", roomType: "living_room", level: 0, rect: [6.0, 0, 5.0, 5.5] },
   { name: "Powder Room", roomType: "half_bath", level: 0, rect: [3.6, 2.4, 1.2, 2.0] },
   { name: "Pantry", roomType: "closet", level: 0, rect: [3.6, 4.4, 1.2, 2.1] },
-  { name: "Stair", roomType: "stair", level: 0, rect: [4.8, 2.4, 1.2, 4.1] },
+  { name: "Stair", roomType: "stair", level: 0, levelTo: 1, rect: [4.8, 2.4, 1.2, 4.1] },
   { name: "Dining Room", roomType: "dining_room", level: 0, rect: [6.0, 5.5, 5.0, 4.0] },
   { name: "Utility", roomType: "laundry", level: 0, rect: [0, 6.5, 2.4, 3.0] },
   { name: "Kitchen", roomType: "kitchen", level: 0, rect: [2.4, 6.5, 3.6, 3.0] },
@@ -59,7 +61,6 @@ const PLACED: Placed[] = [
   { name: "Bedroom 2", roomType: "bedroom", level: 1, rect: [0, 4.75, 3.6, 4.75] },
   { name: "Landing", roomType: "hallway", level: 1, rect: [3.6, 0, 2.4, 2.4], kind: "corridor" },
   { name: "Hall", roomType: "hallway", level: 1, rect: [3.6, 2.4, 1.2, 4.1], kind: "corridor" },
-  { name: "Stair", roomType: "stair", level: 1, rect: [4.8, 2.4, 1.2, 4.1] },
   { name: "Bathroom", roomType: "bathroom", level: 1, rect: [3.6, 6.5, 2.4, 3.0] },
   { name: "Primary Bedroom", roomType: "bedroom_primary", level: 1, rect: [6.0, 0, 5.0, 4.5] },
   { name: "Ensuite", roomType: "bathroom", level: 1, rect: [6.0, 4.5, 2.6, 3.0] },
@@ -75,9 +76,11 @@ export function sampleBoxes(): Box[] {
       id: `${kind}:${p.level}:${p.name}`,
       name: p.name,
       kind,
+      shape: "rect",
       roomType: p.roomType,
       isEntry: p.isEntry ?? false,
       level: p.level,
+      levelTo: p.levelTo ?? p.level,
       ...rect,
       // A corridor's minimum is its clear width both ways: it can be any
       // length, but never narrower than a hallway.

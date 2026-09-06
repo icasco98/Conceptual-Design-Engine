@@ -60,6 +60,8 @@ export const IconReset = ({ size = 17, className }: P) =>
     size,
     className,
   );
+export const IconRect = ({ size = 17, className }: P) => svg(<rect x="4" y="6" width="16" height="12" rx="1" />, size, className);
+export const IconCircle = ({ size = 17, className }: P) => svg(<circle cx="12" cy="12" r="8" />, size, className);
 export const IconMinus = ({ size = 15, className }: P) => svg(<path d="M5 12h14" />, size, className);
 export const IconPlus = ({ size = 15, className }: P) => svg(<path d="M12 5v14M5 12h14" />, size, className);
 export const IconFit = ({ size = 15, className }: P) =>

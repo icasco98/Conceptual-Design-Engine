@@ -38,9 +38,11 @@ the next begins.
    each other, no corridor spine — so that trying it never means drawing
    a plan from nothing. Plan, schedule and 3D all work with no backend
    and no API key.
-2. **Drawing.** Draw new zones as rectangles, squares or circles; rotate
-   any shape freely; a schedule listing name, size, rotation, floor and
-   priority, live-synced with the canvas in both directions.
+2. **Drawing.** Done, apart from the priority column. Rectangle, square
+   and circle tools on the rail; free rotation; the schedule lists name,
+   type, floor, size and rotation and edits them in place, live with the
+   canvas both ways; several zones can be selected and moved, rotated or
+   deleted together.
 3. **Floors.** Assign each room to a floor; when viewing one floor, see a
    ghosted outline of the floors above and below, to line up walls.
 4. **Adjacency and outline.** Arrows between rooms placed next to each
@@ -51,14 +53,24 @@ the next begins.
    in (see below); this stage adds the ordering.
 6. **3D.** Confirm the finished 2D editor converts into the massing view.
 
-## What the editor does today (after stage 1)
+## What the editor does today
 
-- **Plan.** Every room on the current storey is a box: click to select
-  (shift-click for several), drag to move, corner handles to resize, the
-  top handle to rotate in 5° steps, the × to delete. Drag the background
-  to pan, scroll to zoom. A 0.25 m grid can be shown from the rail, and
-  positions snap to it whether or not it is visible; a box dragged within
-  1 m of a facing neighbour snaps to touch it.
+Three columns: the plan, the 3D massing, and the room schedule, all on
+screen at once, all three readings of the one arrangement.
+
+- **Tools (the rail).** *Select*: click a zone, shift-click to add, or
+  drag empty sheet to rubber-band several. *Pan*: drag the sheet to move
+  the view (the middle mouse button pans in any tool). *Rectangle* and
+  *Circle*: drag on the sheet to draw a new zone; Shift holds a rectangle
+  square. A new zone is called "Zone n", of type Room — rename it and
+  pick its type in the schedule. Scroll to zoom in any tool.
+- **Plan.** Corner handles resize, the top handle rotates freely (hold
+  Shift for 15° steps), the × deletes, so does the Delete key. With
+  several zones selected, dragging any one moves them all, the rotate
+  handle turns them together about the group's centre, and × or Delete
+  removes them all. A 0.25 m grid can be shown from the rail, and
+  positions snap to it whether or not it is visible; a single zone
+  dragged within 1 m of a facing neighbour snaps to touch it.
 - **Overlap and carving.** Rooms overlap freely and nothing is ever
   pushed: a room goes exactly where you put it and nothing else moves.
   To cut, select a room and press its carve handle (top-left corner) or
@@ -68,13 +80,14 @@ the next begins.
   a room for you — a room cut below its type's minimum, or cut in two,
   keeps the cut and is outlined in red, named in the status bar, and
   marked with ! in the schedule, for you to resolve.
-- **Schedule.** Width and depth are editable in place and the box follows
-  (growing from its centre); area is read from the shape actually drawn.
-  Clicking a row selects the box and vice versa.
+- **Schedule.** Name, type, floor, width, depth and rotation are edited
+  in place and the zone follows; width and depth grow from the centre;
+  area is read from the shape actually drawn. Clicking a row selects the
+  zone and vice versa.
 - **Storeys.** Ground floor and Level 1 tabs; the storey below is ghosted
-  on the upper floor (toggle on the rail). The stair is one rectangle on
-  every level it connects, and an edit to it on one level is mirrored to
-  the others.
+  on the upper floor (toggle on the rail). The stair is one zone spanning
+  both floors: one row in the schedule (floor "G–1"), drawn on each plan,
+  one mass in the 3D.
 - **Outline and doors.** The building outline is a true polygon union of
   every room's drawn shape. Door arrows walk the touching graph from the
   entry (from the stair on an upper floor). Stage 4 replaces this with

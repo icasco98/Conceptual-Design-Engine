@@ -20,6 +20,7 @@ import {
   bboxOf,
   frameOf,
   largestFreeStrip,
+  localPolyOf,
   localToPagePoly,
   pageToLocalPoly,
   polyArea,
@@ -28,7 +29,7 @@ import {
   rectPolyOf,
   ringToPoly,
 } from "./poly";
-import { boxesTrulyIntersect, rectOf } from "./rect";
+import { boxesTrulyIntersect } from "./rect";
 import type { Box, Poly } from "./types";
 
 /** Where the material is missing from `poly` relative to its own bounding
@@ -101,13 +102,14 @@ export interface DisplayShape {
   flagged: boolean;
 }
 
-/** Every live box's display polygon: its rectangle minus whatever the
- * rooms in its `carvedBy` list currently cover, and nothing more. */
+/** Every live box's display polygon: its own outline (rectangle or
+ * ellipse) minus whatever the rooms in its `carvedBy` list currently
+ * cover, and nothing more. */
 export function displayShapes(live: Box[]): DisplayShape[] {
   const byId = new Map(live.map((b) => [b.id, b]));
   return live.map((el) => {
     const fr = frameOf(el);
-    const base = rectPolyOf(rectOf(el));
+    const base = localPolyOf(el);
     const clippers: Poly[] = [];
     for (const id of el.carvedBy) {
       const carver = byId.get(id);

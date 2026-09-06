@@ -21,14 +21,23 @@ export type Poly = Point[];
 
 export type BoxKind = "room" | "corridor";
 
+/** A rectangle, or the ellipse inscribed in it. Drawn as a circle it
+ * starts with width = height; the schedule can make it an ellipse. */
+export type BoxShape = "rect" | "circle";
+
 export interface Box {
   /** Stable identity across edits. Not the display name. */
   id: string;
   name: string;
   kind: BoxKind;
+  shape: BoxShape;
   roomType: string;
   isEntry: boolean;
+  /** Lowest storey the box is on, 0 = ground. */
   level: number;
+  /** Highest storey, inclusive. Equal to `level` for an ordinary room; a
+   * stair spans several and is one box, drawn on each and one mass in 3D. */
+  levelTo: number;
   left: number;
   top: number;
   width: number;
@@ -74,3 +83,5 @@ export const GRID_M = 0.25;
 export const GAP_SNAP_M = 1.0;
 /** Door arrow endpoints sit this far either side of the wall. */
 export const DOOR_INSET_M = 0.35;
+/** How many sides a circle is drawn and computed with. */
+export const CIRCLE_SEGMENTS = 48;

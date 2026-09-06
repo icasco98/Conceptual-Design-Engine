@@ -70,6 +70,8 @@ export function doorArrows(live: Box[]): [Point, Point][] {
     const cur = queue.shift()!;
     for (let j = 0; j < live.length; j++) {
       if (visited[j]) continue;
+      // An ellipse has no wall to share; it gets no arrow for now.
+      if (live[j].shape === "circle" || live[cur].shape === "circle") continue;
       const touch = touchingEdge(rects[cur], rects[j], TOUCH_TOL_M);
       if (!touch) continue;
       visited[j] = true;

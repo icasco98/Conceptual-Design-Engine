@@ -11,10 +11,9 @@
  *     outline. No rooms, no colour: the shape the building makes, which
  *     is the question massing actually asks.
  *
- * The stair is drawn once, floor to top, rather than once per storey, and
- * every floor plate it passes through is cut around it. Vertical
- * circulation is one continuous volume in a building and has to read as
- * one here, not as boxes stacked on each other.
+ * A zone that spans several storeys (the stair) is one box in the model
+ * and one mass here: drawn once, floor of its lowest storey to ceiling of
+ * its highest, with every floor plate it passes through cut around it.
  *
  * The ground is the drawing sheet: there is no site, so nothing else is
  * drawn under the building.
@@ -71,6 +70,9 @@ export function View3D() {
   const renderer = useRef<THREE.WebGLRenderer>();
   const camera = useRef<THREE.PerspectiveCamera>();
   const controls = useRef<OrbitControls>();
+  /** Frames the current layout; kept in a ref so the resize observer,
+   * created once, always calls the latest one. */
+  const frameRef = useRef<() => void>(() => {});
 
   const storeyH = STOREY_HEIGHT_M;
 
@@ -109,6 +111,7 @@ export function View3D() {
       r.setSize(w, h, false);
       cam.aspect = w / h;
       cam.updateProjectionMatrix();
+      frameRef.current();
     };
     resize();
     const ro = new ResizeObserver(resize);
@@ -129,16 +132,28 @@ export function View3D() {
     };
   }, []);
 
-  // Frame the layout when a new one is loaded -- not on every edit, which
-  // would snatch the view away from wherever you had orbited it to.
+  // Frame the layout when a new one is loaded, or the pane changes shape
+  // -- not on every edit, which would snatch the view away from wherever
+  // you had orbited it to.
   useEffect(() => {
-    const cam = camera.current;
-    const ctl = controls.current;
-    if (!cam || !ctl) return;
-    const { cx, cz, span } = extentOf(recommended);
-    cam.position.set(cx + span * 0.9, span * 0.9, cz + span * 1.1);
-    ctl.target.set(cx, storeyH * 0.6, cz);
-    ctl.update();
+    frameRef.current = () => {
+      const cam = camera.current;
+      const ctl = controls.current;
+      if (!cam || !ctl) return;
+      const { cx, cz, span } = extentOf(recommended);
+      // Far enough that the span fits the narrower of the two fields of
+      // view: a tall pane has less horizontal field than vertical.
+      const vFov = (cam.fov * Math.PI) / 180;
+      const hFov = 2 * Math.atan(Math.tan(vFov / 2) * cam.aspect);
+      const fit = Math.min(vFov, hFov);
+      const dist = (span * 0.75) / Math.tan(fit / 2);
+      const dir = new THREE.Vector3(0.75, 0.62, 0.95).normalize();
+      const target = new THREE.Vector3(cx, storeyH * 0.6, cz);
+      cam.position.copy(target).addScaledVector(dir, dist);
+      ctl.target.copy(target);
+      ctl.update();
+    };
+    frameRef.current();
   }, [recommended, storeyH]);
 
   // Rebuild the building whenever the boxes change.
@@ -165,7 +180,7 @@ export function View3D() {
     ground.position.set(SHEET.width / 2, -0.01, SHEET.depth / 2);
     group.add(ground);
 
-    const shafts = stairShafts(boxes, storeys);
+    const shafts = stairShafts(boxes);
 
     for (let lv = 0; lv < storeys; lv++) {
       const live = liveBoxes(boxes, lv);
@@ -216,7 +231,7 @@ export function View3D() {
       }
 
       for (const b of live) {
-        if (b.roomType === "stair") continue; // drawn once as a shaft below
+        if (b.levelTo > b.level) continue; // one mass, drawn once below
         // The room's drawn shape -- rectangle minus whatever carves it,
         // rotation already applied -- extruded, so a carved room reads as
         // carved in three dimensions too.
@@ -244,14 +259,17 @@ export function View3D() {
       }
     }
 
-    // The shaft, once, from the floor of its lowest storey to the ceiling of
-    // its highest. Drawn after the rooms so its edges read through them, and
-    // only in zones mode — the massing volume already contains it.
+    // Each spanning zone once, from the floor of its lowest storey to the
+    // ceiling of its highest. Drawn after the rooms so its edges read
+    // through them, and only in zones mode — the massing volume already
+    // contains it.
     if (massing === "zones") {
       for (const shaft of shafts) {
         const b = shaft.box;
         const h = (shaft.to - shaft.from + 1) * storeyH - SLAB;
-        const geo = new THREE.BoxGeometry(b.width, h, b.height);
+        const page = displayShapes(liveBoxes(boxes, shaft.from)).find((s) => s.id === b.id)?.page ?? polyOfBox(b);
+        const shape = new THREE.Shape(page.map((p) => new THREE.Vector2(p[0], p[1])));
+        const geo = new THREE.ExtrudeGeometry(shape, { depth: h, bevelEnabled: false });
         const mat = new THREE.MeshLambertMaterial({
           color: fillFor(b.roomType, b.kind),
           transparent: true,
@@ -261,8 +279,8 @@ export function View3D() {
           opacity: 0.62,
         });
         const mesh = new THREE.Mesh(geo, mat);
-        mesh.position.set(b.left + b.width / 2, shaft.from * storeyH + SLAB + h / 2, b.top + b.height / 2);
-        mesh.rotation.y = (-b.rotation * Math.PI) / 180;
+        mesh.rotation.x = Math.PI / 2;
+        mesh.position.set(0, shaft.from * storeyH + SLAB + h, 0);
         group.add(mesh);
         const edges = new THREE.LineSegments(
           new THREE.EdgesGeometry(geo),

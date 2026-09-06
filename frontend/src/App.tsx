@@ -1,24 +1,26 @@
 /**
- * Layout: a tool rail, the plan, then a column carrying the massing over the
- * room schedule and the saved layouts. Plan and massing are both on screen
- * permanently — the two readings of one arrangement, never a mode you switch
- * between — and the status line runs along the foot where it cannot scroll
- * away.
+ * Layout: a tool rail, then three columns — the plan, the massing, and
+ * the room schedule with the saved layouts under it. All three are on
+ * screen at all times: they are three readings of one arrangement, never
+ * modes you switch between. The status line runs along the foot where it
+ * cannot scroll away.
  */
 import { useEffect } from "react";
 
 import { Canvas2D } from "./components/Canvas2D";
-import { IconCursor, IconGrid, IconHand, IconLayers, IconReset } from "./components/icons";
+import { IconCircle, IconCursor, IconGrid, IconHand, IconLayers, IconRect, IconReset } from "./components/icons";
 import { Massing } from "./components/Massing";
 import { Schedule } from "./components/Schedule";
 import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
-import { useStore } from "./state/store";
+import { useStore, type Tool } from "./state/store";
 
-/** The rail is the tool vocabulary the canvas already speaks; grid and the
- *  ghost of the storey below are toggles, the rest are the pointer modes the
- *  canvas has always had. */
+/** The rail: the pointer tools (select, pan, draw a rectangle, draw a
+ *  circle), then the toggles (grid, ghost of the storey below), then
+ *  Reset. */
 function Rail() {
+  const tool = useStore((s) => s.tool);
+  const setTool = useStore((s) => s.setTool);
   const showGrid = useStore((s) => s.showGrid);
   const toggleGrid = useStore((s) => s.toggleGrid);
   const showGhost = useStore((s) => s.showGhost);
@@ -26,14 +28,19 @@ function Rail() {
   const resetLayout = useStore((s) => s.resetLayout);
   const storeys = useStore((s) => s.storeys);
 
+  const toolButton = (t: Tool, title: string, icon: React.ReactNode) => (
+    <button type="button" className={tool === t ? "on" : ""} aria-pressed={tool === t} title={title} aria-label={title} onClick={() => setTool(t)}>
+      {icon}
+    </button>
+  );
+
   return (
     <div className="rail">
-      <button type="button" className="on" title="Select and move" aria-label="Select and move" aria-pressed>
-        <IconCursor />
-      </button>
-      <button type="button" title="Pan the plan (or drag the background)" aria-label="Pan the plan">
-        <IconHand />
-      </button>
+      {toolButton("select", "Select and move (drag the sheet to select several; Shift adds)", <IconCursor />)}
+      {toolButton("pan", "Pan the plan (or drag with the middle button)", <IconHand />)}
+      {toolButton("rect", "Draw a rectangle zone (Shift for a square)", <IconRect />)}
+      {toolButton("circle", "Draw a circle zone", <IconCircle />)}
+      <span className="rail-sep" />
       <button
         type="button"
         className={showGrid ? "on" : ""}
@@ -56,6 +63,7 @@ function Rail() {
           <IconLayers />
         </button>
       )}
+      <span className="rail-sep" />
       <button type="button" title="Reset to the sample layout" aria-label="Reset to the sample layout" onClick={resetLayout}>
         <IconReset />
       </button>
@@ -93,6 +101,7 @@ export default function App() {
   const clearError = useStore((s) => s.clearError);
   const boxes = useStore((s) => s.boxes);
   const storeys = useStore((s) => s.storeys);
+  const selected = useStore((s) => s.selected);
   const savedName = useStore((s) => s.savedName);
 
   useEffect(() => {
@@ -108,6 +117,7 @@ export default function App() {
         <Levels />
         <div className="header-sp" />
         {busy && <div className="busy">{busy}</div>}
+        {selected.length > 1 && <div className="busy">{selected.length} selected</div>}
         <div className="header-meta">
           {spaces} {spaces === 1 ? "space" : "spaces"} · {storeys} {storeys === 1 ? "storey" : "storeys"}
         </div>
@@ -125,8 +135,8 @@ export default function App() {
       <div className="app-body">
         <Rail />
         <Canvas2D />
-        <div className="right-col">
-          <Massing />
+        <Massing />
+        <div className="schedule-col">
           <div className="schedule-pane">
             <div className="label">Room schedule</div>
             <Schedule />

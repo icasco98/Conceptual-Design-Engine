@@ -90,24 +90,38 @@ schedule resizes the box, save lists the layout and renames the title,
 Reset restores the sample. No console errors. Tests: 4 Python, 23
 TypeScript, all passing; ruff and tsc clean.
 
-## Stages 2–6: not started
+## Stage 2 — drawing, selection, schedule: done (priority column excepted)
 
-The README lists them. Notes for whoever does them:
+- Three columns (plan, massing, schedule) in `App.tsx`; the plan fits
+  the building on load and on the Fit button, the 3D re-frames itself
+  on load and when its pane changes shape.
+- `Box.shape` is `"rect" | "circle"`. `localPolyOf` / `polyOfBox` in
+  `poly.ts` are the one place a box becomes a polygon (a 48-gon for a
+  circle); overlap uses convex SAT on those outlines (`rect.ts`), so
+  circles carve and are carved like anything else. Circles get no door
+  arrows.
+- `Box.levelTo`: a zone spans storeys `level..levelTo`. `liveBoxes`
+  returns it on each; the schedule shows one row ("G–1"); `shafts.ts`
+  makes it one 3D mass. The stair is one such box; `syncStairs` is gone.
+- Tools live in the store (`tool`): select (marquee on empty sheet),
+  pan, rect, circle. Gestures in `Canvas2D.tsx`: group move (grabbed
+  zone leads and snaps), group rotate about the selection's bounding
+  centre (free, Shift = 15°), Delete/Backspace, Escape.
+- The schedule edits name, type (which resets the minimums and the
+  hallway hatch), floor, width, depth, rotation. Every edit goes through
+  `store.updateBox` or `commitBoxes`.
 
-**Stage 2 (drawing).** The box model is a rectangle plus a rotation. A
-circle needs a `shape` field, and everything that turns a box into a
-polygon goes through `polyOfBox` in `geometry/poly.ts` — that is the one
-place to teach it about circles (a polygon approximation is fine; the
-booleans in polygon-clipping only take polygons). Priority and floor
-columns belong on the `Box`, and the schedule (`Schedule.tsx`) already
-does two-way sync for width and depth: copy that pattern rather than
-adding a second path.
+**Not built: the "make zones touch" button.** The owner asked for a
+button that moves nearby zones until they touch or align, and to ask
+before building it because the rule is ambiguous. Questions were put to
+the owner; do not guess an answer.
 
-**Stage 3 (floors).** `storeys` is a store field, `level` the one being
-viewed, and `liveBoxes(boxes, level)` filters. The ghost already draws
-the floor below; the floor above is the same code with `level + 1`. A
-room's floor is `box.level`; changing it in the schedule is a plain edit.
-The stair is mirrored across levels by `syncStairs` in the store.
+## Stages 3–6
+
+**Stage 3 (floors).** The floor select in the schedule already moves a
+room; what is left is the ghost of the floor *above* (the ghost code
+with `level + 1`), adding storeys, and moving a span. Room count per
+storey is derived; `storeys` is a store field.
 
 **Stage 4 (adjacency and outline).** `doors.ts` finds shared walls with
 `touchingEdge`; it only walks from the entry because that was the

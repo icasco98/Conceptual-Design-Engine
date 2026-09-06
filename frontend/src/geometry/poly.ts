@@ -6,8 +6,7 @@
  */
 import polygonClipping from "polygon-clipping";
 
-import type { Box, Frame, Point, Poly, Rect } from "./types";
-import { cornersOfObb, obbOf } from "./rect";
+import { CIRCLE_SEGMENTS, type Box, type Frame, type Point, type Poly, type Rect } from "./types";
 
 type Ring = Point[];
 type Geom = Ring[];
@@ -72,8 +71,29 @@ export function rectPolyOf(r: Rect): Poly {
   ];
 }
 
+/** The ellipse inscribed in a rectangle, as a polygon. */
+export function ellipsePolyOf(r: Rect): Poly {
+  const cx = r.left + r.width / 2;
+  const cy = r.top + r.height / 2;
+  const out: Poly = [];
+  for (let i = 0; i < CIRCLE_SEGMENTS; i++) {
+    const t = (i / CIRCLE_SEGMENTS) * Math.PI * 2;
+    out.push([cx + (r.width / 2) * Math.cos(t), cy + (r.height / 2) * Math.sin(t)]);
+  }
+  return out;
+}
+
+/** The box's outline in its OWN frame -- unrotated, axis-aligned -- a
+ * rectangle or the ellipse inside it. */
+export function localPolyOf(b: Box): Poly {
+  const r = { left: b.left, top: b.top, width: b.width, height: b.height };
+  return b.shape === "circle" ? ellipsePolyOf(r) : rectPolyOf(r);
+}
+
+/** The box's outline on the page: its local outline turned by its
+ * rotation. Every overlap test, carve and outline reads this. */
 export function polyOfBox(b: Box): Poly {
-  return cornersOfObb(obbOf(b));
+  return localToPagePoly(localPolyOf(b), frameOf(b));
 }
 
 /** A box's own frame: for a rotated box the world is turned around it so

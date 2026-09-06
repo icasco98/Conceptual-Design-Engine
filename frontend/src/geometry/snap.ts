@@ -11,8 +11,9 @@ export function snapToGrid(v: number): number {
   return Math.round(v / GRID_M) * GRID_M;
 }
 
+/** Everything drawn on `level`: rooms on it, and anything spanning it. */
 export function liveBoxes(boxes: Box[], level: number): Box[] {
-  return boxes.filter((b) => !b.deleted && b.level === level);
+  return boxes.filter((b) => !b.deleted && b.level <= level && level <= b.levelTo);
 }
 
 /** Sub-meter gap to the nearest facing neighbour along one axis, if any. */
