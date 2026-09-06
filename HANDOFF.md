@@ -100,9 +100,10 @@ TypeScript, all passing; ruff and tsc clean.
   circle); overlap uses convex SAT on those outlines (`rect.ts`), so
   circles carve and are carved like anything else. Circles get no door
   arrows.
-- `Box.levelTo`: a zone spans storeys `level..levelTo`. `liveBoxes`
-  returns it on each; the schedule shows one row ("G–1"); `shafts.ts`
-  makes it one 3D mass. The stair is one such box; `syncStairs` is gone.
+- `Box.levelTo`: a zone spans storeys `level..levelTo`, derived from
+  `heightM`. `liveBoxes` returns it on each; the schedule shows one row
+  ("G–1"); the 3D draws it once at its true height. The stair is one
+  such box; `syncStairs` is gone.
 - Tools live in the store (`tool`): select (marquee on empty sheet),
   pan, rect, circle. Gestures in `Canvas2D.tsx`: group move (grabbed
   zone leads and snaps), group rotate about the selection's bounding
@@ -151,9 +152,15 @@ frame ever comes back (a site, an export), convert in one place only.
 rectangle and the 3D ground plane. Nothing clamps to it; a room may sit
 outside it.
 
-**The stair is one rectangle on every level.** `syncStairs` in the store
-mirrors any edit across levels, and `shafts.ts` collapses the copies into
-one volume for the 3D.
+**A tall zone is one box, not one per storey.** It is live on every
+storey it reaches (`liveBoxes`), drawn on each plan, and drawn once in
+the 3D from its own floor to its own ceiling. `shafts.ts` and
+`syncStairs` are gone: a stair is just a zone 6 m tall.
+
+**Click-to-select in the 3D** is a raycast on pointerup, skipped when the
+pointer moved more than `CLICK_SLOP_PX` -- that was an orbit, not a
+click. Pickable meshes carry `userData.boxId`; the ground, the floor
+plates and the outlines carry none.
 
 **Corridors are ordinary rooms now.** `kind: "corridor"` only picks the
 hatch fill and the 1.2 m minimum; a hallway can be carved like anything
@@ -168,6 +175,11 @@ a flag instead.
 **An arrow is stored in its host's frame, never on the page.** That is
 what keeps it perpendicular and attached through a move, a resize and a
 rotation. Anything that needs page coordinates calls `arrowSegment`.
+
+**The 3D is not storey-based.** Every volume runs from its zone's own
+base to its own top. Anything that starts iterating storeys to draw
+zones is reintroducing the stacked-boxes bug; storeys are only for the
+floor plates and for which zones read as "on screen".
 
 **`heightM` is the truth; `levelTo` is derived.** Set one without the
 other and a zone will be drawn on the wrong storeys. `updateBox` in the

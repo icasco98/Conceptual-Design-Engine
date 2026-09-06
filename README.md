@@ -93,10 +93,15 @@ screen at once, all three readings of the one arrangement.
   every room's drawn shape. Door arrows walk the touching graph from the
   entry (from the stair on an upper floor). Stage 4 replaces this with
   arrows between any two adjacent rooms.
-- **3D.** Colour by zone: every room extruded to storey height, the
-  current level solid and the others translucent, the stair drawn once as
-  a shaft with the floor plates cut around it. Or one grey volume per
-  storey from its own outline. Drag to orbit, scroll to zoom.
+- **3D.** Every zone is drawn once, from its own floor to its own
+  ceiling, so a 7 m room is one 7 m volume rather than a stack of storeys.
+  Colour by zone shows each zone in its category colour with floor plates
+  between the storeys, the floor you are editing solid and the rest
+  translucent; unticked, the same volumes are one grey with each storey's
+  outline, which is the shape the building makes. A floor plate is cut
+  around anything passing through it. Drag to orbit, scroll to zoom, and
+  click a zone to select it — the plan and the schedule follow, switching
+  floors if the zone you picked lives on another one.
 - **Saved layouts.** Save the boxes as they are; load one back; "Start
   over with the sample" returns to the sample house. Reset on the rail
   returns to whatever was last loaded.
