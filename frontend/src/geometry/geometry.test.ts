@@ -6,7 +6,7 @@ import { touchingEdge } from "./doors";
 import { footprintRings } from "./footprint";
 import { polyArea, polyOfBox, rectPolyOf } from "./poly";
 import { boxesTrulyIntersect, obbOf, obbsSeparated } from "./rect";
-import { liveBoxes, snapToGrid, snapToNearbyNeighbors } from "./snap";
+import { isOpenToBelow, liveBoxes, snapToGrid, snapToNearbyNeighbors } from "./snap";
 import { polyGap, touchDelta, touchSelected } from "./touch";
 import type { Box } from "./types";
 
@@ -274,6 +274,32 @@ describe("door arrows", () => {
     expect(nearestWallPoint(host, [2, 4.3]).side).toBe(2);
     expect(nearestWallPoint(host, [-0.3, 2]).side).toBe(3);
     expect(nearestWallPoint(host, [1, -0.3]).t).toBeCloseTo(0.25);
+  });
+});
+
+describe("a tall zone seen from the storey above", () => {
+  const tall = box({ id: "t", name: "Living", left: 0, top: 0, width: 5, height: 5, level: 0, levelTo: 1, heightM: 5 });
+  const stair = box({ id: "s", name: "Stair", roomType: "stair", left: 8, top: 0, width: 1.2, height: 4, level: 0, levelTo: 1, heightM: 6 });
+
+  it("is a void on the storeys above its own floor, but not on its own", () => {
+    expect(isOpenToBelow(tall, 0)).toBe(false);
+    expect(isOpenToBelow(tall, 1)).toBe(true);
+    // Not on a storey it never reaches.
+    expect(isOpenToBelow(tall, 2)).toBe(false);
+  });
+
+  it("never applies to a stair, which is a hole you do walk through", () => {
+    expect(isOpenToBelow(stair, 1)).toBe(false);
+  });
+
+  it("takes no part in the door-arrow walk on that storey", () => {
+    const entry = box({ id: "e", name: "Landing", isEntry: true, roomType: "entry", left: 5, top: 0, width: 2, height: 5, level: 1 });
+    // On the ground floor the tall zone is an ordinary room and gets a door.
+    const ground = suggestArrows([{ ...entry, level: 0, levelTo: 0 }, tall], [], 0);
+    expect(ground.map((a) => a.targetId)).toEqual(["t"]);
+    // Upstairs it is a void: no arrow to it, and none hosted on it.
+    const upstairs = suggestArrows([entry, tall], [], 1);
+    expect(upstairs).toEqual([]);
   });
 });
 

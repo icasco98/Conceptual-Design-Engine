@@ -12,7 +12,7 @@ import { api } from "../api/client";
 import type { ProjectSummary } from "../api/types";
 import { nearestWallPoint, newArrowId, suggestArrows } from "../geometry/arrows";
 import { carveWith, releaseCarve } from "../geometry/carve";
-import { liveBoxes } from "../geometry/snap";
+import { isOpenToBelow, liveBoxes } from "../geometry/snap";
 import { touchSelected } from "../geometry/touch";
 import type { Arrow, Box, BoxShape, Point } from "../geometry/types";
 import { roomTypeInfo } from "../rooms";
@@ -224,8 +224,13 @@ export const useStore = create<State>((set, get) => ({
     // A zone that grew taller than the top storey opens a storey above.
     const storeys = storeysFor(boxes, get().storeys);
     const moved = boxes.find((b) => b.id === id);
-    // An arrow follows its host between floors.
-    const arrows = moved ? get().arrows.map((a) => (a.hostId === id ? { ...a, level: Math.min(Math.max(a.level, moved.level), moved.levelTo) } : a)) : get().arrows;
+    let arrows = get().arrows;
+    if (moved) {
+      // An arrow follows its host between floors...
+      arrows = arrows.map((a) => (a.hostId === id ? { ...a, level: Math.min(Math.max(a.level, moved.level), moved.levelTo) } : a));
+      // ...and loses its place if the zone became a void on that floor.
+      arrows = arrows.filter((a) => a.hostId !== id || !isOpenToBelow(moved, a.level));
+    }
     set({ boxes, storeys, arrows });
   },
 
@@ -249,7 +254,9 @@ export const useStore = create<State>((set, get) => ({
 
   addArrow(hostId, at) {
     const host = get().boxes.find((b) => b.id === hostId);
-    if (!host) return;
+    // No door into a void: on a storey above its own floor a zone is
+    // open to below, and there is no floor there to walk on.
+    if (!host || isOpenToBelow(host, get().level)) return;
     const { side, t } = nearestWallPoint(host, at);
     const arrow: Arrow = { id: newArrowId(), level: get().level, hostId, side, t, dir: 1 };
     set({ arrows: [...get().arrows, arrow], selectedArrow: arrow.id, selected: [] });

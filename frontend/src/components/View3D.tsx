@@ -26,6 +26,14 @@
  * plan switches to that zone's floor if it is not the one on screen.
  * Shift-click adds to the selection. A click on nothing clears it.
  *
+ * Drag a zone and it moves in plan, on the ground plane through the point
+ * you grabbed, snapping to the same grid the plan uses and taking the
+ * whole selection with it. Dragging anywhere else orbits, as before: the
+ * orbit control is switched off only while a zone is under the pointer.
+ * Nothing here changes a zone's height or its storey -- a drag in a view
+ * you can orbit has no unambiguous up, and the schedule has a height
+ * field for that.
+ *
  * Three.js is vendored through npm and bundled; nothing is fetched at
  * runtime, so the view works with no connection.
  */
@@ -36,7 +44,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { displayShapes, type DisplayShape } from "../geometry/carve";
 import { footprintRings } from "../geometry/footprint";
 import { polyOfBox } from "../geometry/poly";
-import { liveBoxes } from "../geometry/snap";
+import { liveBoxes, snapToGrid } from "../geometry/snap";
 import type { Box, Poly } from "../geometry/types";
 import { fillFor } from "../palette";
 import { SHEET, STOREY_HEIGHT_M } from "../sample";
@@ -124,39 +132,107 @@ export function View3D() {
     camera.current = cam;
     controls.current = ctl;
 
-    // ---- picking: a click that did not orbit selects what is under it.
+    // ---- pointer: a zone under the cursor is grabbed and moved, anything
+    // else orbits. A grab that never travels is a click, and selects.
     const ray = new THREE.Raycaster();
-    let down: { x: number; y: number } | null = null;
-    const onDown = (e: PointerEvent) => {
-      down = { x: e.clientX, y: e.clientY };
-    };
-    const onUp = (e: PointerEvent) => {
-      const start = down;
-      down = null;
-      if (!start) return;
-      if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > CLICK_SLOP_PX) return; // orbited
+    const plane = new THREE.Plane();
+    const onPlane = new THREE.Vector3();
+    let down: { x: number; y: number; id: string | null } | null = null;
+    let drag: { ids: string[]; snapshot: Box[]; x0: number; z0: number; moved: boolean } | null = null;
+    let queued: PointerEvent | null = null;
+    let frame = 0;
+
+    const ndc = (e: PointerEvent) => {
       const rect = r.domElement.getBoundingClientRect();
-      const pointer = new THREE.Vector2(
+      return new THREE.Vector2(
         ((e.clientX - rect.left) / rect.width) * 2 - 1,
         -((e.clientY - rect.top) / rect.height) * 2 + 1,
       );
-      ray.setFromCamera(pointer, cam);
-      const store = useStore.getState();
+    };
+    /** The nearest zone under the pointer, and where on it. */
+    const pick = (e: PointerEvent): { id: string; point: THREE.Vector3 } | null => {
+      ray.setFromCamera(ndc(e), cam);
       for (const hit of ray.intersectObjects(group.children, false)) {
         const id = hit.object.userData.boxId as string | undefined;
-        if (!id) continue; // the ground, a slab, an outline
-        const box = store.boxes.find((b) => b.id === id);
-        if (!box) continue;
-        // Show the floor the zone starts on, so what you picked is on the
-        // plan and in the schedule beside it.
-        if (box.level > store.level || store.level > box.levelTo) store.setLevel(box.level);
-        store.select(id, e.shiftKey);
+        if (id) return { id, point: hit.point }; // else: the ground, a plate, an outline
+      }
+      return null;
+    };
+
+    const onDown = (e: PointerEvent) => {
+      const hit = pick(e);
+      down = { x: e.clientX, y: e.clientY, id: hit?.id ?? null };
+      // Shift is for adding to the selection, so it never starts a move.
+      if (!hit || e.shiftKey) return;
+      const store = useStore.getState();
+      const ids = store.selected.includes(hit.id) ? [hit.id, ...store.selected.filter((s) => s !== hit.id)] : [hit.id];
+      plane.setFromNormalAndCoplanarPoint(new THREE.Vector3(0, 1, 0), hit.point);
+      drag = { ids, snapshot: store.boxes, x0: hit.point.x, z0: hit.point.z, moved: false };
+      ctl.enabled = false;
+    };
+
+    const applyDrag = () => {
+      frame = 0;
+      const e = queued;
+      queued = null;
+      if (!e || !drag) return;
+      ray.setFromCamera(ndc(e), cam);
+      if (!ray.ray.intersectPlane(plane, onPlane)) return;
+      // World x is the plan's x and world z is the plan's y: the prism
+      // helper lays each shape down that way.
+      let dx = onPlane.x - drag.x0;
+      let dy = onPlane.z - drag.z0;
+      const ids = new Set(drag.ids);
+      const lead = drag.snapshot.find((b) => b.id === drag!.ids[0])!;
+      if (!lead.rotation) {
+        dx = snapToGrid(lead.left + dx) - lead.left;
+        dy = snapToGrid(lead.top + dy) - lead.top;
+      }
+      useStore.getState().setBoxes(
+        drag.snapshot.map((b) => (ids.has(b.id) ? { ...b, left: b.left + dx, top: b.top + dy } : b)),
+      );
+    };
+
+    const onMove = (e: PointerEvent) => {
+      if (!drag || !down) return;
+      if (!drag.moved && Math.hypot(e.clientX - down.x, e.clientY - down.y) <= CLICK_SLOP_PX) return;
+      drag.moved = true;
+      queued = e;
+      if (!frame) frame = requestAnimationFrame(applyDrag);
+    };
+
+    const onUp = (e: PointerEvent) => {
+      const start = down;
+      const gesture = drag;
+      down = null;
+      drag = null;
+      ctl.enabled = true;
+      if (frame) {
+        cancelAnimationFrame(frame);
+        frame = 0;
+        applyDrag();
+      }
+      if (gesture?.moved) {
+        useStore.getState().commitBoxes(useStore.getState().boxes);
         return;
       }
-      store.select(null);
+      if (!start) return;
+      if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > CLICK_SLOP_PX) return; // orbited
+      const store = useStore.getState();
+      const box = start.id ? store.boxes.find((b) => b.id === start.id) : undefined;
+      if (!box) {
+        store.select(null);
+        return;
+      }
+      // Show the floor the zone starts on, so what you picked is on the
+      // plan and in the schedule beside it.
+      if (box.level > store.level || store.level > box.levelTo) store.setLevel(box.level);
+      store.select(box.id, e.shiftKey);
     };
+
     r.domElement.addEventListener("pointerdown", onDown);
-    r.domElement.addEventListener("pointerup", onUp);
+    r.domElement.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
 
     let alive = true;
     const resize = () => {
@@ -180,8 +256,10 @@ export function View3D() {
     return () => {
       alive = false;
       ro.disconnect();
+      if (frame) cancelAnimationFrame(frame);
       r.domElement.removeEventListener("pointerdown", onDown);
-      r.domElement.removeEventListener("pointerup", onUp);
+      r.domElement.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
       ctl.dispose();
       r.dispose();
       el.removeChild(r.domElement);

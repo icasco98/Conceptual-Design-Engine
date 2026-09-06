@@ -256,6 +256,10 @@ button.icon:hover { color: var(--err); }
 .plan-svg .handle.carve.on { fill: #2f5d7c; }
 .plan-svg .handle-glyph { font-size: 0.34px; pointer-events: none; fill: #111; }
 .plan-svg .ghost { pointer-events: none; }
+/* A tall zone seen from the storey above: a void, not a room. */
+.plan-svg .void-cross { stroke: #7C8079; stroke-width: 0.05px; stroke-dasharray: 0.25 0.18; pointer-events: none; }
+.plan-svg .void-label { font-family: var(--dr); fill: #7C8079; font-style: italic; pointer-events: none; }
+.plan-svg .box.open-below .room-label { fill: #7C8079; }
 .plan-svg .marquee { fill: #2f5d7c; fill-opacity: 0.08; stroke: #2f5d7c; stroke-width: 0.04px; stroke-dasharray: 0.2 0.15; }
 .plan-svg .drawing { fill: #2f5d7c; fill-opacity: 0.12; stroke: #2f5d7c; stroke-width: 0.06px; }
 

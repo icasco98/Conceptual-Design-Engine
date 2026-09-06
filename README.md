@@ -101,7 +101,15 @@ screen at once, all three readings of the one arrangement.
   outline, which is the shape the building makes. A floor plate is cut
   around anything passing through it. Drag to orbit, scroll to zoom, and
   click a zone to select it — the plan and the schedule follow, switching
-  floors if the zone you picked lives on another one.
+  floors if the zone you picked lives on another one. Drag a zone and it
+  moves in plan, snapping to the same grid and taking the whole selection
+  with it; dragging anywhere else still orbits.
+- **Open to below.** On the storeys above its own floor, a tall zone is
+  not a room — it is the void it leaves. It is drawn crossed through and
+  labelled "Open to below", the schedule shows its area as *void*, and no
+  door arrow can be put on it there, since there is no floor to walk on.
+  A stair is the exception: it is exactly a hole you do walk through, so
+  it keeps its arrows on every storey it connects.
 - **Saved layouts.** Save the boxes as they are; load one back; "Start
   over with the sample" returns to the sample house. Reset on the rail
   returns to whatever was last loaded.

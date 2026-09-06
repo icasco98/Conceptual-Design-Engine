@@ -8,7 +8,7 @@ import { useMemo } from "react";
 
 import { displayShapes } from "../geometry/carve";
 import { polyArea } from "../geometry/poly";
-import { liveBoxes } from "../geometry/snap";
+import { isOpenToBelow, liveBoxes } from "../geometry/snap";
 import type { Box } from "../geometry/types";
 import { fillFor } from "../palette";
 import { ROOM_TYPES } from "../rooms";
@@ -80,10 +80,11 @@ export function Schedule() {
             const flagged = shape?.flagged;
             const carving = carvesSomething(b);
             const spans = b.levelTo > b.level;
+            const openBelow = isOpenToBelow(b, level);
             return (
               <tr
                 key={b.id}
-                className={`${selected.includes(b.id) ? "selected" : ""} ${flagged ? "flagged" : ""}`}
+                className={`${selected.includes(b.id) ? "selected" : ""} ${flagged ? "flagged" : ""} ${openBelow ? "open-below" : ""}`}
                 onClick={(e) => {
                   const t = e.target as HTMLElement;
                   if (t.tagName === "INPUT" || t.tagName === "BUTTON" || t.tagName === "SELECT") return;
@@ -181,10 +182,9 @@ export function Schedule() {
                 </td>
                 <td
                   className={`r num ${flagged ? "flag" : carved ? "carved" : ""}`}
-                  title={flagged ? "Carved below its minimum size, or cut in two" : carved ? "Carved by another zone" : ""}
+                  title={openBelow ? "Open to below: this zone's floor is the storey underneath" : flagged ? "Carved below its minimum size, or cut in two" : carved ? "Carved by another zone" : ""}
                 >
-                  {flagged ? "! " : ""}
-                  {areaOf(b).toFixed(1)}
+                  {openBelow ? "void" : `${flagged ? "! " : ""}${areaOf(b).toFixed(1)}`}
                 </td>
                 <td className="r">
                   <input

@@ -11,11 +11,14 @@
  * graph out from the entry (or the stair on an upper storey), plus one
  * for each carve, hosted on the carving zone and pointing into the zone
  * it cuts. Suggestions only add arrows to zones that have none pointing
- * at them yet; everything a person has placed is left alone.
+ * at them yet; everything a person has placed is left alone. A zone that
+ * is open to below on this storey (snap.ts) is skipped entirely: there
+ * is no floor there to walk on.
  */
 import { pageToLocalPoly, localToPagePoly, frameOf } from "./poly";
 import { rectOf, centerOf } from "./rect";
 import { boxesTrulyIntersect } from "./rect";
+import { isOpenToBelow } from "./snap";
 import { DOOR_INSET_M, type Arrow, type Box, type Point } from "./types";
 import { touchingEdge } from "./doors";
 
@@ -108,7 +111,10 @@ const TOUCH_TOL_M = 0.04;
  * entry (or the stair), hosted on the zone it was reached from and
  * pointing into it; plus one per carve, hosted on the carver. Nothing is
  * added for a zone that already has an arrow pointing into it. */
-export function suggestArrows(live: Box[], existing: Arrow[], level: number): Arrow[] {
+export function suggestArrows(all: Box[], existing: Arrow[], level: number): Arrow[] {
+  // A zone open to below is a void on this storey: no door leads into it
+  // and none leads out of it, so it takes no part in the walk.
+  const live = all.filter((b) => !isOpenToBelow(b, level));
   const covered = new Set(existing.filter((a) => a.targetId).map((a) => a.targetId!));
   const out: Arrow[] = [];
   const add = (host: Box, target: Box, side: number, t: number) => {

@@ -37,7 +37,7 @@ import { arrowSegment } from "../geometry/arrows";
 import { displayShapes } from "../geometry/carve";
 import { footprintRings, ringsToPath } from "../geometry/footprint";
 import { polyArea, polyOfBox } from "../geometry/poly";
-import { liveBoxes, snapToGrid, snapToNearbyNeighbors } from "../geometry/snap";
+import { isOpenToBelow, liveBoxes, snapToGrid, snapToNearbyNeighbors } from "../geometry/snap";
 import { GRID_M, type Arrow, type Box, type Poly, type Rect } from "../geometry/types";
 import { IconFit, IconMinus, IconPlus } from "./icons";
 import { CATEGORY_WASH, INK, fillFor, zoneFill } from "../palette";
@@ -155,7 +155,7 @@ export function Canvas2D() {
     return ringsToPath(footprintRings(under.map((s) => s.page)));
   }, [boxes, level, showGhost]);
   const liveArrows = useMemo(() => {
-    const here = new Map(live.map((b) => [b.id, b]));
+    const here = new Map(live.filter((b) => !isOpenToBelow(b, level)).map((b) => [b.id, b]));
     return arrows.filter((a) => a.level === level && here.has(a.hostId)).map((a) => ({ arrow: a, host: here.get(a.hostId)! }));
   }, [arrows, live, level]);
 
@@ -365,8 +365,11 @@ export function Canvas2D() {
     e.stopPropagation();
     e.preventDefault();
     if (tool === "arrow") {
-      const p = toMeters(e);
-      addArrow(b.id, [p.x, p.y]);
+      // A zone open to below has no floor on this storey, so no door.
+      if (!isOpenToBelow(b, level)) {
+        const p = toMeters(e);
+        addArrow(b.id, [p.x, p.y]);
+      }
       setTool("select");
       return;
     }
@@ -618,6 +621,9 @@ export function Canvas2D() {
             const solo = isSel && selected.length === 1;
             const flagged = shape?.flagged ?? false;
             const carving = carvesSomething(b);
+            // Above its own floor a tall zone is the void it leaves, not
+            // a room: crossed through, named, and no door leads into it.
+            const openBelow = isOpenToBelow(b, level);
             const fill = fillFor(b.roomType, b.kind);
             const spans = b.levelTo > b.level;
             // Labels shrink to fit narrow zones rather than spilling over
@@ -632,7 +638,7 @@ export function Canvas2D() {
             return (
               <g
                 key={b.id}
-                className={`box ${b.kind} ${b.isEntry ? "entry" : ""} ${isSel ? "selected" : ""} ${shape?.carved ? "carved" : ""} ${flagged ? "flagged" : ""}`}
+                className={`box ${b.kind} ${b.isEntry ? "entry" : ""} ${isSel ? "selected" : ""} ${shape?.carved ? "carved" : ""} ${flagged ? "flagged" : ""} ${openBelow ? "open-below" : ""}`}
                 transform={`rotate(${b.rotation} ${cx} ${cy})`}
                 pointerEvents="all"
                 onPointerDown={(e) => startMove(e, b)}
@@ -660,10 +666,21 @@ export function Canvas2D() {
                 >
                   {labelText}
                 </text>
-                {showArea && (
+                {showArea && !openBelow && (
                   <text x={cx} y={cy + 0.82} className="area-label" textAnchor="middle" style={{ fontSize: 0.44 }}>
                     {(shape ? polyArea(shape.page) : b.width * b.height).toFixed(1)} m²
                   </text>
+                )}
+                {openBelow && (
+                  <>
+                    <line x1={b.left} y1={b.top} x2={b.left + b.width} y2={b.top + b.height} className="void-cross" />
+                    <line x1={b.left + b.width} y1={b.top} x2={b.left} y2={b.top + b.height} className="void-cross" />
+                    {showArea && (
+                      <text x={cx} y={cy + 0.82} className="void-label" textAnchor="middle" style={{ fontSize: 0.4 }}>
+                        Open to below
+                      </text>
+                    )}
+                  </>
                 )}
                 {solo &&
                   (["nw", "ne", "sw", "se"] as Corner[]).map((c) => (

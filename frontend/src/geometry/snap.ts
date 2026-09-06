@@ -16,6 +16,17 @@ export function liveBoxes(boxes: Box[], level: number): Box[] {
   return boxes.filter((b) => !b.deleted && b.level <= level && level <= b.levelTo);
 }
 
+/** True where `level` is above the zone's own floor: the zone is not a
+ * room on this storey, it is the void a tall room leaves in it. Drawn
+ * crossed out and marked "Open to below", and no door leads into it,
+ * because there is no floor there to walk on.
+ *
+ * A stair is the exception: it is exactly a hole you do walk through, so
+ * it keeps its arrows on every storey it connects. */
+export function isOpenToBelow(b: Box, level: number): boolean {
+  return b.level < level && level <= b.levelTo && b.roomType !== "stair";
+}
+
 /** Sub-meter gap to the nearest facing neighbour along one axis, if any. */
 export function findNearestGapDelta(el: Box, live: Box[], axis: "x" | "y"): number | null {
   const r = rectOf(el);
