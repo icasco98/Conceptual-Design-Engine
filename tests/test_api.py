@@ -74,3 +74,20 @@ def test_updating_a_missing_layout_is_a_404(client):
 def test_storeys_must_be_at_least_one(client):
     response = client.post("/api/projects", json={"name": "x", "boxes": [], "arrows": [], "storeys": 0})
     assert response.status_code == 422
+
+
+SAMPLE_PLOT = {"on": True, "left": 0, "top": 0, "width": 18.0, "depth": 30.0}
+
+
+def test_the_plot_is_saved_with_the_layout(client):
+    body = {"name": "Corner site", "boxes": [SAMPLE_BOX], "arrows": [], "storeys": 1, "plot": SAMPLE_PLOT}
+    pid = client.post("/api/projects", json=body).json()["id"]
+    assert client.get(f"/api/projects/{pid}").json()["plot"] == SAMPLE_PLOT
+
+
+def test_a_layout_saved_before_the_plot_existed_still_loads(client):
+    # No plot in the body at all. It comes back as null and the browser
+    # opens it with the boundary switched off, exactly as it behaved then.
+    body = {"name": "Older layout", "boxes": [SAMPLE_BOX], "arrows": [], "storeys": 1}
+    pid = client.post("/api/projects", json=body).json()["id"]
+    assert client.get(f"/api/projects/{pid}").json()["plot"] is None

@@ -2,8 +2,9 @@
  * The canvas's own data model, in PLAN FRAME meters.
  *
  * Plan frame: x runs right, y runs DOWN the screen, origin at the top-left
- * of the sheet. There is no site and no setback line in this tool: the
- * sheet is an unbounded drawing surface and a box may sit anywhere on it.
+ * of the sheet. The sheet itself is an unbounded drawing surface. The one
+ * boundary that can exist is the plot (`Plot`, geometry/plot.ts), and only
+ * while it is switched on; with it off a box may still sit anywhere.
  * Every module under geometry/ works in this frame and nothing else, and
  * because nothing outside the browser owns the arrangement any more there
  * is no second frame to convert to.
@@ -60,6 +61,21 @@ export interface Box {
   deleted: boolean;
   /** Where the sample put it, for Reset. */
   initial: Rect;
+}
+
+/**
+ * The site boundary. `on` is the checkbox: off, it is a faint rectangle
+ * to draw against and nothing more (which is all the sheet ever was);
+ * on, it is a hard wall no zone can be dragged, turned or resized
+ * through. Rectangular for now -- an irregular lot is the same machinery
+ * against sloped edges, and a later step.
+ */
+export interface Plot {
+  on: boolean;
+  left: number;
+  top: number;
+  width: number;
+  depth: number;
 }
 
 /** Oriented bounding box: center, half extents, and its own unit axes. */

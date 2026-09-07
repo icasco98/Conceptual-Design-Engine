@@ -12,11 +12,12 @@ import { api } from "../api/client";
 import type { ProjectSummary } from "../api/types";
 import { nearestWallPoint, newArrowId, suggestArrows } from "../geometry/arrows";
 import { carveWith, releaseCarve } from "../geometry/carve";
+import { clampGroup, settleInPlot } from "../geometry/plot";
 import { isOpenToBelow, liveBoxes } from "../geometry/snap";
 import { touchSelected } from "../geometry/touch";
-import type { Arrow, Box, BoxShape, Point } from "../geometry/types";
+import type { Arrow, Box, BoxShape, Plot, Point } from "../geometry/types";
 import { roomTypeInfo } from "../rooms";
-import { DEFAULT_PRIORITY, SAMPLE_STOREYS, STOREY_HEIGHT_M, sampleBoxes, storeysSpanned } from "../sample";
+import { DEFAULT_PLOT, DEFAULT_PRIORITY, SAMPLE_STOREYS, STOREY_HEIGHT_M, sampleBoxes, storeysSpanned } from "../sample";
 
 /** What undo restores. The camera, the selection and the toggles are not
  * in it: undo is for the drawing, not for where you were looking. */
@@ -24,6 +25,10 @@ interface Snapshot {
   boxes: Box[];
   arrows: Arrow[];
   storeys: number;
+  /** Resizing the plot, or switching it on, is an edit to the drawing
+   * like any other: it changes where zones may be, so it belongs in the
+   * same history as moving one. */
+  plot: Plot;
 }
 
 /** How many steps back you can go. */
@@ -44,6 +49,11 @@ export interface State {
   recommended: Box[];
   recommendedArrows: Arrow[];
   storeys: number;
+  /** The site boundary. While `plot.on`, no gesture may take a zone
+   * across it (geometry/plot.ts). */
+  plot: Plot;
+  /** What Reset returns the boundary to. */
+  recommendedPlot: Plot;
   level: number;
   selected: string[];
   /** The one arrow selected, if any. Zones and arrows select separately. */
@@ -96,6 +106,11 @@ export interface State {
   remember: () => void;
   undo: () => void;
   redo: () => void;
+  /** Change the boundary: its size, its position, or whether it binds.
+   * Zones already outside are never moved by this -- they are flagged
+   * (geometry/plot.ts, rule 3). */
+  setPlot: (patch: Partial<Plot>) => void;
+  togglePlot: () => void;
   addStorey: () => void;
   /** Remove the top storey, if nothing is up there. */
   removeStorey: () => void;
@@ -143,6 +158,8 @@ export const useStore = create<State>((set, get) => ({
   recommended: [],
   recommendedArrows: [],
   storeys: SAMPLE_STOREYS,
+  plot: DEFAULT_PLOT,
+  recommendedPlot: DEFAULT_PLOT,
   level: 0,
   selected: [],
   selectedArrow: null,
@@ -186,6 +203,8 @@ export const useStore = create<State>((set, get) => ({
       recommended: boxes,
       recommendedArrows: arrows,
       storeys: SAMPLE_STOREYS,
+      plot: DEFAULT_PLOT,
+      recommendedPlot: DEFAULT_PLOT,
       selected: [],
       selectedArrow: null,
       level: 0,
@@ -267,9 +286,14 @@ export const useStore = create<State>((set, get) => ({
       next = { ...next, levelTo: next.level + storeysSpanned(next.heightM) - 1 };
       return next;
     });
+    // A size or an angle typed here is held inside the plot exactly as a
+    // drag would be: the schedule must not be a way around the boundary.
+    const plot = get().plot;
+    const before = get().boxes.find((b) => b.id === id);
+    const settled = before ? boxes.map((b) => (b.id === id ? settleInPlot(before, b, plot) : b)) : boxes;
     // A zone that grew taller than the top storey opens a storey above.
-    const storeys = storeysFor(boxes, get().storeys);
-    const moved = boxes.find((b) => b.id === id);
+    const storeys = storeysFor(settled, get().storeys);
+    const moved = settled.find((b) => b.id === id);
     let arrows = get().arrows;
     if (moved) {
       // An arrow follows its host between floors...
@@ -277,7 +301,7 @@ export const useStore = create<State>((set, get) => ({
       // ...and loses its place if the zone became a void on that floor.
       arrows = arrows.filter((a) => a.hostId !== id || !isOpenToBelow(moved, a.level));
     }
-    set({ boxes, storeys, arrows });
+    set({ boxes: settled, storeys, arrows });
   },
 
   deleteBoxes(ids) {
@@ -297,7 +321,10 @@ export const useStore = create<State>((set, get) => ({
     get().remember();
     const settled = touchSelected(liveBoxes(boxes, level), selected);
     const byId = new Map(settled.map((b) => [b.id, b]));
-    set({ boxes: boxes.map((b) => byId.get(b.id) ?? b) });
+    const merged = boxes.map((b) => byId.get(b.id) ?? b);
+    // Closing a gap can push a zone through the boundary; the group comes
+    // back in as one, so the gaps it just closed stay closed.
+    set({ boxes: clampGroup(merged, selected, get().plot) });
   },
 
   addArrow(hostId, at) {
@@ -364,22 +391,29 @@ export const useStore = create<State>((set, get) => ({
   resetLayout() {
     get().remember();
     const boxes = get().recommended;
-    set({ boxes, arrows: get().recommendedArrows, storeys: storeysFor(boxes, SAMPLE_STOREYS), selected: [], selectedArrow: null });
+    set({
+      boxes,
+      arrows: get().recommendedArrows,
+      plot: get().recommendedPlot,
+      storeys: storeysFor(boxes, SAMPLE_STOREYS),
+      selected: [],
+      selectedArrow: null,
+    });
   },
 
   remember() {
-    const { boxes, arrows, storeys, past } = get();
-    set({ past: [...past.slice(-(HISTORY_MAX - 1)), { boxes, arrows, storeys }], future: [] });
+    const { boxes, arrows, storeys, plot, past } = get();
+    set({ past: [...past.slice(-(HISTORY_MAX - 1)), { boxes, arrows, storeys, plot }], future: [] });
   },
 
   undo() {
-    const { past, future, boxes, arrows, storeys, level } = get();
+    const { past, future, boxes, arrows, storeys, plot, level } = get();
     if (!past.length) return;
     const prev = past[past.length - 1];
     set({
       ...prev,
       past: past.slice(0, -1),
-      future: [...future, { boxes, arrows, storeys }],
+      future: [...future, { boxes, arrows, storeys, plot }],
       level: Math.min(level, prev.storeys - 1),
       selected: [],
       selectedArrow: null,
@@ -387,17 +421,31 @@ export const useStore = create<State>((set, get) => ({
   },
 
   redo() {
-    const { past, future, boxes, arrows, storeys, level } = get();
+    const { past, future, boxes, arrows, storeys, plot, level } = get();
     if (!future.length) return;
     const next = future[future.length - 1];
     set({
       ...next,
       future: future.slice(0, -1),
-      past: [...past, { boxes, arrows, storeys }],
+      past: [...past, { boxes, arrows, storeys, plot }],
       level: Math.min(level, next.storeys - 1),
       selected: [],
       selectedArrow: null,
     });
+  },
+
+  setPlot(patch) {
+    get().remember();
+    const plot = { ...get().plot, ...patch };
+    // Nothing is dragged in. A zone already over the line stays where it
+    // is and is flagged: the tool moves what you are holding and nothing
+    // else, and switching a boundary on is not a licence to rearrange a
+    // drawing the person has not asked about.
+    set({ plot });
+  },
+
+  togglePlot() {
+    get().setPlot({ on: !get().plot.on });
   },
 
   addStorey() {
@@ -449,8 +497,8 @@ export const useStore = create<State>((set, get) => ({
   },
 
   async saveProject(name) {
-    const { boxes, arrows, storeys, savedId } = get();
-    const body = { name, boxes, arrows, storeys };
+    const { boxes, arrows, storeys, plot, savedId } = get();
+    const body = { name, boxes, arrows, storeys, plot };
     try {
       const saved = savedId ? await api.updateProject(savedId, body) : await api.createProject(body);
       set({ savedId: saved.id, savedName: saved.name });
@@ -468,11 +516,16 @@ export const useStore = create<State>((set, get) => ({
       const boxes = saved.boxes.map(normalise);
       const arrows = saved.arrows ?? [];
       const storeys = storeysFor(boxes, saved.storeys);
+      // Layouts saved before the plot existed have none; they open on the
+      // sheet's rectangle, switched off, exactly as they behaved then.
+      const plot = saved.plot ?? DEFAULT_PLOT;
       set({
         boxes,
         arrows,
         recommended: boxes,
         recommendedArrows: arrows,
+        plot,
+        recommendedPlot: plot,
         storeys,
         level: Math.min(get().level, Math.max(0, storeys - 1)),
         selected: [],

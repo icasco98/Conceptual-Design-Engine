@@ -25,6 +25,9 @@ export const INK = {
   dim: "#7C8079",
   /** A room cut below its minimum, or in two. */
   flag: "#C0392B",
+  /** The plot boundary, while it binds. Near-black rather than another
+   *  colour: it is the edge of the site, not another kind of room. */
+  plot: "#2B3A34",
 } as const;
 
 export function fillFor(roomType: string, kind: "room" | "corridor"): string {

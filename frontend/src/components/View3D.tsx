@@ -44,6 +44,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
 import { displayShapes, type DisplayShape } from "../geometry/carve";
 import { footprintRings } from "../geometry/footprint";
+import { clampGroup, plotBottom, plotRight } from "../geometry/plot";
 import { polyOfBox } from "../geometry/poly";
 import { liveBoxes, snapToGrid } from "../geometry/snap";
 import type { Box, Poly } from "../geometry/types";
@@ -52,6 +53,10 @@ import { SHEET, STOREY_HEIGHT_M } from "../sample";
 import { useStore } from "../state/store";
 
 const SLAB = 0.22;
+/** The plot kerb: thin and ankle-high. Enough to read as a boundary from
+ *  any angle, low enough never to hide a room behind it. */
+const KERB = 0.18;
+const KERB_H = 0.35;
 /** The one grey the massing volume is made of, lit rather than shaded flat. */
 const MASS = "#9aa1a6";
 /** A drag longer than this many pixels is an orbit, not a click. */
@@ -95,6 +100,7 @@ export function View3D() {
   const selected = useStore((s) => s.selected);
   const massing = useStore((s) => s.massing);
   const autoCarve = useStore((s) => s.autoCarve);
+  const plot = useStore((s) => s.plot);
 
   const mount = useRef<HTMLDivElement>(null);
   const building = useRef<THREE.Group>();
@@ -191,8 +197,14 @@ export function View3D() {
         dx = snapToGrid(lead.left + dx) - lead.left;
         dy = snapToGrid(lead.top + dy) - lead.top;
       }
+      // The plot binds here exactly as it does on the plan: a zone pushed
+      // across the site line in 3D stops against the kerb.
       useStore.getState().setBoxes(
-        drag.snapshot.map((b) => (ids.has(b.id) ? { ...b, left: b.left + dx, top: b.top + dy } : b)),
+        clampGroup(
+          drag.snapshot.map((b) => (ids.has(b.id) ? { ...b, left: b.left + dx, top: b.top + dy } : b)),
+          ids,
+          useStore.getState().plot,
+        ),
       );
     };
 
@@ -308,14 +320,42 @@ export function View3D() {
       else mat?.dispose();
     }
 
-    // The sheet, as the ground.
+    // The ground: the sheet, stretched to hold the plot if the plot is
+    // the larger of the two, so a site is never drawn off the edge of it.
+    const gw = Math.max(SHEET.width, plotRight(plot));
+    const gd = Math.max(SHEET.depth, plotBottom(plot));
     const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(SHEET.width, SHEET.depth),
+      new THREE.PlaneGeometry(gw, gd),
       new THREE.MeshLambertMaterial({ color: "#e7e4da" }),
     );
     ground.rotation.x = -Math.PI / 2;
-    ground.position.set(SHEET.width / 2, -0.01, SHEET.depth / 2);
+    ground.position.set(gw / 2, -0.01, gd / 2);
     group.add(ground);
+
+    // The plot: a paler slab over the ground, and while it binds a low
+    // kerb around it, so the boundary reads as an edge in three
+    // dimensions rather than as a line someone drew on the plan.
+    const site = new THREE.Mesh(
+      new THREE.PlaneGeometry(plot.width, plot.depth),
+      new THREE.MeshLambertMaterial({ color: plot.on ? "#f2efe6" : "#ebe8de" }),
+    );
+    site.rotation.x = -Math.PI / 2;
+    site.position.set(plot.left + plot.width / 2, 0, plot.top + plot.depth / 2);
+    group.add(site);
+    if (plot.on) {
+      const kerbMat = new THREE.MeshLambertMaterial({ color: "#6f7a72" });
+      const walls: [number, number, number, number][] = [
+        [plot.width + KERB, KERB, plot.left + plot.width / 2, plot.top],
+        [plot.width + KERB, KERB, plot.left + plot.width / 2, plotBottom(plot)],
+        [KERB, plot.depth + KERB, plot.left, plot.top + plot.depth / 2],
+        [KERB, plot.depth + KERB, plotRight(plot), plot.top + plot.depth / 2],
+      ];
+      for (const [w, d, cx, cz] of walls) {
+        const kerb = new THREE.Mesh(new THREE.BoxGeometry(w, KERB_H, d), kerbMat);
+        kerb.position.set(cx, KERB_H / 2, cz);
+        group.add(kerb);
+      }
+    }
 
     // Each storey's drawn shapes, computed once: the carve on a storey
     // depends on what else is on that storey.
@@ -391,7 +431,7 @@ export function View3D() {
         );
       }
     }
-  }, [boxes, storeys, level, storeyH, selected, massing, autoCarve]);
+  }, [boxes, storeys, level, storeyH, selected, massing, autoCarve, plot]);
 
   return <div className="view3d" ref={mount} />;
 }

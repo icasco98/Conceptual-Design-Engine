@@ -25,6 +25,7 @@ import {
   IconUndo,
 } from "./components/icons";
 import { Massing } from "./components/Massing";
+import { PlotPanel } from "./components/PlotPanel";
 import { Schedule } from "./components/Schedule";
 import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
@@ -233,6 +234,7 @@ export default function App() {
             <div className="label">Room schedule</div>
             <Schedule />
           </div>
+          <PlotPanel />
           <Sidebar />
         </div>
       </div>

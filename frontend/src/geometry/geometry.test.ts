@@ -4,11 +4,12 @@ import { carveWith, displayShapes, releaseCarve, shapeStillUsable, subtractKeepL
 import { arrowSegment, nearestWallPoint, suggestArrows } from "./arrows";
 import { touchingEdge } from "./doors";
 import { footprintRings } from "./footprint";
+import { clampDrawnRect, clampGroup, isOutsidePlot, limitGrowth, settleInPlot, shiftInside } from "./plot";
 import { polyArea, polyOfBox, rectPolyOf } from "./poly";
 import { boxesTrulyIntersect, obbOf, obbsSeparated } from "./rect";
 import { isOpenToBelow, liveBoxes, snapToGrid, snapToNearbyNeighbors } from "./snap";
 import { polyGap, touchDelta, touchSelected } from "./touch";
-import type { Box } from "./types";
+import type { Box, Plot } from "./types";
 
 function box(partial: Partial<Box> & { id: string; left: number; top: number; width: number; height: number }): Box {
   return {
@@ -418,5 +419,114 @@ describe("vertical masses", () => {
     expect(pierces(1)).toBe(1);
     expect(pierces(2)).toBe(1);
     expect(pierces(3)).toBe(0);
+  });
+});
+
+describe("the plot as a boundary", () => {
+  /** A 20 x 12 m site at the sheet's origin, binding. */
+  const plot: Plot = { on: true, left: 0, top: 0, width: 20, depth: 12 };
+  const off: Plot = { ...plot, on: false };
+
+  it("leaves a zone alone while the boundary is switched off", () => {
+    const b = box({ id: "a", left: 30, top: 30, width: 4, height: 3 });
+    expect(isOutsidePlot(b, off)).toBe(false);
+    expect(clampGroup([b], ["a"], off)).toEqual([b]);
+  });
+
+  it("stops a zone at the wall it is dragged into", () => {
+    // Pushed 4 m past the right-hand edge: it comes back exactly 4 m.
+    const b = box({ id: "a", left: 20, top: 4, width: 4, height: 3 });
+    const [moved] = clampGroup([b], ["a"], plot);
+    expect(moved.left).toBeCloseTo(16, 6);
+    // ...and not at all on the axis it never crossed.
+    expect(moved.top).toBeCloseTo(4, 6);
+  });
+
+  it("clamps a selection as one rigid body, so it does not deform", () => {
+    // Two zones 1 m apart, dragged together past the bottom edge. Both
+    // must move by the same amount or the gap between them changes.
+    const a = box({ id: "a", left: 2, top: 10, width: 3, height: 3 });
+    const b = box({ id: "b", left: 6, top: 10, width: 3, height: 5 });
+    const out = clampGroup([a, b], ["a", "b"], plot);
+    const da = out[0].top - a.top;
+    const db = out[1].top - b.top;
+    expect(da).toBeCloseTo(db, 6);
+    // The lower of the two ends flush against the boundary.
+    expect(out[1].top + out[1].height).toBeCloseTo(12, 6);
+  });
+
+  it("holds a turned zone by its corners, not by its rectangle", () => {
+    // A 4 x 4 square at 45 degrees reaches 2.83 m from its centre, not
+    // 2 m. Sat against the left edge upright it fits; turned it does not.
+    const upright = box({ id: "a", left: 0, top: 4, width: 4, height: 4 });
+    expect(isOutsidePlot(upright, plot)).toBe(false);
+    const turned = { ...upright, rotation: 45 };
+    expect(isOutsidePlot(turned, plot)).toBe(true);
+    const [slid] = clampGroup([turned], ["a"], plot);
+    expect(isOutsidePlot(slid, plot)).toBe(false);
+    // It slid in rather than being refused the rotation.
+    expect(slid.rotation).toBe(45);
+    expect(slid.left).toBeGreaterThan(upright.left);
+  });
+
+  it("does not fight a zone too big for the plot: it flags it instead", () => {
+    const huge = box({ id: "a", left: -5, top: 2, width: 40, height: 4 });
+    expect(isOutsidePlot(huge, plot)).toBe(true);
+    // Nothing to be done on x -- it cannot fit -- so x is left alone.
+    const [same] = clampGroup([huge], ["a"], plot);
+    expect(same.left).toBeCloseTo(-5, 6);
+  });
+
+  it("stops a resize at the wall without moving the anchored corner", () => {
+    const from = box({ id: "a", left: 16, top: 2, width: 3, height: 3 });
+    // Dragged out to 9 m wide, which would take it 5 m past the edge.
+    const to = { ...from, width: 9 };
+    const held = limitGrowth(from, to, plot, "inside");
+    expect(held.left).toBeCloseTo(16, 6);
+    // 4 m to the millimetre: the bisection is allowed to settle within
+    // plot.ts's own tolerance of the wall, and no further.
+    expect(held.width).toBeCloseTo(4, 2);
+    expect(isOutsidePlot(held, plot)).toBe(false);
+  });
+
+  it("lets a resize that stays inside through untouched", () => {
+    const from = box({ id: "a", left: 2, top: 2, width: 3, height: 3 });
+    const to = { ...from, width: 6 };
+    expect(limitGrowth(from, to, plot, "inside")).toEqual(to);
+  });
+
+  it("leaves a zone that was already outside to be edited freely", () => {
+    // Rule 3: it was not put there by this edit, so this edit does not
+    // take it over. Moving it in is the person's to do.
+    const from = box({ id: "a", left: 40, top: 40, width: 3, height: 3 });
+    const to = { ...from, width: 9 };
+    expect(limitGrowth(from, to, plot, "inside")).toEqual(to);
+    expect(settleInPlot(from, to, plot)).toEqual(to);
+  });
+
+  it("caps a size typed into the schedule and slides the zone in", () => {
+    // The schedule must obey the same wall as the canvas, or it is a way
+    // around it: 40 m of width in a 20 m plot caps at 20.
+    const from = box({ id: "a", left: 6, top: 2, width: 3, height: 3 });
+    const settled = settleInPlot(from, { ...from, width: 40 }, plot);
+    expect(settled.width).toBeCloseTo(20, 2);
+    expect(isOutsidePlot(settled, plot)).toBe(false);
+  });
+
+  it("cuts a zone being drawn back to the boundary", () => {
+    const r = clampDrawnRect({ left: 17, top: 10, width: 8, height: 6 }, plot);
+    expect(r).toEqual({ left: 17, top: 10, width: 3, height: 2 });
+  });
+
+  it("takes the offset of a plot that does not start at the origin", () => {
+    const offset: Plot = { on: true, left: 4, top: 3, width: 10, depth: 8 };
+    const b = box({ id: "a", left: 0, top: 0, width: 2, height: 2 });
+    const [moved] = clampGroup([b], ["a"], offset);
+    expect(moved.left).toBeCloseTo(4, 6);
+    expect(moved.top).toBeCloseTo(3, 6);
+  });
+
+  it("reports no shift for a zone already inside", () => {
+    expect(shiftInside(polyOfBox(box({ id: "a", left: 5, top: 5, width: 2, height: 2 })), plot)).toEqual([0, 0]);
   });
 });

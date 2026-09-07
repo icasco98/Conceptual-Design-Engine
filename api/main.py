@@ -66,6 +66,10 @@ class SavedProjectIn(BaseModel):
     boxes: list[dict[str, Any]] = Field(default_factory=list)
     arrows: list[dict[str, Any]] = Field(default_factory=list)
     storeys: int = Field(default=1, ge=1)
+    # The site boundary, when the layout has one. Optional so that layouts
+    # saved before the plot existed still load; the browser opens those
+    # with the boundary switched off.
+    plot: dict[str, Any] | None = None
 
 
 class SavedProjectOut(SavedProjectIn):

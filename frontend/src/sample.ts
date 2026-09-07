@@ -13,7 +13,7 @@
  *
  * "Reset to the sample layout" brings all of this back.
  */
-import type { Box, BoxKind, Rect } from "./geometry/types";
+import type { Box, BoxKind, Plot, Rect } from "./geometry/types";
 import { roomTypeInfo } from "./rooms";
 
 /** Priority when nothing else is said: see `Box.priority`. Circulation
@@ -37,8 +37,14 @@ export function storeysSpanned(heightM: number): number {
 
 /** The drawing sheet. Purely a reference area — a faint rectangle on the
  *  plan and the ground plane under the 3D — and nothing stops a room being
- *  drawn outside it. */
+ *  drawn outside it. To constrain a layout, switch the plot on instead. */
 export const SHEET = { width: 24, depth: 18 };
+
+/** The plot a project starts with: the sheet's own rectangle, switched
+ *  off. Off is the only honest default — the tool cannot know the site
+ *  until someone types it in, and a boundary invented for them would
+ *  fence a layout in for no reason. */
+export const DEFAULT_PLOT: Plot = { on: false, left: 0, top: 0, width: SHEET.width, depth: SHEET.depth };
 
 /** Where the sample house's own origin sits on the sheet. */
 const OX = 6.5;

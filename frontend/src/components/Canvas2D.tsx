@@ -19,9 +19,16 @@
  * selected zone (top-left) cuts every zone under it; pressing it again
  * releases the cut. A zone cut below its minimum is outlined in red.
  *
- * There is no site and no setback line. The sheet is a faint rectangle
- * for reference and the ground plane of the 3D view; a zone may be drawn
- * anywhere, on it or off it.
+ * The plot is the one boundary. Switched off it is a faint rectangle for
+ * reference, like the sheet, and a zone may be drawn anywhere. Switched
+ * on it is a hard wall: every gesture here -- move, resize, rotate, draw
+ * -- ends by asking geometry/plot.ts for the correction, so a zone stops
+ * against the line while you are still dragging rather than being told
+ * off after the fact. A selection is held in as one rigid body, so the
+ * arrangement inside it never deforms against the wall, and a rotation is
+ * never blocked: the zone turns to any angle and slides in far enough to
+ * stay inside. A zone that was already outside when the boundary was
+ * switched on is outlined, not moved.
  *
  * All geometry is in plan-frame meters (geometry/types.ts). The SVG's
  * inner group scales meters to pixels, so pointer positions are read back
@@ -36,6 +43,7 @@ import type { CategoryKey } from "../api/types";
 import { arrowSegment } from "../geometry/arrows";
 import { displayShapes } from "../geometry/carve";
 import { footprintRings, ringsToPath } from "../geometry/footprint";
+import { clampDrawnRect, clampGroup, isOutsidePlot, limitGrowth, plotBottom, plotRight } from "../geometry/plot";
 import { polyArea, polyOfBox } from "../geometry/poly";
 import { isOpenToBelow, liveBoxes, snapToGrid, snapToNearbyNeighbors } from "../geometry/snap";
 import { GRID_M, type Arrow, type Box, type Poly, type Rect } from "../geometry/types";
@@ -122,6 +130,7 @@ export function Canvas2D() {
   const autoCarve = useStore((s) => s.autoCarve);
   const storeys = useStore((s) => s.storeys);
   const remember = useStore((s) => s.remember);
+  const plot = useStore((s) => s.plot);
   const arrows = useStore((s) => s.arrows);
   const selectedArrow = useStore((s) => s.selectedArrow);
   const selectArrow = useStore((s) => s.selectArrow);
@@ -169,8 +178,10 @@ export function Canvas2D() {
     return arrows.filter((a) => a.level === level && here.has(a.hostId)).map((a) => ({ arrow: a, host: here.get(a.hostId)! }));
   }, [arrows, live, level]);
 
-  const width = SHEET.width;
-  const depth = SHEET.depth;
+  // The sheet is the drawing surface; it stretches to hold the plot so a
+  // site larger than the default 24 x 18 m is never drawn off the edge.
+  const width = Math.max(SHEET.width, plotRight(plot));
+  const depth = Math.max(SHEET.depth, plotBottom(plot));
   const svgW = width * PX + MARGIN * 2;
   const svgH = depth * PX + MARGIN + HEADROOM + GUTTER_B;
 
@@ -193,6 +204,11 @@ export function Canvas2D() {
   );
   const mergeRef = useRef(mergeLevel);
   mergeRef.current = mergeLevel;
+  // The gesture runs in a requestAnimationFrame closure that outlives the
+  // render it was made in; a ref keeps it reading the live boundary
+  // rather than the one in force when the drag started.
+  const plotRef = useRef(plot);
+  plotRef.current = plot;
 
   // ---- gestures ---------------------------------------------------------
 
@@ -220,7 +236,9 @@ export function Canvas2D() {
         const snapped = snapToNearbyNeighbors(me, moved);
         moved = moved.map((b) => (b.id === me.id ? snapped : b));
       }
-      setBoxes(mergeRef.current(moved));
+      // Last, because the gap snap above can pull a zone up to a metre and
+      // would otherwise put it through the wall it was just held behind.
+      setBoxes(mergeRef.current(clampGroup(moved, g.ids, plotRef.current)));
     } else if (g.kind === "resize") {
       const restored = g.snapshot;
       const box = restored.find((b) => b.id === g.id)!;
@@ -245,7 +263,9 @@ export function Canvas2D() {
         h = Math.max(box.minHeight, g.start.top + g.start.height - newTop);
         top = g.start.top + g.start.height - h;
       }
-      const next = { ...box, left, top, width: w, height: h };
+      // Held to what the plot allows from where the zone started, so the
+      // corner you are not dragging stays exactly where it is.
+      const next = limitGrowth(box, { ...box, left, top, width: w, height: h }, plotRef.current, "inside");
       setBoxes(mergeRef.current(restored.map((b) => (b.id === g.id ? next : b))));
     } else if (g.kind === "rotate") {
       const restored = g.snapshot;
@@ -268,7 +288,11 @@ export function Canvas2D() {
         const ncy = g.cy + ox * sin + oy * cos;
         return { ...b, rotation: (((b.rotation + delta) % 360) + 360) % 360, left: ncx - b.width / 2, top: ncy - b.height / 2 };
       });
-      setBoxes(mergeRef.current(turned));
+      // A turned rectangle reaches further than an upright one -- a 4 x 6 m
+      // room at 45 degrees needs 7.1 m of width -- so a zone that fitted
+      // snugly can stop fitting purely by turning. The turn is never
+      // refused: it happens, and the zone slides in to make room for it.
+      setBoxes(mergeRef.current(clampGroup(turned, g.ids, plotRef.current)));
     } else if (g.kind === "arrow") {
       moveArrow(g.id, [p.x, p.y]);
     } else if (g.kind === "marquee") {
@@ -282,7 +306,7 @@ export function Canvas2D() {
       if (p.shift || g.shape === "circle") w = h = Math.max(w, h);
       const left = x1 < g.x0 ? g.x0 - w : g.x0;
       const top = y1 < g.y0 ? g.y0 - h : g.y0;
-      setRubber({ left, top, width: w, height: h });
+      setRubber(clampDrawnRect({ left, top, width: w, height: h }, plotRef.current));
     }
   }, [moveArrow, setBoxes, setRubber]);
 
@@ -622,9 +646,32 @@ export function Canvas2D() {
         </defs>
         <g transform={`translate(${cam.x} ${cam.y}) scale(${cam.z})`} pointerEvents="none">
         <g ref={gRef} transform={`translate(${MARGIN} ${MARGIN + HEADROOM}) scale(${PX})`}>
-          {/* the sheet: a reference area, not a boundary */}
+          {/* the sheet: a reference area, never a boundary */}
           <rect x={0} y={0} width={width} height={depth} fill={INK.sheet} stroke={INK.site} strokeWidth={0.04} strokeDasharray="0.3 0.3" />
           {showGrid && <rect x={0} y={0} width={width} height={depth} fill="url(#grid)" />}
+          {/* the plot. Switched off it is a dashed hint like the sheet;
+              switched on the ground beyond it is greyed and its line is
+              solid and heavy, so the wall is visible before you meet it. */}
+          {plot.on && (
+            <path
+              className="plot-beyond"
+              fillRule="evenodd"
+              d={`M0 0H${width}V${depth}H0Z M${plot.left} ${plot.top}H${plotRight(plot)}V${plotBottom(plot)}H${plot.left}Z`}
+              fill={INK.site}
+              fillOpacity={0.34}
+            />
+          )}
+          <rect
+            className={`plot ${plot.on ? "on" : ""}`}
+            x={plot.left}
+            y={plot.top}
+            width={plot.width}
+            height={plot.depth}
+            fill="none"
+            stroke={plot.on ? INK.plot : INK.site}
+            strokeWidth={plot.on ? 0.16 : 0.05}
+            strokeDasharray={plot.on ? undefined : "0.5 0.35"}
+          />
           {/* the outlines of the storeys below and above */}
           {belowOutline && (
             <path d={belowOutline} className="ghost below" fill="none" stroke="#8a8f8b" strokeWidth={0.07} strokeDasharray="0.45 0.25" strokeLinejoin="round" />
@@ -648,6 +695,10 @@ export function Canvas2D() {
             const isSel = selected.includes(b.id);
             const solo = isSel && selected.length === 1;
             const flagged = shape?.flagged ?? false;
+            // Outside the plot: only possible for a zone that was already
+            // there when the boundary was switched on, or one too big to
+            // fit inside it. Marked, never dragged in (geometry/plot.ts).
+            const outside = isOutsidePlot(b, plot);
             const carving = carvesSomething(b);
             // Above its own floor a tall zone is the void it leaves, not
             // a room: crossed through, named, and no door leads into it.
@@ -666,7 +717,7 @@ export function Canvas2D() {
             return (
               <g
                 key={b.id}
-                className={`box ${b.kind} ${b.isEntry ? "entry" : ""} ${isSel ? "selected" : ""} ${shape?.carved ? "carved" : ""} ${flagged ? "flagged" : ""} ${openBelow ? "open-below" : ""}`}
+                className={`box ${b.kind} ${b.isEntry ? "entry" : ""} ${isSel ? "selected" : ""} ${shape?.carved ? "carved" : ""} ${flagged ? "flagged" : ""} ${outside ? "outside-plot" : ""} ${openBelow ? "open-below" : ""}`}
                 transform={`rotate(${b.rotation} ${cx} ${cy})`}
                 pointerEvents="all"
                 onPointerDown={(e) => startMove(e, b)}
@@ -675,9 +726,11 @@ export function Canvas2D() {
                   points={pointsOf(poly)}
                   fill={b.kind === "corridor" ? "url(#hatch)" : fill}
                   fillOpacity={b.kind === "corridor" ? 1 : isSel ? CATEGORY_WASH * 2 : CATEGORY_WASH}
-                  stroke={flagged ? INK.flag : b.isEntry || isSel ? "#0b0b0b" : INK.room}
-                  strokeWidth={flagged || b.isEntry || isSel ? 0.12 : 0.05}
-                  strokeDasharray={b.isEntry ? "0.35 0.2" : undefined}
+                  stroke={flagged || outside ? INK.flag : b.isEntry || isSel ? "#0b0b0b" : INK.room}
+                  strokeWidth={flagged || outside || b.isEntry || isSel ? 0.12 : 0.05}
+                  // A carve flag is solid; outside the plot is dashed, so
+                  // the two red outlines never say the same thing.
+                  strokeDasharray={outside ? "0.5 0.25" : b.isEntry ? "0.35 0.2" : undefined}
                   strokeLinejoin="round"
                 />
                 {b.kind === "corridor" && (

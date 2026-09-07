@@ -4,7 +4,8 @@ Written for whoever picks this up next, human or Claude. The README says
 what the tool is and how to run it; this file says *where the work
 stands* and what to be careful of.
 
-Branch: `claude/zoning-editor-rebuild-shnp69`. It was forked from
+Branch: `claude/plot-size-constraint-rd7fs2`, forked from `main` at
+"Name the tool CDE non Interactive". Before it, `claude/zoning-editor-rebuild-shnp69`. Both were forked from
 `claude/design-engine-tool-access-92y89p`, which still holds the full
 generating version (Claude intake, packers, planner, access and stacking
 checks, site and setbacks). Do not develop there; do not delete it either
@@ -138,6 +139,49 @@ so once stages 2–5 produce polygons it should follow with little change.
 Circles will need their extrusion drawn from the polygon rather than
 `BoxGeometry`.
 
+## The plot: done (owner's request)
+
+The sheet had always been decoration — a faint rectangle with nothing
+stopping a room being drawn off it. The owner asked for a checkbox that
+turns it into a real site boundary the zones cannot escape, felt as a
+hard wall when they are moved and turned.
+
+Three decisions were put to the owner before it was built, and these are
+the answers, not guesses:
+
+- **A rotation is never blocked.** The zone turns to any angle and slides
+  inward far enough to stay inside. Stopping the turn at the wall was the
+  more literal reading of "hard wall" and was rejected: a snug zone would
+  barely rotate at all, which reads as the tool being stuck.
+- **Switching the boundary on moves nothing.** Zones already over the
+  line are outlined and named; they stay put until they are picked up.
+  Pulling them all in on one click would have rearranged a drawing the
+  person had not asked about.
+- **The plot is a rectangle**, width, depth and offset typed in. An
+  irregular lot — corner plots, angled streets — is the same machinery
+  against sloped edges, and the obvious next step.
+
+Everything lives in `geometry/plot.ts`, whose header states the three
+rules the rest of the code depends on. The five gestures that can move a
+zone all end by asking it for the correction: move, resize, rotate and
+draw in `Canvas2D.tsx`, the 3D drag in `View3D.tsx`, plus `updateBox` in
+the store for anything typed into the schedule. `touchSelected` too — the
+magnet can close a gap by pushing a zone through the wall.
+
+Verified in a browser (headless Chromium against the built app): with the
+boundary on, a zone dragged hard at the bottom-right corner stops at
+exactly x=24, y=18 and keeps its size; the Living Room, tightened against
+an 18 m plot, rotates to 39° and its swept corner lands on 18.00 rather
+than through it; switching the boundary on under a house that does not fit
+moves no zone at all and outlines the fifteen that are outside; coverage
+reads in the status bar. No console errors. Tests: 6 Python, 55
+TypeScript, all passing; ruff and tsc clean.
+
+**Still to do on it, if wanted.** A polygon plot. A "fit the plot to what
+is drawn" button. Setbacks — an inner offset the zones respect while the
+plot edge stays the legal line — which is the natural next boundary now
+that one exists.
+
 ---
 
 ## Gotchas
@@ -146,9 +190,34 @@ Circles will need their extrusion drawn from the polygon rather than
 sheet. The backend stores boxes as the frontend sends them. If a second
 frame ever comes back (a site, an export), convert in one place only.
 
-**The sheet is not a boundary.** `SHEET` in `sample.ts` is a faint
-rectangle and the 3D ground plane. Nothing clamps to it; a room may sit
-outside it.
+**The sheet is not a boundary; the plot is, and only when it is on.**
+`SHEET` in `sample.ts` is still a faint rectangle and the 3D ground
+plane, and nothing ever clamps to it. The one boundary is the plot
+(`Plot` in `geometry/types.ts`, `store.plot`), and it binds only while
+`plot.on`. With it off the tool behaves exactly as it did before the plot
+existed, which is why off is the default and why every function in
+`plot.ts` returns its input unchanged when it is off.
+
+**Every clamp works on the turned outline, never on the rectangle.**
+`polyOfBox`, not `left/top/width/height`. Rotation here is free, and a
+4 x 6 m room at 45 degrees needs 7.1 m of width: a rectangle test would
+let a corner through the wall. This is the single easiest thing to get
+wrong when adding a gesture.
+
+**A selection is clamped as one rigid body.** `clampGroup` takes the
+union of the selection's outlines and returns one shift for all of them.
+Clamping zone by zone would let them meet the wall at different moments
+and drift apart, silently deforming an arrangement. Any new gesture that
+moves several zones must go through `clampGroup`, not through a loop.
+
+**What cannot fit is flagged, never forced.** A zone already outside when
+the boundary was switched on, and a zone too big to fit in the plot at
+all, are left exactly where they are and outlined. That is the same
+promise as the one below about never moving a room on its own: the plot
+constrains the gesture in progress and nothing else. `shiftInside`
+deliberately leaves an axis alone when the extent exceeds the plot on it
+— a tool that kept yanking a zone against a wall it can never satisfy
+would just be fighting the person.
 
 **A tall zone is one box, not one per storey.** It is live on every
 storey it reaches (`liveBoxes`), drawn on each plan, and drawn once in
@@ -174,7 +243,17 @@ stream through `setBoxes` and finish with `commitBoxes`, so by commit
 time the pre-gesture state is gone. That is why `remember()` is public
 and called at pointerdown.
 
-**Rotation is free**, with Shift holding 15-degree steps.
+**Rotation is free**, with Shift holding 15-degree steps. With the plot
+on it stays free: the turn always happens, and the zone slides in
+afterwards. Blocking the rotation was considered and rejected — a snug
+zone would barely turn at all, which reads as the tool being broken.
+
+**The schedule obeys the plot too** (`settleInPlot` in `updateBox`).
+Without it, typing a width is a back door around the boundary. It caps
+the size at what the plot can hold and then slides the zone in, which is
+why it uses the `"extent"` growth test and the canvas resize uses
+`"inside"`: the resize must leave the corner you are not dragging where
+it is, and a typed size has no such corner.
 
 **An arrow is stored in its host's frame, never on the page.** That is
 what keeps it perpendicular and attached through a move, a resize and a

@@ -87,6 +87,24 @@ screen at once, all three readings of the one arrangement.
   a room for you — a room cut below its type's minimum, or cut in two,
   keeps the cut and is outlined in red, named in the status bar, and
   marked with ! in the schedule, for you to resolve.
+- **The plot.** A site boundary with a size you type in, under the
+  schedule. Off by default, it is a dashed rectangle to draw against and
+  nothing more. Tick *Restrict zones to the plot* and it becomes a hard
+  wall: a zone slides until its edge meets the line and then stops dead
+  on that axis while still sliding along the other, a resize stops
+  growing at the boundary with the corner you are not dragging left where
+  it is, and a size typed into the schedule is capped at what the plot
+  can hold — the schedule obeys the same wall as the canvas, or it would
+  be a way around it. A rotation is never refused: a turned rectangle
+  reaches further than an upright one (a 4 x 6 m room at 45° needs 7.1 m
+  of width), so the zone turns to whatever angle you want and slides in
+  far enough to stay inside. A selection is held in as one rigid body, so
+  the arrangement inside it never deforms against the wall. Switching the
+  boundary on moves nothing: zones already over the line, and any zone
+  too big to fit, are outlined in red and named in the status bar, which
+  also reports how much of the site the floor you are looking at covers.
+  The 3D draws the plot as a slab with a low kerb, and a zone dragged in
+  3D stops against it too. The plot is saved with the layout.
 - **Automatic carving.** The toggle on the rail, off by default. With it
   on, a zone is carved by anything it overlaps that has a higher priority
   (1 is the highest; circulation and stairs start at 1, everything else
@@ -195,10 +213,10 @@ typecheck, unit tests and build.
 | Path | Purpose |
 |---|---|
 | `frontend/src/state/store.ts` | The single source of truth for the arrangement. Everything renders from it and every edit goes through it. |
-| `frontend/src/sample.ts` | The hand-placed sample house the editor opens on, and the sheet size. |
+| `frontend/src/sample.ts` | The hand-placed sample house the editor opens on, the sheet size, and the plot a project starts with. |
 | `frontend/src/rooms.ts` | Room types: label, minimum and typical size, zone. The only copy of these numbers. |
-| `frontend/src/geometry/` | The canvas's movement rules as pure functions with unit tests: carve, protect the minimum, push last (`carve.ts`, `resolve.ts`); SAT overlap on rotated shapes (`rect.ts`); polygon booleans (`poly.ts`); footprint union; door arrows; stair shafts for the 3D. |
-| `frontend/src/components/` | `Canvas2D.tsx` (SVG plan, gestures, camera), `View3D.tsx` and `Massing.tsx` (Three.js), `Schedule.tsx`, `Sidebar.tsx` (saved layouts), `StatusBar.tsx`. |
+| `frontend/src/geometry/` | The canvas's movement rules as pure functions with unit tests: carve, protect the minimum, push last (`carve.ts`, `resolve.ts`); SAT overlap on rotated shapes (`rect.ts`); polygon booleans (`poly.ts`); footprint union; door arrows; the plot boundary and the clamps that hold every gesture inside it (`plot.ts`). |
+| `frontend/src/components/` | `Canvas2D.tsx` (SVG plan, gestures, camera), `View3D.tsx` and `Massing.tsx` (Three.js), `Schedule.tsx`, `PlotPanel.tsx` (the site boundary), `Sidebar.tsx` (saved layouts), `StatusBar.tsx`. |
 | `api/` | FastAPI: `/api/health`, `/api/projects` (saved layouts in SQLite, stored as the frontend's own boxes). Serves `frontend/dist` at `/`. |
 | `start.sh` / `start.bat` | One-click local start. |
 | `HANDOFF.md` | Where the work stands and what to be careful of. |
