@@ -301,6 +301,7 @@ button.icon:hover { color: var(--err); }
 .plan-svg .handle.carve { fill: #f2f6f9; cursor: pointer; }
 .plan-svg .handle.flip { fill: #f2f6f9; cursor: pointer; }
 .plan-svg .handle.vertex { fill: #fff; stroke: #2f5d7c; stroke-width: 0.06px; cursor: move; }
+.plan-svg .handle.poly-wall { fill: #eaf1f6; stroke: #2f5d7c; stroke-width: 0.04px; cursor: move; }
 .plan-svg .handle.to-polygon { fill: #f2f6f9; cursor: pointer; }
 .plan-svg .arrow { cursor: grab; }
 .plan-svg .handle.carve.on { fill: #2f5d7c; }

@@ -87,6 +87,7 @@ type Gesture =
   | { kind: "resize"; id: string; corner: Corner; start: Rect; anchor: Point; sx: -1 | 1; sy: -1 | 1; startX: number; startY: number; snapshot: Box[] }
   | { kind: "resize-edge"; id: string; side: "n" | "s" | "e" | "w"; start: Rect; anchor: Point; sx: -1 | 0 | 1; sy: -1 | 0 | 1; startX: number; startY: number; snapshot: Box[] }
   | { kind: "vertex"; id: string; index: number; startX: number; startY: number; snapshot: Box[] }
+  | { kind: "poly-wall"; id: string; i0: number; i1: number; startX: number; startY: number; snapshot: Box[] }
   | { kind: "rotate"; ids: string[]; cx: number; cy: number; startAngle: number; snapshot: Box[] }
   | { kind: "marquee"; x0: number; y0: number; additive: boolean }
   | { kind: "draw"; shape: "rect" | "circle"; x0: number; y0: number }
@@ -239,6 +240,18 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
   );
 
   const live = useMemo(() => liveBoxes(boxes, level), [boxes, level]);
+  // Drawn last, so a selected zone's handles -- which sit in the margin
+  // around it, not always over its own fill -- are never painted over by
+  // a neighbour that happens to come later in `live` and reaches into
+  // that margin. Selection order otherwise follows `live`'s.
+  const renderOrder = useMemo(() => {
+    if (!selected.length) return live;
+    const sel = new Set(selected);
+    const back: Box[] = [];
+    const front: Box[] = [];
+    for (const b of live) (sel.has(b.id) ? front : back).push(b);
+    return back.length && front.length ? [...back, ...front] : live;
+  }, [live, selected]);
   const shapes = useMemo(() => displayShapes(live, autoCarve), [live, autoCarve]);
   const footprint = useMemo(() => ringsToPath(footprintRings(shapes.map((s) => s.page))), [shapes]);
   /** The building outline of the storey below, and of the one above, to
@@ -379,6 +392,15 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
       const fx = Math.min(1, Math.max(0, ofx + dx / box.width));
       const fy = Math.min(1, Math.max(0, ofy + dy / box.height));
       const points = box.points.map((pt, i): Point => (i === g.index ? [fx, fy] : pt));
+      const next = { ...box, points };
+      setBoxes(mergeRef.current(restored.map((b) => (b.id === g.id ? next : b))));
+    } else if (g.kind === "poly-wall") {
+      const restored = g.snapshot;
+      const box = restored.find((b) => b.id === g.id)!;
+      if (!box.points) return;
+      const [dx, dy] = toLocalVector(p.x - g.startX, p.y - g.startY, frameOf(box));
+      const move = (pt: Point): Point => [Math.min(1, Math.max(0, pt[0] + dx / box.width)), Math.min(1, Math.max(0, pt[1] + dy / box.height))];
+      const points = box.points.map((pt, i) => (i === g.i0 || i === g.i1 ? move(pt) : pt));
       const next = { ...box, points };
       setBoxes(mergeRef.current(restored.map((b) => (b.id === g.id ? next : b))));
     } else if (g.kind === "rotate") {
@@ -608,6 +630,19 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
     const p = toMeters(e);
     remember();
     gesture.current = { kind: "vertex", id: b.id, index, startX: p.x, startY: p.y, snapshot: live };
+    capture(e);
+  };
+
+  /** Drag one wall of a polygon zone: only its two corners (`i0`, `i1`)
+   * move, together, by the same amount -- every other wall keeps its
+   * corners exactly where they are, unlike a rectangle's resize which
+   * scales the whole thing. */
+  const startPolyWallDrag = (e: React.PointerEvent, b: Box, i0: number, i1: number) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const p = toMeters(e);
+    remember();
+    gesture.current = { kind: "poly-wall", id: b.id, i0, i1, startX: p.x, startY: p.y, snapshot: live };
     capture(e);
   };
 
@@ -888,7 +923,7 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
           {/* footprint */}
           <path d={footprint} fill="none" stroke={INK.footprint} strokeWidth={0.2} strokeLinejoin="round" />
           {/* zones */}
-          {live.map((b) => {
+          {renderOrder.map((b) => {
             const shape = shapes.find((s) => s.id === b.id);
             const poly = shape?.local ?? [
               [b.left, b.top],
@@ -982,8 +1017,11 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
                     />
                   ))}
                 {/* one grab bar per wall, along its middle third: drag a
-                    wall to move only that side, the opposite one held put */}
+                    wall to move only that side, the opposite one held put.
+                    A polygon's own walls (below) replace these -- its
+                    "walls" are its edges, not the bounding box's sides. */}
                 {solo &&
+                  b.shape !== "polygon" &&
                   (["n", "s", "e", "w"] as const).map((side) => {
                     const horiz = side === "n" || side === "s";
                     const thickness = HANDLE * 0.6;
@@ -1016,9 +1054,34 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
                       onPointerDown={(e) => startVertexDrag(e, b, i)}
                     />
                   ))}
+                {/* one handle per polygon wall, at its midpoint: drag it
+                    and only that wall's two corners move -- every other
+                    corner, and so every other wall, stays exactly put. */}
+                {solo &&
+                  b.shape === "polygon" &&
+                  b.points &&
+                  b.points.map((pt, i) => {
+                    const points = b.points!;
+                    const j = (i + 1) % points.length;
+                    const next = points[j];
+                    const x0 = b.left + pt[0] * b.width;
+                    const y0 = b.top + pt[1] * b.height;
+                    const x1 = b.left + next[0] * b.width;
+                    const y1 = b.top + next[1] * b.height;
+                    return (
+                      <circle
+                        key={i}
+                        className="handle poly-wall"
+                        cx={(x0 + x1) / 2}
+                        cy={(y0 + y1) / 2}
+                        r={HANDLE * 0.32}
+                        onPointerDown={(e) => startPolyWallDrag(e, b, i, j)}
+                      />
+                    );
+                  })}
                 {isSel && (
                   <>
-                    <line x1={cx} y1={b.top} x2={cx} y2={b.top - 0.9} stroke="#0b0b0b" strokeWidth={0.04} />
+                    <line x1={cx} y1={b.top} x2={cx} y2={b.top - 0.9} stroke="#0b0b0b" strokeWidth={0.04} pointerEvents="none" />
                     <circle className="handle rotate" cx={cx} cy={b.top - 1.1} r={HANDLE / 2} onPointerDown={(e) => startRotate(e, b)} />
                     <text x={cx} y={b.top - 1.1} className="handle-glyph" textAnchor="middle" dominantBaseline="middle">
                       ↻
