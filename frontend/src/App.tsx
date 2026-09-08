@@ -5,7 +5,7 @@
  * modes you switch between. The status line runs along the foot where it
  * cannot scroll away.
  */
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Canvas2D } from "./components/Canvas2D";
 import {
@@ -13,6 +13,8 @@ import {
   IconCarveAuto,
   IconCircle,
   IconCursor,
+  IconDoorMain,
+  IconDoorSide,
   IconGrid,
   IconHand,
   IconLayers,
@@ -68,7 +70,18 @@ function Rail() {
       {toolButton("pan", "Pan the plan (or drag with the middle button)", <IconHand />)}
       {toolButton("rect", "Draw a rectangle zone (Shift for a square)", <IconRect />)}
       {toolButton("circle", "Draw a circle zone", <IconCircle />)}
-      {toolButton("arrow", "Add a door arrow: click a zone's wall", <IconArrow />)}
+      {toolButton("arrow", "Add an interior door arrow: click a zone's wall", <IconArrow />)}
+      {toolButton("arrow-main", "Add the main entrance: click a zone's exterior wall", <IconDoorMain />)}
+      <button
+        type="button"
+        className={`tool-red ${tool === "arrow-side" ? "on" : ""}`}
+        aria-pressed={tool === "arrow-side"}
+        title="Add a side or service entrance (drawn red): click a zone's exterior wall"
+        aria-label="Add a side entrance"
+        onClick={() => setTool("arrow-side")}
+      >
+        <IconDoorSide />
+      </button>
       <span className="rail-sep" />
       <button
         type="button"
@@ -187,6 +200,68 @@ function Levels() {
   );
 }
 
+const MIN_PLAN_W = 340;
+const MAX_PLAN_W = 1100;
+const DEFAULT_PLAN_W = 640;
+const MIN_SCHEDULE_W = 340;
+const MAX_SCHEDULE_W = 820;
+const DEFAULT_SCHEDULE_W = 580;
+
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, v));
+}
+
+/** A column width the user drags to, kept across reloads. Falls back to
+ *  `fallback` the first time, or if it was never set, or storage is
+ *  unavailable (a private window, say) -- a remembered preference is a
+ *  convenience, never something the tool depends on. */
+function useStoredWidth(key: string, fallback: number): [number, React.Dispatch<React.SetStateAction<number>>] {
+  const [w, setW] = useState(() => {
+    try {
+      const v = Number(localStorage.getItem(key));
+      return Number.isFinite(v) && v > 0 ? v : fallback;
+    } catch {
+      return fallback;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(key, String(w));
+    } catch {
+      /* private window, storage disabled: the width still works this session */
+    }
+  }, [key, w]);
+  return [w, setW];
+}
+
+/** The drag handle between two columns. Reports each frame's movement in
+ *  screen pixels; what that does to which column is the caller's call. */
+function Splitter({ onDrag }: { onDrag: (dx: number) => void }) {
+  const dragging = useRef(false);
+  const last = useRef(0);
+  return (
+    <div
+      className="splitter"
+      onPointerDown={(e) => {
+        dragging.current = true;
+        last.current = e.clientX;
+        (e.currentTarget as Element).setPointerCapture(e.pointerId);
+      }}
+      onPointerMove={(e) => {
+        if (!dragging.current) return;
+        onDrag(e.clientX - last.current);
+        last.current = e.clientX;
+      }}
+      onPointerUp={() => {
+        dragging.current = false;
+      }}
+      onPointerCancel={() => {
+        dragging.current = false;
+      }}
+    />
+  );
+}
+
 export default function App() {
   const boot = useStore((s) => s.boot);
   const busy = useStore((s) => s.busy);
@@ -196,6 +271,8 @@ export default function App() {
   const storeys = useStore((s) => s.storeys);
   const selected = useStore((s) => s.selected);
   const savedName = useStore((s) => s.savedName);
+  const [planW, setPlanW] = useStoredWidth("cde:planW", DEFAULT_PLAN_W);
+  const [scheduleW, setScheduleW] = useStoredWidth("cde:scheduleW", DEFAULT_SCHEDULE_W);
 
   useEffect(() => {
     void boot();
@@ -227,9 +304,11 @@ export default function App() {
 
       <div className="app-body">
         <Rail />
-        <Canvas2D />
+        <Canvas2D width={planW} />
+        <Splitter onDrag={(dx) => setPlanW((w) => clamp(w + dx, MIN_PLAN_W, MAX_PLAN_W))} />
         <Massing />
-        <div className="schedule-col">
+        <Splitter onDrag={(dx) => setScheduleW((w) => clamp(w - dx, MIN_SCHEDULE_W, MAX_SCHEDULE_W))} />
+        <div className="schedule-col" style={{ width: scheduleW }}>
           <div className="schedule-pane">
             <div className="label">Room schedule</div>
             <Schedule />

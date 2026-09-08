@@ -12,12 +12,12 @@ import { api } from "../api/client";
 import type { ProjectSummary } from "../api/types";
 import { nearestWallPoint, newArrowId, suggestArrows } from "../geometry/arrows";
 import { carveWith, releaseCarve } from "../geometry/carve";
-import { clampGroup, settleInPlot } from "../geometry/plot";
+import { clampDrawnRect, clampGroup, settleInPlot } from "../geometry/plot";
 import { isOpenToBelow, liveBoxes } from "../geometry/snap";
 import { touchSelected } from "../geometry/touch";
 import type { Arrow, Box, BoxShape, Plot, Point } from "../geometry/types";
 import { roomTypeInfo } from "../rooms";
-import { DEFAULT_PLOT, DEFAULT_PRIORITY, SAMPLE_STOREYS, STOREY_HEIGHT_M, sampleBoxes, storeysSpanned } from "../sample";
+import { DEFAULT_PLOT, DEFAULT_PRIORITY, SAMPLE_STOREYS, STOREY_HEIGHT_M, sampleArrows, sampleBoxes, storeysSpanned } from "../sample";
 
 /** What undo restores. The camera, the selection and the toggles are not
  * in it: undo is for the drawing, not for where you were looking. */
@@ -39,8 +39,11 @@ export type MassingMode = "zones" | "mass";
 
 /** What a drag on empty sheet does. `select` rubber-bands a selection,
  * `pan` moves the view, `rect` and `circle` draw a new zone, `arrow`
- * puts a door arrow on the wall you click. */
-export type Tool = "select" | "pan" | "rect" | "circle" | "arrow";
+ * puts an interior door arrow on the wall you click, `arrow-main` and
+ * `arrow-side` do the same for the building's exterior doors. `place`
+ * is not a drawing tool: it drops the zone named by `placingId` where
+ * you next click, and is entered from the schedule, never the rail. */
+export type Tool = "select" | "pan" | "rect" | "circle" | "arrow" | "arrow-main" | "arrow-side" | "place";
 
 export interface State {
   boxes: Box[];
@@ -59,6 +62,8 @@ export interface State {
   /** The one arrow selected, if any. Zones and arrows select separately. */
   selectedArrow: string | null;
   tool: Tool;
+  /** The zone `place` is waiting to drop, if any (state.tool === "place"). */
+  placingId: string | null;
   busy: string | null;
   error: string | null;
   showGrid: boolean;
@@ -83,6 +88,16 @@ export interface State {
   selectMany: (ids: string[], additive?: boolean) => void;
   /** A new zone drawn on the current storey. Returns its id. */
   addBox: (shape: BoxShape, left: number, top: number, width: number, height: number) => string;
+  /** A zone entered in the schedule, with a size but no position: sized
+   * and typed, unplaced, on the current storey until `placeBox` gives it
+   * one. Returns its id. */
+  addUnplacedBox: (roomType: string, name: string, width: number, height: number, shape: BoxShape) => string;
+  /** Arm `place`: the next click on the sheet gives this zone a position
+   * and it joins the plan. */
+  beginPlacement: (id: string) => void;
+  /** Where `place` dropped it: the zone's new position, clamped to the
+   * plot exactly like a freshly drawn one, and placed. */
+  placeBox: (id: string, left: number, top: number) => void;
   /** A schedule edit: name, type, floor, rotation, size. */
   updateBox: (id: string, patch: Partial<Box>) => void;
   deleteBoxes: (ids: string[]) => void;
@@ -92,8 +107,10 @@ export interface State {
   release: (id: string) => void;
   /** Move every selected zone to touch its nearest neighbour (touch.ts). */
   touchSelected: () => void;
-  /** A door arrow on `hostId`'s wall nearest the page point. */
-  addArrow: (hostId: string, at: Point) => void;
+  /** A door arrow on `hostId`'s wall nearest the page point. `kind`
+   * defaults to an interior door; `exterior-main` also makes the host
+   * `isEntry` and clears it from whichever zone had it before. */
+  addArrow: (hostId: string, at: Point, kind?: Arrow["kind"]) => void;
   moveArrow: (id: string, at: Point) => void;
   flipArrow: (id: string) => void;
   deleteArrow: (id: string) => void;
@@ -141,6 +158,7 @@ function normalise(b: Partial<Box> & Box): Box {
     shape: b.shape ?? "rect",
     carvedBy: b.carvedBy ?? [],
     priority: b.priority ?? DEFAULT_PRIORITY,
+    placed: b.placed ?? true,
     heightM,
     levelTo: b.level + storeysSpanned(heightM) - 1,
   };
@@ -164,6 +182,7 @@ export const useStore = create<State>((set, get) => ({
   selected: [],
   selectedArrow: null,
   tool: "select",
+  placingId: null,
   busy: null,
   error: null,
   showGrid: false,
@@ -194,8 +213,9 @@ export const useStore = create<State>((set, get) => ({
   newProject() {
     get().remember();
     const boxes = sampleBoxes();
-    // The sample's arrows are its suggested ones: one door per room.
-    let arrows: Arrow[] = [];
+    // The sample's own front door, plus its suggested arrows: one
+    // interior door per room, walked out from that front door.
+    let arrows: Arrow[] = sampleArrows(boxes);
     for (let lv = 0; lv < SAMPLE_STOREYS; lv++) arrows = [...arrows, ...suggestArrows(liveBoxes(boxes, lv), arrows, lv)];
     set({
       boxes,
@@ -208,6 +228,8 @@ export const useStore = create<State>((set, get) => ({
       selected: [],
       selectedArrow: null,
       level: 0,
+      tool: "select",
+      placingId: null,
       savedId: null,
       savedName: "",
     });
@@ -267,10 +289,61 @@ export const useStore = create<State>((set, get) => ({
       rotation: 0,
       carvedBy: [],
       deleted: false,
+      placed: true,
       initial: rect,
     };
     set({ boxes: [...get().boxes, box], selected: [id] });
     return id;
+  },
+
+  addUnplacedBox(roomType, name, width, height, shape) {
+    get().remember();
+    const level = get().level;
+    const info = roomTypeInfo(roomType);
+    const num = nextZone++;
+    const id = `zone:${Date.now().toString(36)}:${num}`;
+    const w = Math.max(info.minWidth, width);
+    const h = Math.max(info.minHeight, height);
+    const rect = { left: 0, top: 0, width: w, height: h };
+    const box: Box = {
+      id,
+      name: name.trim() || `Zone ${num}`,
+      kind: roomType === "hallway" ? "corridor" : "room",
+      shape,
+      roomType,
+      isEntry: false,
+      level,
+      levelTo: level,
+      heightM: STOREY_HEIGHT_M,
+      priority: DEFAULT_PRIORITY,
+      ...rect,
+      minWidth: info.minWidth,
+      minHeight: info.minHeight,
+      rotation: 0,
+      carvedBy: [],
+      deleted: false,
+      placed: false,
+      initial: rect,
+    };
+    set({ boxes: [...get().boxes, box] });
+    return id;
+  },
+
+  beginPlacement(id) {
+    set({ tool: "place", placingId: id, selected: [], selectedArrow: null });
+  },
+
+  placeBox(id, left, top) {
+    const box = get().boxes.find((b) => b.id === id);
+    if (!box) return;
+    get().remember();
+    // Held inside the plot exactly like a rectangle just drawn -- the
+    // schedule is not a way to drop a zone somewhere the canvas would
+    // never have let it land.
+    const rect = clampDrawnRect({ left, top, width: box.width, height: box.height }, get().plot);
+    const boxes = get().boxes.map((b) => (b.id === id ? { ...b, ...rect, placed: true } : b));
+    const storeys = storeysFor(boxes, get().storeys);
+    set({ boxes, storeys, tool: "select", placingId: null, selected: [id] });
   },
 
   updateBox(id, patch) {
@@ -327,15 +400,21 @@ export const useStore = create<State>((set, get) => ({
     set({ boxes: clampGroup(merged, selected, get().plot) });
   },
 
-  addArrow(hostId, at) {
+  addArrow(hostId, at, kind = "interior") {
     const host = get().boxes.find((b) => b.id === hostId);
     // No door into a void: on a storey above its own floor a zone is
     // open to below, and there is no floor there to walk on.
     if (!host || isOpenToBelow(host, get().level)) return;
     get().remember();
     const { side, t } = nearestWallPoint(host, at);
-    const arrow: Arrow = { id: newArrowId(), level: get().level, hostId, side, t, dir: 1 };
-    set({ arrows: [...get().arrows, arrow], selectedArrow: arrow.id, selected: [] });
+    const arrow: Arrow = { id: newArrowId(), level: get().level, hostId, side, t, dir: 1, kind };
+    // The main entrance is one zone at a time: this one takes it, and
+    // whichever zone had it loses it.
+    const boxes =
+      kind === "exterior-main"
+        ? get().boxes.map((b) => (b.id === hostId ? { ...b, isEntry: true } : b.isEntry ? { ...b, isEntry: false } : b))
+        : get().boxes;
+    set({ arrows: [...get().arrows, arrow], selectedArrow: arrow.id, selected: [], boxes });
   },
 
   moveArrow(id, at) {
@@ -353,8 +432,16 @@ export const useStore = create<State>((set, get) => ({
   },
 
   deleteArrow(id) {
+    const arrow = get().arrows.find((a) => a.id === id);
     get().remember();
-    set({ arrows: get().arrows.filter((a) => a.id !== id), selectedArrow: get().selectedArrow === id ? null : get().selectedArrow });
+    // Deleting the main entrance un-marks its host: no arrow, no front door.
+    const boxes =
+      arrow?.kind === "exterior-main" ? get().boxes.map((b) => (b.id === arrow.hostId ? { ...b, isEntry: false } : b)) : get().boxes;
+    set({
+      arrows: get().arrows.filter((a) => a.id !== id),
+      selectedArrow: get().selectedArrow === id ? null : get().selectedArrow,
+      boxes,
+    });
   },
 
   selectArrow(id) {
@@ -467,7 +554,10 @@ export const useStore = create<State>((set, get) => ({
     set({ level, selected: [], selectedArrow: null });
   },
   setTool(tool) {
-    set({ tool });
+    // Leaving "place" for anything else drops what it was armed with;
+    // entering it is only ever through beginPlacement, which sets both
+    // at once.
+    set({ tool, placingId: tool === "place" ? get().placingId : null });
   },
   setMassing(massing) {
     set({ massing });
@@ -530,6 +620,8 @@ export const useStore = create<State>((set, get) => ({
         level: Math.min(get().level, Math.max(0, storeys - 1)),
         selected: [],
         selectedArrow: null,
+        tool: "select",
+        placingId: null,
         savedId: saved.id,
         savedName: saved.name,
       });

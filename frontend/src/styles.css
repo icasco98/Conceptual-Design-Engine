@@ -80,12 +80,24 @@ input { font: inherit; }
 .rail button:disabled { opacity: 0.35; cursor: default; background: none; }
 .rail button.on { background: var(--accent); color: #fff; }
 .rail button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* the side-entrance tool: red even at rest, so it reads as "the red one"
+   before it is ever clicked, matching the arrows it draws. */
+.rail button.tool-red { color: #b3392b; }
+.rail button.tool-red:hover { background: var(--err-bg); }
+.rail button.tool-red.on { background: #b3392b; color: #fff; }
 
 /* plan pane */
 .plan-pane {
   position: relative; display: flex; flex: 1.3; min-width: 0; min-height: 0;
-  background: var(--ground); border-right: 1px solid var(--rule); overflow: hidden;
+  background: var(--ground); overflow: hidden;
 }
+
+/* the drag handle between two columns */
+.splitter { position: relative; width: 7px; flex: none; cursor: col-resize; touch-action: none; }
+.splitter::after {
+  content: ""; position: absolute; left: 3px; top: 0; bottom: 0; width: 1px; background: var(--rule);
+}
+.splitter:hover::after, .splitter:active::after { background: var(--accent); width: 2px; left: 2.5px; }
 .pane-tag { position: absolute; top: 12px; left: 16px; pointer-events: none; }
 /* Right, not left: the scale bar starts at the drawing's left edge. */
 .pane-tools { position: absolute; right: 16px; bottom: 14px; }
@@ -93,9 +105,9 @@ input { font: inherit; }
 /* three columns: plan (flex), massing (flex), schedule (fixed) */
 .massing {
   display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0;
-  background: var(--sunk); border-right: 1px solid var(--rule);
+  background: var(--sunk);
 }
-.schedule-col { display: flex; flex-direction: column; width: 580px; flex: none; min-height: 0; background: var(--panel); }
+.schedule-col { display: flex; flex-direction: column; flex: none; min-height: 0; background: var(--panel); }
 .rail-sep { width: 22px; height: 1px; margin: 6px 0; background: var(--rule); }
 .pane-hint {
   position: absolute; top: 40px; left: 16px; padding: 5px 10px; font-size: 11.5px;
@@ -230,6 +242,27 @@ input { font: inherit; }
 .schedule select.floor-select { width: 42px; }
 .schedule-foot { margin: 6px 0 0; font-size: 11px; }
 
+/* the "To place" rows: a zone with a size and no position yet */
+.schedule tbody.unplaced tr:not(.section-row) { background: var(--accent-soft); }
+.schedule tr.section-row td {
+  padding: 8px 3px 4px; border-bottom: none; font-size: 10.5px; font-weight: 600;
+  letter-spacing: 0.04em; color: var(--muted); text-transform: none;
+}
+
+/* adding a zone from the schedule, before it has a place to be */
+.add-zone { display: flex; flex-direction: column; gap: 6px; flex: none; padding-bottom: 4px; }
+.add-zone-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.add-zone-name {
+  flex: 1; min-width: 90px; padding: 5px 8px; font: inherit;
+  border: 1px solid var(--rule); border-radius: 6px; background: var(--panel);
+}
+.icon-toggle {
+  display: flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border: 1px solid var(--rule); background: var(--panel);
+  border-radius: 6px; color: var(--ink-2);
+}
+.icon-toggle.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
 /* ------------------------------------------------------------- sidebar */
 .projects { list-style: none; margin: 0; padding: 0; }
 .projects li { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 12.5px; }
@@ -282,9 +315,3 @@ button.icon:hover { color: var(--err); }
 .legend-entry { background: #fff; border: 1.5px dashed #4a4e4c !important; }
 
 .placeholder { padding: 24px; color: var(--muted); }
-
-@media (max-width: 1400px) {
-  .schedule-col { width: 540px; }
-  .schedule select.type-select { width: 88px; }
-  .schedule input.name-input { width: 80px; }
-}

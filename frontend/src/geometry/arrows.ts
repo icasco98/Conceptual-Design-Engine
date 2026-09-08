@@ -14,6 +14,12 @@
  * at them yet; everything a person has placed is left alone. A zone that
  * is open to below on this storey (snap.ts) is skipped entirely: there
  * is no floor there to walk on.
+ *
+ * Every arrow this proposes is `interior` -- a door between two zones.
+ * The exterior doors (`exterior-main`, `exterior-side`) are never
+ * suggested: where the building's own front and side doors are is a
+ * decision for a person, not a walk of the touching graph, so they are
+ * placed by hand with their own tools and left alone here.
  */
 import { pageToLocalPoly, localToPagePoly, frameOf } from "./poly";
 import { rectOf, centerOf } from "./rect";
@@ -117,7 +123,7 @@ export function suggestArrows(all: Box[], existing: Arrow[], level: number): Arr
   const add = (host: Box, target: Box, side: number, t: number) => {
     if (covered.has(target.id)) return;
     covered.add(target.id);
-    out.push({ id: newArrowId(), level, hostId: host.id, targetId: target.id, side, t, dir: 1 });
+    out.push({ id: newArrowId(), level, hostId: host.id, targetId: target.id, side, t, dir: 1, kind: "interior" });
   };
 
   // Carves first: a room cut into another is entered from the carver.

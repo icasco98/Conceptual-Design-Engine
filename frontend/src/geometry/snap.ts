@@ -11,9 +11,13 @@ export function snapToGrid(v: number): number {
   return Math.round(v / GRID_M) * GRID_M;
 }
 
-/** Everything drawn on `level`: rooms on it, and anything spanning it. */
+/** Everything drawn on `level`: rooms on it, and anything spanning it. A
+ * zone added from the schedule but not yet placed (`placed === false`)
+ * has no position and takes no part in the plan, carving or the plot --
+ * this is the one place that is enforced, so every reader downstream
+ * already has it applied. */
 export function liveBoxes(boxes: Box[], level: number): Box[] {
-  return boxes.filter((b) => !b.deleted && b.level <= level && level <= b.levelTo);
+  return boxes.filter((b) => !b.deleted && b.placed !== false && b.level <= level && level <= b.levelTo);
 }
 
 /** True where `level` is above the zone's own floor: the zone is not a

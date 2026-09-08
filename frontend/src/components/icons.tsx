@@ -63,6 +63,13 @@ export const IconReset = ({ size = 17, className }: P) =>
 export const IconRect = ({ size = 17, className }: P) => svg(<rect x="4" y="6" width="16" height="12" rx="1" />, size, className);
 export const IconCircle = ({ size = 17, className }: P) => svg(<circle cx="12" cy="12" r="8" />, size, className);
 export const IconArrow = ({ size = 17, className }: P) => svg(<><path d="M4 12h14" /><path d="m13 7 5 5-5 5" /></>, size, className);
+/** A door leaf and the arrow of someone walking out through it: the
+ *  building's main entrance. */
+export const IconDoorMain = ({ size = 17, className }: P) =>
+  svg(<><path d="M5 3h4v18H5z" /><path d="M11 12h7" /><path d="m15 8 4 4-4 4" /></>, size, className);
+/** The same door, dashed: a secondary one -- garage, service, deck. */
+export const IconDoorSide = ({ size = 17, className }: P) =>
+  svg(<><path d="M5 3h4v18H5z" strokeDasharray="2 1.6" /><path d="M11 12h7" /><path d="m15 8 4 4-4 4" /></>, size, className);
 export const IconMagnet = ({ size = 17, className }: P) =>
   svg(
     <>

@@ -13,7 +13,8 @@
  *
  * "Reset to the sample layout" brings all of this back.
  */
-import type { Box, BoxKind, Plot, Rect } from "./geometry/types";
+import { newArrowId } from "./geometry/arrows";
+import type { Arrow, Box, BoxKind, Plot, Rect } from "./geometry/types";
 import { roomTypeInfo } from "./rooms";
 
 /** Priority when nothing else is said: see `Box.priority`. Circulation
@@ -110,7 +111,18 @@ export function sampleBoxes(): Box[] {
       priority: kind === "corridor" || p.roomType === "stair" ? CIRCULATION_PRIORITY : DEFAULT_PRIORITY,
       carvedBy: [],
       deleted: false,
+      placed: true,
       initial: rect,
     };
   });
+}
+
+/** The sample's own front door: on the Front Entry zone's street-facing
+ *  wall (its top edge, where every ground-floor room starts). Everything
+ *  else -- the interior doors -- is `suggestArrows` walking out from the
+ *  entry it marks. */
+export function sampleArrows(boxes: Box[]): Arrow[] {
+  const entry = boxes.find((b) => b.name === "Front Entry");
+  if (!entry) return [];
+  return [{ id: newArrowId(), level: entry.level, hostId: entry.id, side: 0, t: 0.5, dir: 1, kind: "exterior-main" }];
 }

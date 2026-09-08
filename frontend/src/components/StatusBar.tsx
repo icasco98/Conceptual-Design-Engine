@@ -25,7 +25,7 @@ export function StatusBar() {
   const autoCarve = useStore((s) => s.autoCarve);
   const plot = useStore((s) => s.plot);
 
-  const { spaces, area, flagged, strays } = useMemo(() => {
+  const { spaces, area, flagged, strays, toPlace } = useMemo(() => {
     const live = liveBoxes(boxes, level);
     const shapes = displayShapes(live, autoCarve);
     const total = shapes.reduce((sum, s) => sum + polyArea(s.page), 0);
@@ -33,7 +33,10 @@ export function StatusBar() {
     // Every storey's strays, not just this one's: a zone left outside the
     // boundary two floors up is exactly the thing you would not notice.
     const out = outsidePlot(boxes.filter((b) => !b.deleted), plot).map((b) => b.name);
-    return { spaces: live.length, area: total, flagged: names, strays: out };
+    // Zones from the schedule with a size and no position yet, on this
+    // floor: not on the plan, so not in `live` or its area.
+    const waiting = boxes.filter((b) => !b.deleted && b.placed === false && b.level === level).length;
+    return { spaces: live.length, area: total, flagged: names, strays: out, toPlace: waiting };
   }, [boxes, level, autoCarve, plot]);
 
   const plotArea = plot.width * plot.depth;
@@ -64,6 +67,11 @@ export function StatusBar() {
             </>
           )}
         </span>
+        {toPlace > 0 && (
+          <span className="status-item muted">
+            · <span className="num">{toPlace}</span> {toPlace === 1 ? "zone" : "zones"} to place
+          </span>
+        )}
       </div>
     </footer>
   );

@@ -3,19 +3,121 @@
  * live with the canvas in both directions. Name, type, floor, width,
  * depth and rotation are edited here and the zone follows; select a zone
  * on the plan and its row lights up, click a row and the zone is selected.
+ *
+ * A zone can also start here: someone who already knows the rooms they
+ * want and their sizes, but has not drawn anything yet, types a name,
+ * type and size into the form at the top and it appears as a row with
+ * nowhere to be. Its own table -- "To place" -- lists these until each
+ * is dropped onto the plan: "Place" arms the `place` tool, and clicking
+ * the sheet gives it a position exactly as drawing a rectangle would.
+ * Until then it has no area, no rotation, no priority and is invisible
+ * everywhere geometry is computed (geometry/snap.ts, `liveBoxes`).
  */
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import { displayShapes } from "../geometry/carve";
 import { polyArea } from "../geometry/poly";
 import { isOpenToBelow, liveBoxes } from "../geometry/snap";
-import type { Box } from "../geometry/types";
+import type { Box, BoxShape } from "../geometry/types";
 import { fillFor } from "../palette";
-import { ROOM_TYPES } from "../rooms";
+import { ROOM_TYPES, roomTypeInfo } from "../rooms";
 import { useStore } from "../state/store";
+import { IconCircle, IconRect } from "./icons";
 
 function floorLabel(i: number): string {
   return i === 0 ? "G" : String(i);
+}
+
+/** Name, type, size and shape for a zone not yet on the plan. Typical
+ *  width/depth for the chosen type fill in as soon as it is picked, and
+ *  stay editable from there -- a starting guess, not a constraint. */
+function AddZoneForm() {
+  const addUnplacedBox = useStore((s) => s.addUnplacedBox);
+  const [name, setName] = useState("");
+  const [roomType, setRoomType] = useState("other");
+  const [shape, setShape] = useState<BoxShape>("rect");
+  const [width, setWidth] = useState(roomTypeInfo("other").typicalWidth);
+  const [height, setHeight] = useState(roomTypeInfo("other").typicalHeight);
+
+  const onType = (rt: string) => {
+    setRoomType(rt);
+    const info = roomTypeInfo(rt);
+    setWidth(info.typicalWidth);
+    setHeight(info.typicalHeight);
+  };
+
+  const submit = () => {
+    addUnplacedBox(roomType, name, width, height, shape);
+    setName("");
+  };
+
+  return (
+    <div className="add-zone">
+      <div className="label">Add a zone</div>
+      <div className="add-zone-row">
+        <input
+          type="text"
+          className="add-zone-name"
+          placeholder="Name (optional)"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") submit();
+          }}
+        />
+        <select className="type-select" value={roomType} onChange={(e) => onType(e.target.value)}>
+          {Object.entries(ROOM_TYPES).map(([key, info]) => (
+            <option key={key} value={key}>
+              {info.label}
+            </option>
+          ))}
+        </select>
+        <input
+          type="number"
+          step="0.05"
+          min="0.1"
+          title="Width (m)"
+          value={width}
+          onChange={(e) => {
+            const v = parseFloat(e.target.value);
+            if (isFinite(v) && v > 0) setWidth(v);
+          }}
+        />
+        <input
+          type="number"
+          step="0.05"
+          min="0.1"
+          title="Depth (m)"
+          value={height}
+          onChange={(e) => {
+            const v = parseFloat(e.target.value);
+            if (isFinite(v) && v > 0) setHeight(v);
+          }}
+        />
+        <button
+          type="button"
+          className={`icon-toggle ${shape === "rect" ? "on" : ""}`}
+          title="Rectangle"
+          aria-label="Rectangle"
+          onClick={() => setShape("rect")}
+        >
+          <IconRect size={14} />
+        </button>
+        <button
+          type="button"
+          className={`icon-toggle ${shape === "circle" ? "on" : ""}`}
+          title="Circle"
+          aria-label="Circle"
+          onClick={() => setShape("circle")}
+        >
+          <IconCircle size={14} />
+        </button>
+        <button type="button" className="ghost-btn tight" onClick={submit}>
+          + Add
+        </button>
+      </div>
+    </div>
+  );
 }
 
 export function Schedule() {
@@ -29,8 +131,10 @@ export function Schedule() {
   const carve = useStore((s) => s.carve);
   const release = useStore((s) => s.release);
   const autoCarve = useStore((s) => s.autoCarve);
+  const beginPlacement = useStore((s) => s.beginPlacement);
 
   const live = useMemo(() => liveBoxes(boxes, level), [boxes, level]);
+  const unplaced = useMemo(() => boxes.filter((b) => !b.deleted && b.placed === false && b.level === level), [boxes, level]);
   const shapes = useMemo(() => displayShapes(live, autoCarve), [live, autoCarve]);
   const carvesSomething = (b: Box) => live.some((o) => o.carvedBy.includes(b.id));
   const areaOf = (b: Box) => {
@@ -58,6 +162,7 @@ export function Schedule() {
 
   return (
     <div className="schedule">
+      <AddZoneForm />
       <table>
         <thead>
           <tr>
@@ -76,6 +181,108 @@ export function Schedule() {
             <th />
           </tr>
         </thead>
+        {unplaced.length > 0 && (
+          <tbody className="unplaced">
+            <tr className="section-row">
+              <td colSpan={11}>To place ({unplaced.length})</td>
+            </tr>
+            {unplaced.map((b) => (
+              <tr key={b.id} className={selected.includes(b.id) ? "selected" : ""} onClick={() => select(b.id)}>
+                <td className="name">
+                  <i style={{ background: fillFor(b.roomType, b.kind), borderRadius: b.shape === "circle" ? "50%" : 2 }} />
+                  <input
+                    type="text"
+                    className="name-input"
+                    defaultValue={b.name}
+                    key={`n${b.name}`}
+                    onFocus={() => select(b.id)}
+                    onBlur={(e) => {
+                      const v = e.target.value.trim();
+                      if (v && v !== b.name) updateBox(b.id, { name: v });
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                    }}
+                  />
+                </td>
+                <td>
+                  <select
+                    className="type-select"
+                    value={b.roomType}
+                    title={ROOM_TYPES[b.roomType]?.label}
+                    onFocus={() => select(b.id)}
+                    onChange={(e) => updateBox(b.id, { roomType: e.target.value })}
+                  >
+                    {Object.entries(ROOM_TYPES).map(([key, info]) => (
+                      <option key={key} value={key}>
+                        {info.label}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+                <td>
+                  <select
+                    className="floor-select"
+                    value={b.level}
+                    onFocus={() => select(b.id)}
+                    onChange={(e) => {
+                      const lv = parseInt(e.target.value, 10);
+                      updateBox(b.id, { level: lv, levelTo: lv });
+                    }}
+                  >
+                    {Array.from({ length: storeys }, (_, i) => (
+                      <option key={i} value={i}>
+                        {floorLabel(i)}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+                <td className="r">
+                  <input
+                    type="number"
+                    step="0.05"
+                    min={b.minWidth.toFixed(2)}
+                    defaultValue={b.width.toFixed(2)}
+                    key={`w${b.width.toFixed(3)}`}
+                    onFocus={() => select(b.id)}
+                    onChange={(e) => {
+                      const v = parseFloat(e.target.value);
+                      if (isFinite(v) && v > 0) updateBox(b.id, { width: Math.max(b.minWidth, v) });
+                    }}
+                  />
+                </td>
+                <td className="r">
+                  <input
+                    type="number"
+                    step="0.05"
+                    min={b.minHeight.toFixed(2)}
+                    defaultValue={b.height.toFixed(2)}
+                    key={`h${b.height.toFixed(3)}`}
+                    onFocus={() => select(b.id)}
+                    onChange={(e) => {
+                      const v = parseFloat(e.target.value);
+                      if (isFinite(v) && v > 0) updateBox(b.id, { height: Math.max(b.minHeight, v) });
+                    }}
+                  />
+                </td>
+                <td className="r num muted" title="Not set until placed">–</td>
+                <td className="r num muted" title="No position yet">–</td>
+                <td className="r num muted">–</td>
+                <td className="r num muted">–</td>
+                <td>
+                  <button type="button" className="ghost-btn tight" title="Place this zone on the plan" onClick={() => beginPlacement(b.id)}>
+                    Place
+                  </button>
+                </td>
+                <td>
+                  <button type="button" className="icon" title="Delete" onClick={() => deleteBoxes([b.id])}>
+                    ×
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        )}
         <tbody>
           {live.map((b) => {
             const shape = shapes.find((s) => s.id === b.id);

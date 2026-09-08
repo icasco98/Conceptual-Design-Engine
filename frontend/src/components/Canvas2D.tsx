@@ -7,7 +7,15 @@
  * Door arrows are yours: each sits on a wall of its host zone, always
  * perpendicular to it. Drag one to slide it along the wall or onto
  * another wall of the same zone; the handles flip or delete it; the
- * Arrow tool puts a new one on the wall you click.
+ * Arrow tool puts a new interior one on the wall you click, and the two
+ * door tools beside it place the building's exterior doors the same way
+ * -- one main entrance at a time (also marking its host as the plan's
+ * entry), any number of red side/service ones.
+ *
+ * A zone can also arrive from the schedule rather than being drawn: typed
+ * there with a size and no position, it waits until "Place" arms the
+ * `place` tool, which follows the pointer at its own size and drops where
+ * you click, exactly as a freshly drawn zone would.
  *
  * Tools (the rail): Select rubber-bands a selection when you drag empty
  * sheet; Pan moves the view; Rectangle and Circle draw a new zone. With
@@ -109,7 +117,7 @@ function extentOf(boxes: Box[]): Rect {
   return { left: minX, top: minY, width: maxX - minX, height: maxY - minY };
 }
 
-export function Canvas2D() {
+export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
   const boxes = useStore((s) => s.boxes);
   const recommended = useStore((s) => s.recommended);
   const level = useStore((s) => s.level);
@@ -138,6 +146,8 @@ export function Canvas2D() {
   const moveArrow = useStore((s) => s.moveArrow);
   const flipArrow = useStore((s) => s.flipArrow);
   const deleteArrow = useStore((s) => s.deleteArrow);
+  const placingId = useStore((s) => s.placingId);
+  const placeBox = useStore((s) => s.placeBox);
 
   const gRef = useRef<SVGGElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -156,6 +166,13 @@ export function Canvas2D() {
     rubberRef.current = r;
     setRubberState(r);
   }, []);
+  /** Where the pointer is while `place` is armed, in plan-frame meters:
+   *  what the preview follows. Cleared whenever the tool stops being
+   *  `place`, so a stale preview never survives a tool switch. */
+  const [placeCursor, setPlaceCursor] = useState<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (tool !== "place") setPlaceCursor(null);
+  }, [tool]);
 
   const live = useMemo(() => liveBoxes(boxes, level), [boxes, level]);
   const shapes = useMemo(() => displayShapes(live, autoCarve), [live, autoCarve]);
@@ -406,14 +423,15 @@ export function Canvas2D() {
   }, [deleteArrow, deleteBoxes, select, selectArrow, setTool]);
 
   const startMove = (e: React.PointerEvent, b: Box) => {
-    if (tool === "rect" || tool === "circle") return; // drawing starts on the sheet below
+    if (tool === "rect" || tool === "circle" || tool === "place") return; // drawing/placing starts on the sheet below
     e.stopPropagation();
     e.preventDefault();
-    if (tool === "arrow") {
+    if (tool === "arrow" || tool === "arrow-main" || tool === "arrow-side") {
       // A zone open to below has no floor on this storey, so no door.
       if (!isOpenToBelow(b, level)) {
         const p = toMeters(e);
-        addArrow(b.id, [p.x, p.y]);
+        const kind = tool === "arrow-main" ? "exterior-main" : tool === "arrow-side" ? "exterior-side" : "interior";
+        addArrow(b.id, [p.x, p.y], kind);
       }
       setTool("select");
       return;
@@ -531,9 +549,11 @@ export function Canvas2D() {
   const onSheetDown = useCallback(
     (e: React.PointerEvent) => {
       const drawing = tool === "rect" || tool === "circle";
-      // Only the background, unless drawing: a new zone may be drawn over
-      // an existing one, since zones are allowed to overlap.
-      if (!drawing && e.target !== e.currentTarget) return;
+      const placing = tool === "place" && !!placingId;
+      // Only the background, unless drawing or placing: a new zone, or one
+      // dropped from the schedule, may land over an existing one, since
+      // zones are allowed to overlap.
+      if (!drawing && !placing && e.target !== e.currentTarget) return;
       const middle = e.button === 1;
       if (tool === "pan" || middle) {
         e.currentTarget.setPointerCapture(e.pointerId);
@@ -542,6 +562,11 @@ export function Canvas2D() {
         return;
       }
       const p = toMeters(e);
+      if (placing) {
+        const box = boxes.find((b) => b.id === placingId);
+        if (box) placeBox(placingId, snapToGrid(p.x - box.width / 2), snapToGrid(p.y - box.height / 2));
+        return;
+      }
       if (drawing) {
         gesture.current = { kind: "draw", shape: tool, x0: snapToGrid(p.x), y0: snapToGrid(p.y) };
         setRubber({ left: snapToGrid(p.x), top: snapToGrid(p.y), width: 0, height: 0 });
@@ -552,7 +577,7 @@ export function Canvas2D() {
       }
       e.currentTarget.setPointerCapture(e.pointerId);
     },
-    [cam.x, cam.y, selectArrow, setRubber, toMeters, tool],
+    [boxes, cam.x, cam.y, placeBox, placingId, selectArrow, setRubber, toMeters, tool],
   );
 
   const onPanMove = useCallback((e: React.PointerEvent) => {
@@ -594,7 +619,7 @@ export function Canvas2D() {
   const cursor = panning ? "grabbing" : tool === "pan" ? "grab" : tool === "select" ? "default" : "crosshair";
 
   return (
-    <div className={`plan-pane tool-${tool}`} style={{ cursor }}>
+    <div className={`plan-pane tool-${tool}`} style={paneWidth ? { cursor, flex: "none", width: paneWidth } : { cursor }}>
       <div className="pane-tag label">Plan</div>
       <div className="legend" style={{ position: "absolute", top: 12, right: 16, maxWidth: 300, justifyContent: "flex-end" }}>
         {(["category_a", "category_b", "category_c"] as CategoryKey[]).map((k) => (
@@ -612,6 +637,8 @@ export function Canvas2D() {
           <i className="legend-entry" /> Entry
         </span>
         <span className="legend-item">→ Door</span>
+        <span className="legend-item" style={{ color: "#111" }}>⇥ Main entrance</span>
+        <span className="legend-item" style={{ color: "#b3392b" }}>⇥ Side entrance</span>
       </div>
       {(tool === "rect" || tool === "circle") && (
         <div className="pane-hint">
@@ -619,6 +646,11 @@ export function Canvas2D() {
         </div>
       )}
       {tool === "arrow" && <div className="pane-hint">Click a zone's wall to put a door arrow on it. Esc to cancel.</div>}
+      {tool === "arrow-main" && <div className="pane-hint">Click a zone's exterior wall to place the main entrance. Esc to cancel.</div>}
+      {tool === "arrow-side" && <div className="pane-hint">Click a zone's exterior wall to place a side or service entrance. Esc to cancel.</div>}
+      {tool === "place" && placingId && (
+        <div className="pane-hint">Click on the sheet to place "{boxes.find((b) => b.id === placingId)?.name ?? "the zone"}". Esc to cancel.</div>
+      )}
       <svg
         ref={svgRef}
         className="plan-svg"
@@ -627,6 +659,10 @@ export function Canvas2D() {
         onPointerMove={(e) => {
           onPointerMove(e);
           onPanMove(e);
+          if (tool === "place") {
+            const p = toMeters(e);
+            setPlaceCursor({ x: snapToGrid(p.x), y: snapToGrid(p.y) });
+          }
         }}
         onPointerDown={onSheetDown}
         onPointerUp={onPanUp}
@@ -642,6 +678,12 @@ export function Canvas2D() {
           </pattern>
           <marker id="door-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse" markerUnits="strokeWidth">
             <path d="M 0 0 L 10 5 L 0 10 z" fill="#1a1a1a" fillOpacity="0.6" />
+          </marker>
+          <marker id="door-arrow-main" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse" markerUnits="strokeWidth">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#111111" />
+          </marker>
+          <marker id="door-arrow-side" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse" markerUnits="strokeWidth">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#b3392b" />
           </marker>
         </defs>
         <g transform={`translate(${cam.x} ${cam.y}) scale(${cam.z})`} pointerEvents="none">
@@ -810,10 +852,13 @@ export function Canvas2D() {
           {liveArrows.map(({ arrow, host }) => {
             const [a, c] = arrowSegment(host, arrow);
             const sel = arrow.id === selectedArrow;
+            const kind = arrow.kind ?? "interior";
             const mx = (a[0] + c[0]) / 2;
             const my = (a[1] + c[1]) / 2;
+            const stroke = sel ? "#2f5d7c" : kind === "exterior-side" ? "#b3392b" : kind === "exterior-main" ? "#111111" : "#1a1a1a";
+            const marker = kind === "exterior-side" ? "door-arrow-side" : kind === "exterior-main" ? "door-arrow-main" : "door-arrow";
             return (
-              <g key={arrow.id} className={`arrow ${sel ? "selected" : ""}`} pointerEvents="all" onPointerDown={(e) => startArrowDrag(e, arrow)}>
+              <g key={arrow.id} className={`arrow ${kind} ${sel ? "selected" : ""}`} pointerEvents="all" onPointerDown={(e) => startArrowDrag(e, arrow)}>
                 {/* a fat invisible stroke so a thin arrow is easy to grab */}
                 <line x1={a[0]} y1={a[1]} x2={c[0]} y2={c[1]} stroke="transparent" strokeWidth={0.5} />
                 <line
@@ -821,10 +866,10 @@ export function Canvas2D() {
                   y1={a[1]}
                   x2={c[0]}
                   y2={c[1]}
-                  stroke={sel ? "#2f5d7c" : "#1a1a1a"}
-                  strokeOpacity={sel ? 1 : 0.55}
-                  strokeWidth={sel ? 0.1 : 0.07}
-                  markerEnd="url(#door-arrow)"
+                  stroke={stroke}
+                  strokeOpacity={sel || kind !== "interior" ? 1 : 0.55}
+                  strokeWidth={sel ? 0.1 : kind !== "interior" ? 0.09 : 0.07}
+                  markerEnd={`url(#${marker})`}
                 />
                 {sel && (
                   <>
@@ -861,6 +906,20 @@ export function Canvas2D() {
               {rubber.width.toFixed(2)} × {rubber.height.toFixed(2)} m
             </text>
           )}
+          {/* the zone waiting to be placed, following the pointer at its own size */}
+          {tool === "place" &&
+            placeCursor &&
+            (() => {
+              const box = boxes.find((b) => b.id === placingId);
+              if (!box) return null;
+              const left = placeCursor.x - box.width / 2;
+              const top = placeCursor.y - box.height / 2;
+              return box.shape === "circle" ? (
+                <ellipse cx={placeCursor.x} cy={placeCursor.y} rx={box.width / 2} ry={box.height / 2} className="drawing" />
+              ) : (
+                <rect x={left} y={top} width={box.width} height={box.height} className="drawing" />
+              );
+            })()}
 
           {/* How long a metre is. Sits below the sheet so it never covers
               a zone. */}

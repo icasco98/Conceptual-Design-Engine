@@ -59,6 +59,14 @@ export interface Box {
    * current shape is cut out of it wherever they still overlap. */
   carvedBy: string[];
   deleted: boolean;
+  /** Undefined and `true` both mean placed: a zone drawn or loaded is on
+   * the plan. `false` is a zone added from the schedule with a name, type
+   * and size but no position yet -- it exists in the schedule and in
+   * undo history, but is invisible to the plan, the 3D view, carving and
+   * the plot, exactly as if it did not exist there yet. Placing it flips
+   * this and gives it a position, and it behaves like any other zone from
+   * then on. */
+  placed?: boolean;
   /** Where the sample put it, for Reset. */
   initial: Rect;
 }
@@ -112,13 +120,25 @@ export const CIRCLE_SEGMENTS = 48;
 
 /** A door arrow. It lives on one wall of its host zone, perpendicular to
  * it, and is stored in the host's own frame so it turns and moves with
- * the host. */
+ * the host.
+ *
+ * `interior` is a door between two zones (or into a carve), always aimed
+ * at a target. `exterior-main` and `exterior-side` are doors through the
+ * building's outer wall, aimed at nothing -- there is no zone beyond
+ * them. Only one `exterior-main` stands at a time: placing one makes its
+ * host `isEntry` and un-marks whichever zone had it before, since a
+ * building has one front door. `exterior-side` is unlimited -- a garage,
+ * deck or service door is still a door without being the entrance
+ * `suggestArrows` starts its walk from. Missing `kind` (an arrow saved
+ * before this existed) means `interior`. */
 export interface Arrow {
   id: string;
   level: number;
   hostId: string;
+  kind?: "interior" | "exterior-main" | "exterior-side";
   /** The zone it was suggested to lead into, if any; only used to avoid
-   * suggesting a second arrow for the same zone. */
+   * suggesting a second arrow for the same zone. Exterior arrows never
+   * have one -- they lead outside, not into another zone. */
   targetId?: string;
   /** 0 top, 1 right, 2 bottom, 3 left in the host's frame; unused on a circle. */
   side: number;
