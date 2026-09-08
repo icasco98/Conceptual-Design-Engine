@@ -399,7 +399,29 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
       const box = restored.find((b) => b.id === g.id)!;
       if (!box.points) return;
       const [dx, dy] = toLocalVector(p.x - g.startX, p.y - g.startY, frameOf(box));
-      const move = (pt: Point): Point => [Math.min(1, Math.max(0, pt[0] + dx / box.width)), Math.min(1, Math.max(0, pt[1] + dy / box.height))];
+      // The wall's own direction, in real meters (its two fractions live
+      // on different axes that don't share a scale, so the angle has to
+      // be worked out after converting out of them) -- fixed for the
+      // whole drag, from where the wall started, not recomputed frame to
+      // frame as it moves.
+      const [f0x, f0y] = box.points[g.i0];
+      const [f1x, f1y] = box.points[g.i1];
+      const wx = (f1x - f0x) * box.width;
+      const wy = (f1y - f0y) * box.height;
+      const wallLen = Math.hypot(wx, wy);
+      // A wall with (near) no length has no defined perpendicular; leave
+      // its corners exactly where they are rather than guessing one.
+      if (wallLen < 1e-6) return;
+      // Its normal, and how far along it the pointer has moved: a wall
+      // drag only ever pushes the wall in or out, never along its own
+      // length or off at an angle, the same as a rectangle's own edge
+      // handles are already limited to one direction.
+      const nx = -wy / wallLen;
+      const ny = wx / wallLen;
+      const along = dx * nx + dy * ny;
+      const ox = along * nx;
+      const oy = along * ny;
+      const move = (pt: Point): Point => [Math.min(1, Math.max(0, pt[0] + ox / box.width)), Math.min(1, Math.max(0, pt[1] + oy / box.height))];
       const points = box.points.map((pt, i) => (i === g.i0 || i === g.i1 ? move(pt) : pt));
       const next = { ...box, points };
       setBoxes(mergeRef.current(restored.map((b) => (b.id === g.id ? next : b))));
