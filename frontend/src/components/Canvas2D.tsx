@@ -60,7 +60,7 @@ import { arrowSegment } from "../geometry/arrows";
 import { displayShapes } from "../geometry/carve";
 import { footprintRings, ringsToPath } from "../geometry/footprint";
 import { clampDrawnRect, clampGroup, isOutsidePlot, limitGrowth, plotBottom, plotRight } from "../geometry/plot";
-import { anchorPoint, frameOf, localPolyOf, polyArea, polyOfBox, resizedFromAnchor, toLocalVector } from "../geometry/poly";
+import { anchorPoint, frameOf, polyArea, polyOfBox, resizedFromAnchor, toLocalVector } from "../geometry/poly";
 import { isOpenToBelow, liveBoxes, snapToGrid, snapToNearbyNeighbors } from "../geometry/snap";
 import { GRID_M, type Arrow, type Box, type Point, type Poly, type Rect } from "../geometry/types";
 import { IconFit, IconMinus, IconPlus } from "./icons";
