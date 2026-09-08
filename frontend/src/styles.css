@@ -313,6 +313,7 @@ button.icon:hover { color: var(--err); }
 .plan-svg .box.open-below .room-label { fill: #7C8079; }
 .plan-svg .marquee { fill: #2f5d7c; fill-opacity: 0.08; stroke: #2f5d7c; stroke-width: 0.04px; stroke-dasharray: 0.2 0.15; }
 .plan-svg .drawing { fill: #2f5d7c; fill-opacity: 0.12; stroke: #2f5d7c; stroke-width: 0.06px; }
+.plan-svg .arrow-preview { stroke: #9aa0a6; stroke-width: 0.07px; stroke-dasharray: 0.12 0.1; pointer-events: none; }
 .plan-svg .poly-vertex { fill: #2f5d7c; pointer-events: none; }
 .plan-svg .handle.poly-close { fill: #eaf1f6; cursor: pointer; }
 

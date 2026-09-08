@@ -364,7 +364,10 @@ export function View3D() {
     /** A zone's outline, taken from the storey it stands on. */
     const pageOf = (b: Box): Poly => perLevel.get(b.level)?.find((s) => s.id === b.id)?.page ?? polyOfBox(b);
 
-    const live = boxes.filter((b) => !b.deleted);
+    // Not deleted, and actually on the plan -- a zone waiting in the
+    // schedule's "To place" list (placed === false) has no position and
+    // is invisible everywhere geometry is drawn, same as liveBoxes.
+    const live = boxes.filter((b) => !b.deleted && b.placed !== false);
 
     // ---- the volumes: one per zone, floor to ceiling, whatever its height
     for (const b of live) {

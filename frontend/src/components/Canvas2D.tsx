@@ -56,11 +56,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { CategoryKey } from "../api/types";
-import { arrowSegment } from "../geometry/arrows";
+import { arrowSegment, nearestWallPoint } from "../geometry/arrows";
 import { displayShapes } from "../geometry/carve";
 import { footprintRings, ringsToPath } from "../geometry/footprint";
 import { clampDrawnRect, clampGroup, isOutsidePlot, limitGrowth, plotBottom, plotRight } from "../geometry/plot";
-import { anchorPoint, frameOf, pageToLocalPoly, polyArea, polyOfBox, resizedFromAnchor, toLocalVector } from "../geometry/poly";
+import { anchorPoint, frameOf, localPolyOf, pageToLocalPoly, polyArea, polyOfBox, resizedFromAnchor, toLocalVector } from "../geometry/poly";
 import { isOpenToBelow, liveBoxes, nearestNeighborPoint, snapToGrid, snapToNearbyNeighbors, wallSnapAdjust } from "../geometry/snap";
 import { GRID_M, type Arrow, type Box, type Point, type Poly, type Rect } from "../geometry/types";
 import { IconFit, IconMinus, IconPlus } from "./icons";
@@ -200,6 +200,15 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
   useEffect(() => {
     if (tool !== "place") setPlaceCursor(null);
   }, [tool]);
+
+  /** Which wall of which zone a door would land on right now, while an
+   *  arrow tool is armed -- what the grey preview follows. Cleared
+   *  whenever the tool stops being one of the door tools. */
+  const [arrowPreview, setArrowPreview] = useState<{ hostId: string; side: number; t: number } | null>(null);
+  const arrowTool = tool === "arrow" || tool === "arrow-main" || tool === "arrow-side";
+  useEffect(() => {
+    if (!arrowTool) setArrowPreview(null);
+  }, [arrowTool]);
 
   /** The polygon tool's corners placed so far, and where the next one
    *  would land -- both cleared whenever the tool stops being `polygon`. */
@@ -936,6 +945,22 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
             const p = toMeters(e);
             setPolyCursor(orthoPoint(polyDraft[polyDraft.length - 1], [p.x, p.y], e.shiftKey));
           }
+          if (arrowTool) {
+            // Whatever a click would actually land on: the same DOM
+            // hit-test a real pointerdown resolves, carved-away holes
+            // and all, so the preview never promises a door a click
+            // right there wouldn't also place.
+            const el = document.elementFromPoint(e.clientX, e.clientY);
+            const hostId = el instanceof Element ? el.closest("[data-box-id]")?.getAttribute("data-box-id") : null;
+            const host = hostId ? live.find((b) => b.id === hostId) : undefined;
+            if (host && !isOpenToBelow(host, level)) {
+              const p = toMeters(e);
+              const { side, t } = nearestWallPoint(host, [p.x, p.y]);
+              setArrowPreview({ hostId: host.id, side, t });
+            } else {
+              setArrowPreview(null);
+            }
+          }
         }}
         onPointerDown={onSheetDown}
         onPointerUp={onPanUp}
@@ -957,6 +982,9 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
           </marker>
           <marker id="door-arrow-side" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse" markerUnits="strokeWidth">
             <path d="M 0 0 L 10 5 L 0 10 z" fill="#b3392b" />
+          </marker>
+          <marker id="door-arrow-preview" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse" markerUnits="strokeWidth">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#9aa0a6" />
           </marker>
         </defs>
         <g transform={`translate(${cam.x} ${cam.y}) scale(${cam.z})`} pointerEvents="none">
@@ -1032,11 +1060,20 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
             return (
               <g
                 key={b.id}
+                data-box-id={b.id}
                 className={`box ${b.kind} ${b.isEntry ? "entry" : ""} ${isSel ? "selected" : ""} ${shape?.carved ? "carved" : ""} ${flagged ? "flagged" : ""} ${outside ? "outside-plot" : ""} ${openBelow ? "open-below" : ""}`}
                 transform={`rotate(${b.rotation} ${cx} ${cy})`}
                 pointerEvents="all"
                 onPointerDown={(e) => startMove(e, b)}
               >
+                {shape?.carved && (
+                  // A carve only removes the fill, not the zone: without
+                  // this, a click over the bite (an arrow tool click,
+                  // say) would miss the zone entirely rather than losing
+                  // the overlap to whatever carved it, the way any other
+                  // overlap resolves.
+                  <polygon points={pointsOf(localPolyOf(b))} fill="#000" fillOpacity={0.001} stroke="none" />
+                )}
                 <polygon
                   points={pointsOf(poly)}
                   fill={b.kind === "corridor" ? "url(#hatch)" : fill}
@@ -1286,6 +1323,15 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
               ))}
             </>
           )}
+          {/* the door a click would place right now, grey until it is */}
+          {arrowTool &&
+            arrowPreview &&
+            (() => {
+              const host = live.find((b) => b.id === arrowPreview.hostId);
+              if (!host) return null;
+              const [a, c] = arrowSegment(host, { id: "preview", level, hostId: host.id, side: arrowPreview.side, t: arrowPreview.t, dir: 1 });
+              return <line x1={a[0]} y1={a[1]} x2={c[0]} y2={c[1]} className="arrow-preview" markerEnd="url(#door-arrow-preview)" />;
+            })()}
           {/* the zone waiting to be placed, following the pointer at its own size */}
           {tool === "place" &&
             placeCursor &&
