@@ -2,14 +2,14 @@
 import type { CategoryKey } from "./api/types";
 import { zoneOf } from "./rooms";
 
-export const CATEGORY_COLORS: Record<CategoryKey, string> = {
+const CATEGORY_COLORS: Record<CategoryKey, string> = {
   category_a: "#4A6E96",
   category_b: "#C58A3E",
   category_c: "#6E8C74",
 };
 
-export const CORRIDOR_FILL = "#FCFCFB";
-export const STAIR_FILL = "#7A6A93";
+const CORRIDOR_FILL = "#FCFCFB";
+const STAIR_FILL = "#7A6A93";
 
 /** Rooms are washed, not flooded: line weight carries the drawing. */
 export const CATEGORY_WASH = 0.17;

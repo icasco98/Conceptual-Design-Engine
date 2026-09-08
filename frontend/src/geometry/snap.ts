@@ -28,7 +28,7 @@ export function isOpenToBelow(b: Box, level: number): boolean {
 }
 
 /** Sub-meter gap to the nearest facing neighbour along one axis, if any. */
-export function findNearestGapDelta(el: Box, live: Box[], axis: "x" | "y"): number | null {
+function findNearestGapDelta(el: Box, live: Box[], axis: "x" | "y"): number | null {
   const r = rectOf(el);
   let bestGap = Infinity;
   let bestDelta: number | null = null;

@@ -14,7 +14,7 @@
  */
 import type { CategoryKey } from "./api/types";
 
-export interface RoomTypeInfo {
+interface RoomTypeInfo {
   label: string;
   minWidth: number;
   minHeight: number;

@@ -20,7 +20,7 @@ import { roomTypeInfo } from "./rooms";
  *  is given the higher rank, because a corridor that gives way stops
  *  being a corridor. */
 export const DEFAULT_PRIORITY = 2;
-export const CIRCULATION_PRIORITY = 1;
+const CIRCULATION_PRIORITY = 1;
 
 /** How many storeys the sample has. Rooms are assigned a level; the count
  *  is what the level tabs and the 3D view are built from. */

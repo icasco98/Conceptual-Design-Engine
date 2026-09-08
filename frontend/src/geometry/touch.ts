@@ -17,7 +17,7 @@ import { polyOfBox } from "./poly";
 import { boxesTrulyIntersect } from "./rect";
 import type { Box, Point, Poly } from "./types";
 
-export const TOUCH_REACH_M = 1.0;
+const TOUCH_REACH_M = 1.0;
 
 /** Closest points between two segments, and the distance. */
 function segmentsClosest(a0: Point, a1: Point, b0: Point, b1: Point): { d: number; pa: Point; pb: Point } {

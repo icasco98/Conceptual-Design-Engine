@@ -44,7 +44,7 @@ export function unionPolys(polys: Poly[]): Poly[][] {
   }
 }
 
-export interface BBox {
+interface BBox {
   minX: number;
   minY: number;
   maxX: number;
@@ -72,7 +72,7 @@ export function rectPolyOf(r: Rect): Poly {
 }
 
 /** The ellipse inscribed in a rectangle, as a polygon. */
-export function ellipsePolyOf(r: Rect): Poly {
+function ellipsePolyOf(r: Rect): Poly {
   const cx = r.left + r.width / 2;
   const cy = r.top + r.height / 2;
   const out: Poly = [];

@@ -5,7 +5,7 @@
  */
 import type { Point, Rect } from "./types";
 
-export interface Touch {
+interface Touch {
   axis: "x" | "y";
   mid: Point;
 }

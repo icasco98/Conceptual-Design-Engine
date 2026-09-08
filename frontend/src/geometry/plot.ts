@@ -85,7 +85,7 @@ export function shiftInside(poly: Poly, plot: Plot): Point {
 
 /** The one shift that brings a whole selection back inside -- see rule 2
  * at the top of this file. */
-export function shiftGroupInside(boxes: Box[], ids: Iterable<string>, plot: Plot): Point {
+function shiftGroupInside(boxes: Box[], ids: Iterable<string>, plot: Plot): Point {
   if (!plot.on) return [0, 0];
   return shiftInside(cornersOf(boxes, new Set(ids)), plot);
 }
@@ -133,7 +133,7 @@ function fitsExtent(poly: Poly, plot: Plot): boolean {
 }
 
 /** How far between `from` and `to` a resize may go. */
-export type GrowthTest =
+type GrowthTest =
   /** The zone must end up inside the plot where it stands: the resize
    * gesture, where the corner you are not dragging must not move. */
   | "inside"

@@ -21,19 +21,6 @@ export function obbOf(b: Box): Obb {
   };
 }
 
-export function cornersOfObb(o: Obb): Point[] {
-  const local: Point[] = [
-    [-o.hw, -o.hh],
-    [o.hw, -o.hh],
-    [o.hw, o.hh],
-    [-o.hw, o.hh],
-  ];
-  return local.map((p) => [
-    o.cx + p[0] * o.ax[0] + p[1] * o.ay[0],
-    o.cy + p[0] * o.ax[1] + p[1] * o.ay[1],
-  ]);
-}
-
 function projection(o: Obb, axis: Point): number {
   return (
     o.hw * Math.abs(o.ax[0] * axis[0] + o.ax[1] * axis[1]) +
@@ -56,7 +43,7 @@ export function obbsSeparated(a: Obb, b: Obb): boolean {
   return false;
 }
 
-export function rectsOverlap(a: Rect, b: Rect): boolean {
+function rectsOverlap(a: Rect, b: Rect): boolean {
   return (
     a.left + OVERLAP_EPS < b.left + b.width &&
     b.left + OVERLAP_EPS < a.left + a.width &&
@@ -67,7 +54,7 @@ export function rectsOverlap(a: Rect, b: Rect): boolean {
 
 /** Separating axis theorem for two convex polygons: true when a gap
  * exists along some edge normal of either. Touching does not count. */
-export function convexPolysSeparated(a: Poly, b: Poly): boolean {
+function convexPolysSeparated(a: Poly, b: Poly): boolean {
   for (const poly of [a, b]) {
     for (let i = 0; i < poly.length; i++) {
       const p = poly[i];

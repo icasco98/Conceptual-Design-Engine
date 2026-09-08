@@ -98,8 +98,8 @@ export interface Frame {
   rotated: boolean;
 }
 
-/** Sub-meter overlaps don't count; see resolve.ts. 0.05px at the old
- * 26px/m scale. */
+/** Two shapes count as overlapping only past this much, in meters: a
+ * shared edge and the rounding either side of it are not an overlap. */
 export const OVERLAP_EPS = 0.002;
 /** Every box's position snaps to this grid while dragging or resizing. */
 export const GRID_M = 0.25;

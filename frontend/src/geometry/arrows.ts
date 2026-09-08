@@ -22,12 +22,9 @@ import { isOpenToBelow } from "./snap";
 import { DOOR_INSET_M, type Arrow, type Box, type Point } from "./types";
 import { touchingEdge } from "./doors";
 
-/** Sides of a rectangle in its own frame, clockwise from the top. */
-export const SIDES = ["top", "right", "bottom", "left"] as const;
-
 /** The point on the host's outline for (side, t), and the outward normal
  * there, both in the host's LOCAL frame. */
-export function wallPointLocal(host: Box, side: number, t: number): { p: Point; n: Point } {
+function wallPointLocal(host: Box, side: number, t: number): { p: Point; n: Point } {
   const r = rectOf(host);
   if (host.shape === "circle") {
     const a = t * Math.PI * 2;

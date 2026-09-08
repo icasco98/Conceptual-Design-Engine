@@ -111,7 +111,7 @@ export interface DisplayShape {
 /** Everything cutting `el` right now: the zones it was told to give way
  * to, plus -- when automatic carving is on -- anything it overlaps that
  * outranks it. Priority 1 is the highest; equal priorities never carve. */
-export function effectiveCarvers(el: Box, live: Box[], autoCarve: boolean): Box[] {
+function effectiveCarvers(el: Box, live: Box[], autoCarve: boolean): Box[] {
   const out: Box[] = [];
   for (const other of live) {
     if (other.id === el.id) continue;
