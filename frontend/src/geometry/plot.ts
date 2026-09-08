@@ -179,6 +179,39 @@ export function limitGrowth(from: Box, to: Box, plot: Plot, test: GrowthTest = "
 }
 
 /**
+ * The furthest a polygon zone's corners may travel from `from.points`
+ * towards `toPoints` without the outline they trace leaving the plot.
+ *
+ * The same bisection as `limitGrowth`, but interpolating the points
+ * themselves rather than left/top/width/height: a vertex or wall drag
+ * changes only the points, so this is what holds the dragged corner (or
+ * the two on a dragged wall) back at the boundary while every untouched
+ * corner -- identical in `from.points` and `toPoints`, so its
+ * interpolated position never moves -- stays exactly where it was, the
+ * same "inside" test a corner resize gets.
+ */
+export function limitPointGrowth(from: Box, toPoints: Point[], plot: Plot): Box {
+  const to: Box = { ...from, points: toPoints };
+  if (!plot.on || !from.points) return to;
+  const ok = (b: Box) => fitsInside(polyOfBox(b), plot);
+  if (ok(to)) return to;
+  if (!ok(from)) return to;
+  const fromPoints = from.points;
+  const at = (s: number): Box => ({
+    ...from,
+    points: fromPoints.map((p, i): Point => [p[0] + (toPoints[i][0] - p[0]) * s, p[1] + (toPoints[i][1] - p[1]) * s]),
+  });
+  let lo = 0;
+  let hi = 1;
+  for (let i = 0; i < 20; i++) {
+    const mid = (lo + hi) / 2;
+    if (ok(at(mid))) lo = mid;
+    else hi = mid;
+  }
+  return at(lo);
+}
+
+/**
  * A zone edited by hand rather than dragged -- a width, a depth or a
  * rotation typed into the schedule -- brought back inside the plot.
  *

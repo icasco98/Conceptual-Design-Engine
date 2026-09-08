@@ -4,12 +4,12 @@ import { carveWith, displayShapes, releaseCarve, shapeStillUsable, subtractKeepL
 import { arrowSegment, nearestWallPoint, suggestArrows } from "./arrows";
 import { touchingEdge } from "./doors";
 import { footprintRings } from "./footprint";
-import { clampDrawnRect, clampGroup, isOutsidePlot, limitGrowth, settleInPlot, shiftInside } from "./plot";
+import { clampDrawnRect, clampGroup, isOutsidePlot, limitGrowth, limitPointGrowth, settleInPlot, shiftInside } from "./plot";
 import { anchorPoint, polyArea, polyOfBox, rectPolyOf, resizedFromAnchor } from "./poly";
 import { boxesTrulyIntersect, obbOf, obbsSeparated } from "./rect";
 import { isOpenToBelow, liveBoxes, nearestNeighborPoint, snapToGrid, snapToNearbyNeighbors, wallSnapAdjust } from "./snap";
 import { polyGap, touchDelta, touchSelected } from "./touch";
-import type { Box, Plot, Poly } from "./types";
+import type { Box, Plot, Point, Poly } from "./types";
 
 function box(partial: Partial<Box> & { id: string; left: number; top: number; width: number; height: number }): Box {
   return {
@@ -688,5 +688,63 @@ describe("door arrows on a polygon zone read its own walls, not its bounding box
         expect(inside(head, abs)).toBe(false);
       }
     }
+  });
+});
+
+describe("a polygon's own corners and walls are held inside the plot too", () => {
+  const plot: Plot = { on: true, left: 0, top: 0, width: 8, depth: 8 };
+  // A plain 4x4 square, drawn as a polygon, inside an 8x8 plot: corners
+  // at (2,2), (6,2), (6,6), (2,6).
+  const square: Box = box({
+    id: "p",
+    left: 2,
+    top: 2,
+    width: 4,
+    height: 4,
+    shape: "polygon",
+    points: [
+      [0, 0],
+      [1, 0],
+      [1, 1],
+      [0, 1],
+    ],
+  });
+
+  it("holds a dragged corner at the boundary instead of letting it pass through", () => {
+    // Corner 1, (6,2), dragged 8m east to (14,2) -- well past the plot's
+    // right edge at x=8.
+    const dragged: Point[] = [square.points![0], [3, 0], square.points![2], square.points![3]];
+    const held = limitPointGrowth(square, dragged, plot);
+    const abs = held.points!.map(([fx, fy]): [number, number] => [held.left + fx * held.width, held.top + fy * held.height]);
+    expect(abs[1][0]).toBeLessThanOrEqual(8 + 1e-3);
+    expect(abs[1][0]).toBeGreaterThan(7.9);
+    expect(abs[1][1]).toBeCloseTo(2, 6);
+  });
+
+  it("leaves every corner not being dragged exactly where it was", () => {
+    const dragged: Point[] = [square.points![0], [3, 0], square.points![2], square.points![3]];
+    const held = limitPointGrowth(square, dragged, plot);
+    const abs = held.points!.map(([fx, fy]): [number, number] => [held.left + fx * held.width, held.top + fy * held.height]);
+    expect(abs[0]).toEqual([2, 2]);
+    expect(abs[2]).toEqual([6, 6]);
+    expect(abs[3]).toEqual([2, 6]);
+  });
+
+  it("holds a dragged wall's two corners at the boundary together", () => {
+    // The east wall (corners 1 and 2) pushed 8m east.
+    const dragged: Point[] = [square.points![0], [3, 0], [3, 1], square.points![3]];
+    const held = limitPointGrowth(square, dragged, plot);
+    const abs = held.points!.map(([fx, fy]): [number, number] => [held.left + fx * held.width, held.top + fy * held.height]);
+    expect(abs[1][0]).toBeCloseTo(abs[2][0], 6);
+    expect(abs[1][0]).toBeLessThanOrEqual(8 + 1e-3);
+    expect(abs[1][0]).toBeGreaterThan(7.9);
+    expect(abs[0]).toEqual([2, 2]);
+    expect(abs[3]).toEqual([2, 6]);
+  });
+
+  it("passes a drag straight through when it stays inside the plot", () => {
+    const dragged: Point[] = [square.points![0], [1.25, 0], square.points![2], square.points![3]];
+    const held = limitPointGrowth(square, dragged, plot);
+    expect(held.points).toEqual(dragged);
   });
 });

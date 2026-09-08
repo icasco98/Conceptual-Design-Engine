@@ -59,7 +59,7 @@ import type { CategoryKey } from "../api/types";
 import { arrowSegment, nearestWallPoint } from "../geometry/arrows";
 import { displayShapes } from "../geometry/carve";
 import { footprintRings, ringsToPath } from "../geometry/footprint";
-import { clampDrawnRect, clampGroup, isOutsidePlot, limitGrowth, plotBottom, plotRight } from "../geometry/plot";
+import { clampDrawnRect, clampGroup, isOutsidePlot, limitGrowth, limitPointGrowth, plotBottom, plotRight } from "../geometry/plot";
 import { anchorPoint, frameOf, localPolyOf, pageToLocalPoly, polyArea, polyOfBox, resizedFromAnchor, toLocalVector } from "../geometry/poly";
 import { isOpenToBelow, liveBoxes, nearestNeighborPoint, snapToGrid, snapToNearbyNeighbors, wallSnapAdjust } from "../geometry/snap";
 import { GRID_M, type Arrow, type Box, type Point, type Poly, type Rect } from "../geometry/types";
@@ -421,7 +421,10 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
         }
       }
       const points = box.points.map((pt, i): Point => (i === g.index ? [fx, fy] : pt));
-      const next = { ...box, points };
+      // Held inside the plot exactly like a rectangle's own corner: past
+      // this point the drag is felt as resistance, not free until you
+      // let go.
+      const next = limitPointGrowth(box, points, plotRef.current);
       setBoxes(mergeRef.current(restored.map((b) => (b.id === g.id ? next : b))));
     } else if (g.kind === "poly-wall") {
       const restored = g.snapshot;
@@ -477,7 +480,9 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
       // isn't: only the points move, so nothing has a pivot to shift.
       const move = (pt: Point): Point => [pt[0] + ox / box.width, pt[1] + oy / box.height];
       const points = box.points.map((pt, i) => (i === g.i0 || i === g.i1 ? move(pt) : pt));
-      const next = { ...box, points };
+      // Held inside the plot the same way a rectangle's own wall handle
+      // already is.
+      const next = limitPointGrowth(box, points, plotRef.current);
       setBoxes(mergeRef.current(restored.map((b) => (b.id === g.id ? next : b))));
     } else if (g.kind === "rotate") {
       const restored = g.snapshot;
