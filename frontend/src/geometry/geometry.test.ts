@@ -7,9 +7,9 @@ import { footprintRings } from "./footprint";
 import { clampDrawnRect, clampGroup, isOutsidePlot, limitGrowth, settleInPlot, shiftInside } from "./plot";
 import { anchorPoint, polyArea, polyOfBox, rectPolyOf, resizedFromAnchor } from "./poly";
 import { boxesTrulyIntersect, obbOf, obbsSeparated } from "./rect";
-import { isOpenToBelow, liveBoxes, snapToGrid, snapToNearbyNeighbors } from "./snap";
+import { isOpenToBelow, liveBoxes, nearestNeighborPoint, snapToGrid, snapToNearbyNeighbors, wallSnapAdjust } from "./snap";
 import { polyGap, touchDelta, touchSelected } from "./touch";
-import type { Box, Plot } from "./types";
+import type { Box, Plot, Poly } from "./types";
 
 function box(partial: Partial<Box> & { id: string; left: number; top: number; width: number; height: number }): Box {
   return {
@@ -583,5 +583,43 @@ describe("resizing a rotated zone holds the corner you are not dragging still", 
     expect(stillThere[1]).toBeCloseTo(anchor[1], 6);
     expect(resized.width).toBe(9);
     expect(resized.height).toBe(2);
+  });
+});
+
+describe("snapping a polygon corner or wall to a neighbour", () => {
+  const neighbor: Poly = [
+    [5, 0],
+    [8, 0],
+    [8, 3],
+    [5, 3],
+  ];
+
+  it("snaps a dragged point onto the neighbour's corner within reach", () => {
+    expect(nearestNeighborPoint([5.1, 0.1], [neighbor])).toEqual([5, 0]);
+  });
+
+  it("snaps a dragged point onto the neighbour's wall, not its corner, mid-wall", () => {
+    const snapped = nearestNeighborPoint([5.1, 1.5], [neighbor]);
+    expect(snapped![0]).toBeCloseTo(5, 6);
+    expect(snapped![1]).toBeCloseTo(1.5, 6);
+  });
+
+  it("does not snap once the neighbour is out of reach", () => {
+    expect(nearestNeighborPoint([5.5, 1.5], [neighbor])).toBeNull();
+  });
+
+  it("pulls a wall flush against a parallel neighbour wall just short of it", () => {
+    // Our wall runs vertically at x=4.9, pushed toward the neighbour's
+    // wall at x=5: wallSnapAdjust should report the extra 0.1 needed.
+    const extra = wallSnapAdjust([4.9, 0], [4.9, 3], [1, 0], [neighbor]);
+    expect(extra).toBeCloseTo(0.1, 6);
+  });
+
+  it("ignores a neighbour wall that isn't parallel", () => {
+    // A diagonal wall right up against the neighbour's corner: neither
+    // of the neighbour's own walls (horizontal, vertical) runs the same
+    // way as this one, so proximity alone must not be enough to snap.
+    const extra = wallSnapAdjust([4, 0], [4.3, 0.4], [0.8, -0.6], [neighbor]);
+    expect(extra).toBe(0);
   });
 });

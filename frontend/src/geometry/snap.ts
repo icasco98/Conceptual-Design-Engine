@@ -5,7 +5,7 @@
  * new Box objects; nothing is mutated.
  */
 import { rectOf } from "./rect";
-import { GAP_SNAP_M, GRID_M, type Box } from "./types";
+import { GAP_SNAP_M, GRID_M, type Box, type Point, type Poly } from "./types";
 
 export function snapToGrid(v: number): number {
   return Math.round(v / GRID_M) * GRID_M;
@@ -77,4 +77,86 @@ export function snapToNearbyNeighbors(el: Box, live: Box[]): Box {
   const dy = findNearestGapDelta(out, live, "y");
   if (dy !== null) out = { ...out, top: out.top + dy };
   return out;
+}
+
+/** How close a dragged polygon corner or wall may land to another zone's
+ * own corner or wall before it locks onto it exactly. */
+export const POINT_SNAP_M = 0.25;
+
+/** Within a hair of parallel: a wall drag only snaps flush against
+ * another wall running the same way, never a crosswise one. */
+const PARALLEL_SIN = 0.09; // ~5 degrees
+
+/** The closest point on any of `outlines` to `p` -- one of their own
+ * corners if within `POINT_SNAP_M` (corners win over a mid-wall point at
+ * the same reach, since landing exactly on another room's corner is the
+ * more useful alignment), else the closest point along one of their
+ * walls, else null.
+ *
+ * Both `p` and `outlines` are read in whatever one frame the caller put
+ * them in -- the dragged zone's own local frame, once its neighbours'
+ * outlines have been turned into it with `poly.ts`'s `pageToLocalPoly`,
+ * so a snap works the same under any rotation. */
+export function nearestNeighborPoint(p: Point, outlines: Poly[]): Point | null {
+  let corner: Point | null = null;
+  let cornerDist = POINT_SNAP_M;
+  let edge: Point | null = null;
+  let edgeDist = POINT_SNAP_M;
+  for (const poly of outlines) {
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i];
+      const d = Math.hypot(p[0] - a[0], p[1] - a[1]);
+      if (d < cornerDist) {
+        cornerDist = d;
+        corner = a;
+      }
+      const b = poly[(i + 1) % poly.length];
+      const abx = b[0] - a[0];
+      const aby = b[1] - a[1];
+      const len2 = abx * abx + aby * aby;
+      if (len2 < 1e-9) continue;
+      const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * abx + (p[1] - a[1]) * aby) / len2));
+      const ex = a[0] + t * abx;
+      const ey = a[1] + t * aby;
+      const de = Math.hypot(p[0] - ex, p[1] - ey);
+      if (de < edgeDist) {
+        edgeDist = de;
+        edge = [ex, ey];
+      }
+    }
+  }
+  return corner ?? edge;
+}
+
+/** The extra push, along `normal`, that would bring the segment `a`-`b`
+ * (already pushed this far) exactly flush with a nearby wall of one of
+ * `outlines` that runs the same way, or 0 if none is within
+ * `POINT_SNAP_M`. Read in the same one frame as `nearestNeighborPoint`. */
+export function wallSnapAdjust(a: Point, b: Point, normal: Point, outlines: Poly[]): number {
+  const wx = b[0] - a[0];
+  const wy = b[1] - a[1];
+  const wallLen = Math.hypot(wx, wy);
+  if (wallLen < 1e-6) return 0;
+  const ux = wx / wallLen;
+  const uy = wy / wallLen;
+  let best = 0;
+  let bestAbs = POINT_SNAP_M;
+  for (const poly of outlines) {
+    for (let i = 0; i < poly.length; i++) {
+      const p0 = poly[i];
+      const p1 = poly[(i + 1) % poly.length];
+      const ex = p1[0] - p0[0];
+      const ey = p1[1] - p0[1];
+      const edgeLen = Math.hypot(ex, ey);
+      if (edgeLen < 1e-6) continue;
+      // Parallel or anti-parallel, within PARALLEL_SIN.
+      if (Math.abs(ux * (ey / edgeLen) - uy * (ex / edgeLen)) > PARALLEL_SIN) continue;
+      const gap = (p0[0] - a[0]) * normal[0] + (p0[1] - a[1]) * normal[1];
+      if (Math.abs(gap) < bestAbs) {
+        bestAbs = Math.abs(gap);
+        best = gap;
+      }
+    }
+  }
+  return best;
 }
