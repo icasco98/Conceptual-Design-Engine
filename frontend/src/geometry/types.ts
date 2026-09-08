@@ -138,6 +138,34 @@ export const CIRCLE_SEGMENTS = 48;
  * deck or service door is still a door without being the entrance
  * `suggestArrows` starts its walk from. Missing `kind` (an arrow saved
  * before this existed) means `interior`. */
+/** Who someone is, for the one thing circulation checks automatically:
+ * whether a `servant` or `exterior` route ever crosses a `category_a`
+ * (private) zone. Not the same axis as a zone's own category -- an owner
+ * is `served` wherever they go, a caterer is `servant` even while
+ * standing in the kitchen, which is `category_b`. */
+export type ActorRole = "served" | "guest" | "servant" | "exterior";
+
+/** Someone who walks through the building, and the rooms they visit, in
+ * order. The walk between each pair of waypoints is never stored -- it is
+ * the shortest crossing of the touching graph (geometry/circulation.ts),
+ * recomputed from wherever the zones currently are, exactly as a door
+ * arrow's suggestion is. Move a room and every actor's route follows it
+ * without being told to. */
+export interface Actor {
+  id: string;
+  name: string;
+  role: ActorRole;
+  /** Assigned once, at creation, from a fixed rotation -- never guessed
+   * from the role, since two actors of the same role must still read as
+   * two different lines on the plan. */
+  color: string;
+  /** Zone ids, in the order they are visited. A waypoint that no longer
+   * exists (the zone was deleted) or that nothing can reach is simply
+   * skipped when the route is drawn -- the rest of it still shows. */
+  waypoints: string[];
+  visible: boolean;
+}
+
 export interface Arrow {
   id: string;
   level: number;

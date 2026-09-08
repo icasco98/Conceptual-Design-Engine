@@ -16,9 +16,15 @@ import { clampDrawnRect, clampGroup, settleInPlot } from "../geometry/plot";
 import { localPolyOf } from "../geometry/poly";
 import { isOpenToBelow, liveBoxes } from "../geometry/snap";
 import { touchSelected } from "../geometry/touch";
-import type { Arrow, Box, BoxShape, Plot, Point } from "../geometry/types";
+import type { Actor, ActorRole, Arrow, Box, BoxShape, Plot, Point } from "../geometry/types";
 import { roomTypeInfo } from "../rooms";
 import { DEFAULT_PLOT, DEFAULT_PRIORITY, SAMPLE_STOREYS, STOREY_HEIGHT_M, sampleArrows, sampleBoxes, storeysSpanned } from "../sample";
+
+/** A fixed rotation, not a colour per role: two actors of the same role
+ * (two guests, say) still need to read as two different lines on the
+ * plan, so colour follows creation order rather than being guessed from
+ * what the actor is. */
+const ACTOR_COLORS = ["#3B4B96", "#1E8F7A", "#C1583B", "#B08A2E", "#6B4E8E", "#3E7C8C", "#8C5A6B", "#5A7A3E"];
 
 /** What undo restores. The camera, the selection and the toggles are not
  * in it: undo is for the drawing, not for where you were looking. */
@@ -79,6 +85,15 @@ export interface State {
   moveIn3D: boolean;
   /** A zone is carved by anything it overlaps that outranks it. */
   autoCarve: boolean;
+  /** Who walks the plan, and where. Not in the undo history: an actor is
+   * an analysis laid over the drawing, not a change to it, the same way
+   * the selection and the camera are not either. Deleting one is instant. */
+  actors: Actor[];
+  /** Draw every visible actor's route on the plan. Off by default, like
+   * every other overlay on the rail. */
+  showCirculation: boolean;
+  /** The actor a click on a zone adds a waypoint to, while it is set. */
+  routingActorId: string | null;
   past: Snapshot[];
   future: Snapshot[];
   savedId: string | null;
@@ -139,6 +154,19 @@ export interface State {
   selectArrow: (id: string | null) => void;
   /** Propose arrows for zones that have none yet (arrows.ts). */
   suggestArrows: () => void;
+  /** A new actor, named and coloured, with an empty route. Returns its id. */
+  addActor: (name: string, role: ActorRole) => string;
+  updateActor: (id: string, patch: Partial<Pick<Actor, "name" | "role">>) => void;
+  deleteActor: (id: string) => void;
+  toggleActorVisible: (id: string) => void;
+  /** `hostId` joins the end of the actor's route. */
+  addWaypoint: (actorId: string, hostId: string) => void;
+  removeWaypoint: (actorId: string, index: number) => void;
+  clearWaypoints: (actorId: string) => void;
+  /** Arm or disarm route recording: while set, clicking a zone on the
+   *  plan calls `addWaypoint` instead of selecting it. */
+  setRoutingActor: (id: string | null) => void;
+  toggleCirculation: () => void;
   resetLayout: () => void;
   /** Record the drawing as it stands, before something changes it. Every
    * discrete action does this itself; a gesture calls it as it starts. */
@@ -213,6 +241,9 @@ export const useStore = create<State>((set, get) => ({
   showAbove: false,
   moveIn3D: false,
   autoCarve: false,
+  actors: [],
+  showCirculation: false,
+  routingActorId: null,
   past: [],
   future: [],
   savedId: null,
@@ -254,6 +285,8 @@ export const useStore = create<State>((set, get) => ({
       placingId: null,
       savedId: null,
       savedName: "",
+      actors: [],
+      routingActorId: null,
     });
   },
 
@@ -445,6 +478,8 @@ export const useStore = create<State>((set, get) => ({
       selected: get().selected.filter((s) => !idSet.has(s)),
       // A zone's arrows go with it.
       arrows: get().arrows.filter((a) => !idSet.has(a.hostId)),
+      // ...and so does its place in any actor's route.
+      actors: get().actors.map((a) => ({ ...a, waypoints: a.waypoints.filter((id) => !idSet.has(id)) })),
     });
   },
 
@@ -522,6 +557,52 @@ export const useStore = create<State>((set, get) => ({
     const { boxes, arrows, level } = get();
     const mine = arrows.filter((a) => a.level === level);
     set({ arrows: [...arrows, ...suggestArrows(liveBoxes(boxes, level), mine, level)] });
+  },
+
+  addActor(name, role) {
+    const actors = get().actors;
+    const id = `actor:${Date.now().toString(36)}:${actors.length}`;
+    const color = ACTOR_COLORS[actors.length % ACTOR_COLORS.length];
+    const actor: Actor = { id, name: name.trim() || "Actor", role, color, waypoints: [], visible: true };
+    set({ actors: [...actors, actor] });
+    return id;
+  },
+
+  updateActor(id, patch) {
+    set({ actors: get().actors.map((a) => (a.id === id ? { ...a, ...patch } : a)) });
+  },
+
+  deleteActor(id) {
+    set({
+      actors: get().actors.filter((a) => a.id !== id),
+      routingActorId: get().routingActorId === id ? null : get().routingActorId,
+    });
+  },
+
+  toggleActorVisible(id) {
+    set({ actors: get().actors.map((a) => (a.id === id ? { ...a, visible: !a.visible } : a)) });
+  },
+
+  addWaypoint(actorId, hostId) {
+    set({ actors: get().actors.map((a) => (a.id === actorId ? { ...a, waypoints: [...a.waypoints, hostId] } : a)) });
+  },
+
+  removeWaypoint(actorId, index) {
+    set({
+      actors: get().actors.map((a) => (a.id === actorId ? { ...a, waypoints: a.waypoints.filter((_, i) => i !== index) } : a)),
+    });
+  },
+
+  clearWaypoints(actorId) {
+    set({ actors: get().actors.map((a) => (a.id === actorId ? { ...a, waypoints: [] } : a)) });
+  },
+
+  setRoutingActor(id) {
+    set({ routingActorId: id, showCirculation: id ? true : get().showCirculation });
+  },
+
+  toggleCirculation() {
+    set({ showCirculation: !get().showCirculation });
   },
 
   carve(id) {
@@ -676,8 +757,8 @@ export const useStore = create<State>((set, get) => ({
   },
 
   async saveProject(name) {
-    const { boxes, arrows, storeys, plot, savedId } = get();
-    const body = { name, boxes, arrows, storeys, plot };
+    const { boxes, arrows, storeys, plot, actors, savedId } = get();
+    const body = { name, boxes, arrows, storeys, plot, actors };
     try {
       const saved = savedId ? await api.updateProject(savedId, body) : await api.createProject(body);
       set({ savedId: saved.id, savedName: saved.name });
@@ -713,6 +794,9 @@ export const useStore = create<State>((set, get) => ({
         placingId: null,
         savedId: saved.id,
         savedName: saved.name,
+        // Layouts saved before circulation existed have none.
+        actors: saved.actors ?? [],
+        routingActorId: null,
       });
     } catch (e) {
       set({ error: (e as Error).message });

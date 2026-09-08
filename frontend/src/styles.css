@@ -263,6 +263,44 @@ input { font: inherit; }
 }
 .icon-toggle.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 
+/* ---------------------------------------------------------------- actors */
+.actors-pane {
+  display: flex; flex-direction: column; gap: 8px; flex: none; max-height: 46%; overflow: auto;
+  padding: 12px 18px 14px; border-top: 1px solid var(--rule);
+}
+.actors-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.actors-empty { font-size: 11.5px; margin: 0; line-height: 1.5; }
+.actor-list { display: flex; flex-direction: column; gap: 8px; }
+.actor-row { display: flex; flex-direction: column; gap: 5px; padding: 8px; border: 1px solid var(--rule); border-radius: 9px; }
+.actor-row.recording { border-color: var(--accent); background: var(--accent-soft); }
+.actor-row-head { display: flex; align-items: center; gap: 6px; }
+.actor-row-head .name-input { flex: 1; min-width: 0; width: auto; }
+.actor-row-head .type-select { width: 108px; flex: none; }
+.actor-swatch { width: 11px; height: 11px; flex: none; border-radius: 3px; }
+.actor-route { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; font-size: 11.5px; color: var(--ink-2); }
+.waypoint-chip {
+  display: inline-flex; align-items: center; gap: 3px; padding: 1px 5px 1px 8px;
+  background: var(--sunk); border-radius: 10px; white-space: nowrap;
+}
+.waypoint-chip button { color: var(--muted); font-size: 12px; padding: 0 2px; }
+.waypoint-chip button:hover { color: var(--err); }
+.waypoint-arrow { color: var(--muted); margin: 0 1px; }
+.actor-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.actor-foot .ghost-btn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.actor-dist { font-size: 11px; color: var(--muted); }
+.actor-flag {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; color: var(--err);
+}
+.actors-shared {
+  display: flex; align-items: center; gap: 6px; margin: 2px 0 0; padding: 6px 8px;
+  background: var(--warn-bg); color: var(--warn); border-radius: 7px; font-size: 11.5px; line-height: 1.4;
+}
+.eye {
+  display: flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; flex: none; border-radius: 6px; color: var(--muted);
+}
+.eye:hover { background: var(--sunk); }
+
 /* ------------------------------------------------------------- sidebar */
 .projects { list-style: none; margin: 0; padding: 0; }
 .projects li { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 12.5px; }

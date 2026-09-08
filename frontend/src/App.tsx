@@ -7,6 +7,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 
+import { Actors } from "./components/Actors";
 import { Canvas2D } from "./components/Canvas2D";
 import {
   IconArrow,
@@ -15,6 +16,7 @@ import {
   IconCursor,
   IconDoorMain,
   IconDoorSide,
+  IconFootprints,
   IconGrid,
   IconHand,
   IconLayers,
@@ -49,6 +51,8 @@ function Rail() {
   const toggleAbove = useStore((s) => s.toggleAbove);
   const autoCarve = useStore((s) => s.autoCarve);
   const toggleAutoCarve = useStore((s) => s.toggleAutoCarve);
+  const showCirculation = useStore((s) => s.showCirculation);
+  const toggleCirculation = useStore((s) => s.toggleCirculation);
   const resetLayout = useStore((s) => s.resetLayout);
   const storeys = useStore((s) => s.storeys);
   const selected = useStore((s) => s.selected);
@@ -115,6 +119,16 @@ function Rail() {
         <IconRedo />
       </button>
       <span className="rail-sep" />
+      <button
+        type="button"
+        className={showCirculation ? "on" : ""}
+        aria-pressed={showCirculation}
+        title="Show circulation: every visible actor's route, drawn on the plan (set up in the Circulation panel)"
+        aria-label="Show circulation"
+        onClick={toggleCirculation}
+      >
+        <IconFootprints />
+      </button>
       <button
         type="button"
         className={showGrid ? "on" : ""}
@@ -315,6 +329,7 @@ export default function App() {
             <div className="label">Room schedule</div>
             <Schedule />
           </div>
+          <Actors />
           <PlotPanel />
           <Sidebar />
         </div>

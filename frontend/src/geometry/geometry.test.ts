@@ -2,14 +2,17 @@ import { describe, expect, it } from "vitest";
 
 import { carveWith, displayShapes, releaseCarve, shapeStillUsable, subtractKeepLargest } from "./carve";
 import { arrowSegment, nearestWallPoint, suggestArrows } from "./arrows";
+import { actorRoute, buildCirculationGraph, crossesPrivate, routeLength, sharedSegments } from "./circulation";
 import { touchingEdge } from "./doors";
 import { footprintRings } from "./footprint";
 import { clampDrawnRect, clampGroup, isOutsidePlot, limitGrowth, limitPointGrowth, settleInPlot, shiftInside } from "./plot";
 import { anchorPoint, polyArea, polyOfBox, rectPolyOf, resizedFromAnchor } from "./poly";
-import { boxesTrulyIntersect, obbOf, obbsSeparated } from "./rect";
+import { boxesTrulyIntersect, centerOf, obbOf, obbsSeparated, rectOf } from "./rect";
 import { isOpenToBelow, liveBoxes, nearestNeighborPoint, snapToGrid, snapToNearbyNeighbors, wallSnapAdjust } from "./snap";
-import { polyGap, touchDelta, touchSelected } from "./touch";
+import { touchDelta, touchSelected, polyGap } from "./touch";
 import type { Box, Plot, Point, Poly } from "./types";
+import { SAMPLE_STOREYS, sampleBoxes } from "../sample";
+import { zoneOf } from "../rooms";
 
 function box(partial: Partial<Box> & { id: string; left: number; top: number; width: number; height: number }): Box {
   return {
@@ -746,5 +749,113 @@ describe("a polygon's own corners and walls are held inside the plot too", () =>
     const dragged: Point[] = [square.points![0], [1.25, 0], square.points![2], square.points![3]];
     const held = limitPointGrowth(square, dragged, plot);
     expect(held.points).toEqual(dragged);
+  });
+});
+
+describe("circulation: a route is the shortest walk of the touching graph", () => {
+  // A: 0,0 4x4 -- B: 4,0 3x4 -- C: 7,0 4x4, all touching in a straight line.
+  const a = box({ id: "a", left: 0, top: 0, width: 4, height: 4 });
+  const b = box({ id: "b", left: 4, top: 0, width: 3, height: 4 });
+  const c = box({ id: "c", left: 7, top: 0, width: 4, height: 4 });
+  const isolated = box({ id: "isolated", left: 20, top: 20, width: 2, height: 2 });
+
+  it("finds no edge between zones that do not touch", () => {
+    const graph = buildCirculationGraph([a, isolated], 1);
+    expect(graph.get("a") ?? []).toHaveLength(0);
+  });
+
+  it("routes through the shared wall's own midpoint, not straight through the room between", () => {
+    const graph = buildCirculationGraph([a, b, c], 1);
+    const segments = actorRoute(graph, [a, b, c], ["a", "c"]);
+    expect(segments).toHaveLength(1);
+    const pts = segments[0].pts;
+    // centre a, wall a|b, centre b, wall b|c, centre c.
+    expect(pts).toHaveLength(5);
+    expect(pts[0]).toEqual(centerOf(rectOf(a)));
+    expect(pts[1]).toEqual([4, 2]);
+    expect(pts[2]).toEqual(centerOf(rectOf(b)));
+    expect(pts[3]).toEqual([7, 2]);
+    expect(pts[4]).toEqual(centerOf(rectOf(c)));
+    // Centre a to the a|b wall (2m), on to b's centre (1.5m), on to the
+    // b|c wall (1.5m), on to c's centre (2m): the mid points sit exactly
+    // on the straight line between centres here, so this also equals the
+    // distance straight from centre to centre.
+    expect(routeLength(segments)).toBeCloseTo(7, 6);
+  });
+
+  it("skips a waypoint that no longer exists, rather than losing the rest of the route", () => {
+    const graph = buildCirculationGraph([a, b, c], 1);
+    const segments = actorRoute(graph, [a, b, c], ["a", "gone", "c"]);
+    expect(routeLength(segments)).toBeCloseTo(7, 6);
+  });
+
+  it("excludes a rotated zone: it has no wall to share", () => {
+    const turned = box({ id: "turned", left: 4, top: 0, width: 3, height: 4, rotation: 20 });
+    const graph = buildCirculationGraph([a, turned, c], 1);
+    expect(buildCirculationGraph([a, turned], 1).get("a") ?? []).toHaveLength(0);
+    expect(actorRoute(graph, [a, turned, c], ["a", "c"])).toHaveLength(0);
+  });
+
+  it("flags a servant's route through a private zone, never a served one through the same room", () => {
+    const bedroom = box({ id: "bedroom", left: 0, top: 0, width: 4, height: 4, roomType: "bedroom" });
+    const kitchen = box({ id: "kitchen", left: 4, top: 0, width: 4, height: 4, roomType: "kitchen" });
+    const byId = new Map([
+      ["bedroom", bedroom],
+      ["kitchen", kitchen],
+    ]);
+    expect(crossesPrivate("servant", ["kitchen", "bedroom"], byId, zoneOf)).toBe(true);
+    expect(crossesPrivate("exterior", ["kitchen"], byId, zoneOf)).toBe(false);
+    expect(crossesPrivate("served", ["bedroom"], byId, zoneOf)).toBe(false);
+    expect(crossesPrivate("guest", ["bedroom"], byId, zoneOf)).toBe(false);
+  });
+
+  it("finds the wall two actors' routes both cross, on the storey it happens on", () => {
+    const graph = buildCirculationGraph([a, b, c], 1);
+    const owner = { actorId: "owner", segments: actorRoute(graph, [a, b, c], ["a", "c"]) };
+    const staff = { actorId: "staff", segments: actorRoute(graph, [a, b, c], ["c", "a"]) };
+    const shared = sharedSegments([owner, staff], 0);
+    // Both walk the whole a-b-c corridor, in opposite directions: all
+    // four of its stretches -- centre to wall, wall to centre, twice
+    // over -- are shared.
+    expect(shared).toHaveLength(4);
+    expect(shared[0].actorIds.sort()).toEqual(["owner", "staff"]);
+    // A different storey has none of it.
+    expect(sharedSegments([owner, staff], 1)).toHaveLength(0);
+  });
+
+  it("finds nothing shared between routes that never cross", () => {
+    const d = box({ id: "d", left: 0, top: 10, width: 4, height: 4 });
+    const graph = buildCirculationGraph([a, b, c, d], 1);
+    const alone = { actorId: "alone", segments: actorRoute(graph, [a, b, c, d], ["a", "d"]) };
+    expect(sharedSegments([alone], 0)).toHaveLength(0);
+  });
+
+  describe("against the real sample house", () => {
+    const boxes = sampleBoxes();
+    const graph = buildCirculationGraph(boxes, SAMPLE_STOREYS);
+    const byName = (name: string) => boxes.find((bx) => bx.name === name)!;
+
+    it("crosses from the ground floor to storey 1 through the stair, not around it", () => {
+      const primary = byName("Primary Bedroom");
+      const dining = byName("Dining Room");
+      const segments = actorRoute(graph, boxes, [primary.id, dining.id]);
+      const levels = new Set(segments.map((s) => s.level));
+      expect(levels.has(1)).toBe(true);
+      expect(levels.has(0)).toBe(true);
+      expect(segments[0].pts[0]).toEqual(centerOf(rectOf(primary)));
+      expect(segments[segments.length - 1].pts.at(-1)).toEqual(centerOf(rectOf(dining)));
+    });
+
+    it("finds the back-of-house route from the garage to the dining room shorter than through the living room", () => {
+      const segments = actorRoute(graph, boxes, [byName("Garage").id, byName("Dining Room").id]);
+      expect(segments).toHaveLength(1);
+      expect(segments[0].level).toBe(0);
+      // Utility -> Kitchen -> Dining is the shorter of the two ways round
+      // (about 12.2 m against about 12.8 m through the Entry and Living
+      // Room), so Dijkstra should never touch the Living Room's centre.
+      const livingCentre = centerOf(rectOf(byName("Living Room")));
+      expect(segments[0].pts.some((p) => p[0] === livingCentre[0] && p[1] === livingCentre[1])).toBe(false);
+      expect(routeLength(segments)).toBeLessThan(12.5);
+    });
   });
 });

@@ -70,6 +70,9 @@ class SavedProjectIn(BaseModel):
     # saved before the plot existed still load; the browser opens those
     # with the boundary switched off.
     plot: dict[str, Any] | None = None
+    # Who walks the plan, when the layout has any. Optional so that
+    # layouts saved before circulation existed still load, with none.
+    actors: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class SavedProjectOut(SavedProjectIn):

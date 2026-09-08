@@ -114,6 +114,36 @@ export const IconOrbit = ({ size = 14, className }: P) =>
     className,
   );
 export const IconTick = ({ size = 14, className }: P) => svg(<path d="M20 6 9 17l-5-5" />, size, className);
+/** Two footprints, one ahead of the other: circulation. */
+export const IconFootprints = ({ size = 17, className }: P) =>
+  svg(
+    <>
+      <ellipse cx="8.1" cy="6.6" rx="2.05" ry="2.7" transform="rotate(-18 8.1 6.6)" />
+      <ellipse cx="16.3" cy="12.3" rx="2.05" ry="2.7" transform="rotate(14 16.3 12.3)" />
+      <ellipse cx="7.4" cy="18" rx="2.05" ry="2.7" transform="rotate(-10 7.4 18)" />
+    </>,
+    size,
+    className,
+  );
+export const IconEye = ({ size = 14, className }: P) =>
+  svg(
+    <>
+      <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z" />
+      <circle cx="12" cy="12" r="2.7" />
+    </>,
+    size,
+    className,
+  );
+export const IconEyeOff = ({ size = 14, className }: P) =>
+  svg(
+    <>
+      <path d="M3 3l18 18" />
+      <path d="M10.6 5.2A10.6 10.6 0 0 1 12 5c6.4 0 10 7 10 7a17.7 17.7 0 0 1-3.4 4.3M6.8 6.8C4 8.6 2 12 2 12s3.6 7 10 7c1.4 0 2.6-.3 3.7-.8" />
+      <path d="M9.9 10a2.7 2.7 0 0 0 3.9 3.7" />
+    </>,
+    size,
+    className,
+  );
 export const IconWarn = ({ size = 14, className }: P) =>
   svg(
     <>

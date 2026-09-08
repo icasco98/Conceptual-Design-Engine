@@ -13,17 +13,21 @@
 import { useMemo } from "react";
 
 import { displayShapes } from "../geometry/carve";
+import { actorRoute, buildCirculationGraph, sharedSegments } from "../geometry/circulation";
 import { outsidePlot } from "../geometry/plot";
 import { polyArea } from "../geometry/poly";
 import { liveBoxes } from "../geometry/snap";
-import { IconTick, IconWarn } from "./icons";
+import { IconFootprints, IconTick, IconWarn } from "./icons";
 import { useStore } from "../state/store";
 
 export function StatusBar() {
   const boxes = useStore((s) => s.boxes);
   const level = useStore((s) => s.level);
+  const storeys = useStore((s) => s.storeys);
   const autoCarve = useStore((s) => s.autoCarve);
   const plot = useStore((s) => s.plot);
+  const actors = useStore((s) => s.actors);
+  const showCirculation = useStore((s) => s.showCirculation);
 
   const { spaces, area, flagged, strays, toPlace } = useMemo(() => {
     const live = liveBoxes(boxes, level);
@@ -38,6 +42,15 @@ export function StatusBar() {
     const waiting = boxes.filter((b) => !b.deleted && b.placed === false && b.level === level).length;
     return { spaces: live.length, area: total, flagged: names, strays: out, toPlace: waiting };
   }, [boxes, level, autoCarve, plot]);
+
+  const sharedCount = useMemo(() => {
+    if (!showCirculation) return 0;
+    const visible = actors.filter((a) => a.visible);
+    if (!visible.length) return 0;
+    const graph = buildCirculationGraph(boxes, storeys);
+    const routes = visible.map((a) => ({ actorId: a.id, segments: actorRoute(graph, boxes, a.waypoints) }));
+    return sharedSegments(routes, level).length;
+  }, [showCirculation, actors, boxes, storeys, level]);
 
   const plotArea = plot.width * plot.depth;
 
@@ -70,6 +83,11 @@ export function StatusBar() {
         {toPlace > 0 && (
           <span className="status-item muted">
             · <span className="num">{toPlace}</span> {toPlace === 1 ? "zone" : "zones"} to place
+          </span>
+        )}
+        {showCirculation && sharedCount > 0 && (
+          <span className="status-item warning">
+            <IconFootprints size={12} /> {sharedCount} shared stretch{sharedCount === 1 ? "" : "es"} of wall on this floor
           </span>
         )}
       </div>

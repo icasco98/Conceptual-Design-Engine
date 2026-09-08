@@ -58,6 +58,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CategoryKey } from "../api/types";
 import { arrowSegment, nearestWallPoint } from "../geometry/arrows";
 import { displayShapes } from "../geometry/carve";
+import { actorRoute, buildCirculationGraph, sharedSegments } from "../geometry/circulation";
 import { footprintRings, ringsToPath } from "../geometry/footprint";
 import { clampDrawnRect, clampGroup, isOutsidePlot, limitGrowth, limitPointGrowth, plotBottom, plotRight } from "../geometry/plot";
 import { anchorPoint, frameOf, localPolyOf, pageToLocalPoly, polyArea, polyOfBox, resizedFromAnchor, toLocalVector } from "../geometry/poly";
@@ -175,6 +176,10 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
   const deleteArrow = useStore((s) => s.deleteArrow);
   const placingId = useStore((s) => s.placingId);
   const placeBox = useStore((s) => s.placeBox);
+  const actors = useStore((s) => s.actors);
+  const showCirculation = useStore((s) => s.showCirculation);
+  const routingActorId = useStore((s) => s.routingActorId);
+  const addWaypoint = useStore((s) => s.addWaypoint);
 
   const gRef = useRef<SVGGElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -280,6 +285,22 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
     const here = new Map(live.filter((b) => !isOpenToBelow(b, level)).map((b) => [b.id, b]));
     return arrows.filter((a) => a.level === level && here.has(a.hostId)).map((a) => ({ arrow: a, host: here.get(a.hostId)! }));
   }, [arrows, live, level]);
+  // Circulation: derived the same way the door arrows themselves are
+  // suggested, from the touching graph, never stored as a shape of its
+  // own. Only computed while the overlay is on; an empty cast list costs
+  // nothing either way.
+  const circGraph = useMemo(() => buildCirculationGraph(boxes, storeys), [boxes, storeys]);
+  const circRoutes = useMemo(() => {
+    if (!showCirculation) return [];
+    return actors
+      .filter((a) => a.visible)
+      .map((a) => ({ actor: a, segments: actorRoute(circGraph, boxes, a.waypoints).filter((s) => s.level === level) }));
+  }, [showCirculation, actors, circGraph, boxes, level]);
+  const circShared = useMemo(() => {
+    if (!showCirculation) return [];
+    const routes = actors.filter((a) => a.visible).map((a) => ({ actorId: a.id, segments: actorRoute(circGraph, boxes, a.waypoints) }));
+    return sharedSegments(routes, level);
+  }, [showCirculation, actors, circGraph, boxes, level]);
 
   // The sheet is the drawing surface; it stretches to hold the plot so a
   // site larger than the default 24 x 18 m is never drawn off the edge.
@@ -619,6 +640,7 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
         select(null);
         selectArrow(null);
         setTool("select");
+        if (state.routingActorId) state.setRoutingActor(null);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -629,6 +651,12 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
     if (tool === "rect" || tool === "circle" || tool === "place") return; // drawing/placing starts on the sheet below
     e.stopPropagation();
     e.preventDefault();
+    if (routingActorId) {
+      // No stop on a floor that is not there: a zone open to below is a
+      // void on this storey, and nobody walks into one.
+      if (!isOpenToBelow(b, level)) addWaypoint(routingActorId, b.id);
+      return;
+    }
     if (tool === "arrow" || tool === "arrow-main" || tool === "arrow-side") {
       // A zone open to below has no floor on this storey, so no door.
       if (!isOpenToBelow(b, level)) {
@@ -933,6 +961,12 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
       {tool === "arrow-side" && <div className="pane-hint">Click a zone's exterior wall to place a side or service entrance. Esc to cancel.</div>}
       {tool === "place" && placingId && (
         <div className="pane-hint">Click on the sheet to place "{boxes.find((b) => b.id === placingId)?.name ?? "the zone"}". Esc to cancel.</div>
+      )}
+      {routingActorId && (
+        <div className="pane-hint">
+          Click zones on the plan to add them to {actors.find((a) => a.id === routingActorId)?.name ?? "the actor"}'s route, in
+          order. Esc or Done to finish.
+        </div>
       )}
       <svg
         ref={svgRef}
@@ -1293,6 +1327,59 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
               </g>
             );
           })}
+          {/* circulation: every visible actor's route on this storey, a
+              route being recorded included -- the point of clicking zones
+              while it builds is seeing it take shape. Drawn over the plan,
+              never under pointer events: a route is read, not grabbed. */}
+          {showCirculation && circShared.length > 0 && (
+            <g pointerEvents="none">
+              {circShared.map((e, i) => (
+                <line
+                  key={i}
+                  x1={e.a[0]}
+                  y1={e.a[1]}
+                  x2={e.b[0]}
+                  y2={e.b[1]}
+                  stroke={INK.flag}
+                  strokeOpacity={0.3}
+                  strokeWidth={0.32}
+                  strokeLinecap="round"
+                />
+              ))}
+            </g>
+          )}
+          {showCirculation &&
+            circRoutes.map(({ actor, segments }) => {
+              const servantLike = actor.role === "servant" || actor.role === "exterior";
+              return (
+                <g key={actor.id} pointerEvents="none">
+                  {segments.map((seg, i) => {
+                    const d = "M " + seg.pts.map((p) => `${p[0].toFixed(3)},${p[1].toFixed(3)}`).join(" L ");
+                    const pid = `circ-${actor.id}-${i}`;
+                    return (
+                      <g key={pid}>
+                        <path
+                          id={pid}
+                          d={d}
+                          fill="none"
+                          stroke={actor.color}
+                          strokeWidth={servantLike ? 0.08 : 0.1}
+                          strokeDasharray={servantLike ? "0.28 0.22" : undefined}
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeOpacity={0.85}
+                        />
+                        <circle r={0.15} fill={actor.color} stroke={INK.sheet} strokeWidth={0.03}>
+                          <animateMotion dur={`${4 + seg.pts.length * 1.3}s`} repeatCount="indefinite" rotate="auto">
+                            <mpath href={`#${pid}`} />
+                          </animateMotion>
+                        </circle>
+                      </g>
+                    );
+                  })}
+                </g>
+              );
+            })}
           {/* the marquee, or the zone being drawn */}
           {rubber && gesture.current?.kind === "marquee" && (
             <rect x={rubber.left} y={rubber.top} width={rubber.width} height={rubber.height} className="marquee" />
