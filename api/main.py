@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 
 from api import store
 
-app = FastAPI(title="CDE non Interactive API", version="0.2.0")
+app = FastAPI(title="Conceptual Design Engine API", version="0.2.0")
 
 # The Vite dev server runs on another port during development. In the
 # built app everything is same-origin and this is moot.

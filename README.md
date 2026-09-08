@@ -1,7 +1,4 @@
-# CDE non Interactive
-
-*Non-interactive here means nothing generates the design for you. The
-drawing is entirely hands-on.*
+# Conceptual Design Engine
 
 A web tool for the conceptual design phase of a house: the sketchy stage
 before any detailed floor plan, when you are deciding what goes roughly
