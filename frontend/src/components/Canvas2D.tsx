@@ -1,8 +1,13 @@
 /**
  * The plan: every zone on the current storey as a shape you can select,
- * drag, resize (corner handles), rotate (top handle) and delete, over a
+ * drag, resize (corner handles for both sides at once, or a wall's own
+ * handle for just that side), rotate (top handle) and delete, over a
  * blank sheet and, on an upper level, the dashed outline of the storey
  * below. The building outline recomputes from wherever the zones are.
+ *
+ * A resize always holds the corner or wall you are not touching exactly
+ * where it is on the page, turned zone or not: dragging works in the
+ * zone's own (rotated) axes, not the page's, so the far side never drifts.
  *
  * Door arrows are yours: each sits on a wall of its host zone, always
  * perpendicular to it. Drag one to slide it along the wall or onto
@@ -21,7 +26,10 @@
  * sheet; Pan moves the view; Rectangle and Circle draw a new zone. With
  * several zones selected, dragging any of them moves them all, the rotate
  * handle turns them together about the group's centre, and × or Delete
- * removes them all.
+ * takes them off the plan. That is not deleting them: a zone removed here
+ * goes back to the schedule's "To place" list, sized and typed as it was,
+ * ready to be dropped onto the plot again. Deleting it for good is done
+ * from the schedule, once it is there.
  *
  * Zones overlap freely and nothing is ever pushed. The carve handle on a
  * selected zone (top-left) cuts every zone under it; pressing it again
@@ -52,9 +60,9 @@ import { arrowSegment } from "../geometry/arrows";
 import { displayShapes } from "../geometry/carve";
 import { footprintRings, ringsToPath } from "../geometry/footprint";
 import { clampDrawnRect, clampGroup, isOutsidePlot, limitGrowth, plotBottom, plotRight } from "../geometry/plot";
-import { polyArea, polyOfBox } from "../geometry/poly";
+import { anchorPoint, frameOf, localPolyOf, polyArea, polyOfBox, resizedFromAnchor, toLocalVector } from "../geometry/poly";
 import { isOpenToBelow, liveBoxes, snapToGrid, snapToNearbyNeighbors } from "../geometry/snap";
-import { GRID_M, type Arrow, type Box, type Poly, type Rect } from "../geometry/types";
+import { GRID_M, type Arrow, type Box, type Point, type Poly, type Rect } from "../geometry/types";
 import { IconFit, IconMinus, IconPlus } from "./icons";
 import { CATEGORY_WASH, INK, fillFor, zoneFill } from "../palette";
 import { ZONE_LABELS } from "../rooms";
@@ -76,7 +84,9 @@ type Corner = "nw" | "ne" | "sw" | "se";
 
 type Gesture =
   | { kind: "move"; ids: string[]; startX: number; startY: number; snapshot: Box[] }
-  | { kind: "resize"; id: string; corner: Corner; start: Rect; startX: number; startY: number; snapshot: Box[] }
+  | { kind: "resize"; id: string; corner: Corner; start: Rect; anchor: Point; sx: -1 | 1; sy: -1 | 1; startX: number; startY: number; snapshot: Box[] }
+  | { kind: "resize-edge"; id: string; side: "n" | "s" | "e" | "w"; start: Rect; anchor: Point; sx: -1 | 0 | 1; sy: -1 | 0 | 1; startX: number; startY: number; snapshot: Box[] }
+  | { kind: "vertex"; id: string; index: number; startX: number; startY: number; snapshot: Box[] }
   | { kind: "rotate"; ids: string[]; cx: number; cy: number; startAngle: number; snapshot: Box[] }
   | { kind: "marquee"; x0: number; y0: number; additive: boolean }
   | { kind: "draw"; shape: "rect" | "circle"; x0: number; y0: number }
@@ -85,6 +95,20 @@ type Gesture =
 function pointsOf(poly: Poly): string {
   return poly.map((p) => `${p[0].toFixed(3)},${p[1].toFixed(3)}`).join(" ");
 }
+
+/** The next point the polygon tool places, grid-snapped and, with `ortho`
+ * on, pinned square to the wall before it: whichever of x or y moved
+ * further from `from` wins, the other is held at `from`'s value. */
+function orthoPoint(from: Point, to: Point, ortho: boolean): Point {
+  const x = snapToGrid(to[0]);
+  const y = snapToGrid(to[1]);
+  if (!ortho) return [x, y];
+  return Math.abs(x - from[0]) >= Math.abs(y - from[1]) ? [x, from[1]] : [from[0], y];
+}
+
+/** Close enough to the polygon's first point that a click there finishes
+ * the shape instead of adding another corner. */
+const POLY_CLOSE_M = 0.35;
 
 /** Keep the gesture even when the pointer leaves the element. A synthetic
  *  event has no pointer to capture, and that is not worth an exception. */
@@ -127,11 +151,13 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
   const select = useStore((s) => s.select);
   const selectMany = useStore((s) => s.selectMany);
   const addBox = useStore((s) => s.addBox);
+  const addPolygonBox = useStore((s) => s.addPolygonBox);
   const setBoxes = useStore((s) => s.setBoxes);
   const commitBoxes = useStore((s) => s.commitBoxes);
-  const deleteBoxes = useStore((s) => s.deleteBoxes);
+  const unplaceBoxes = useStore((s) => s.unplaceBoxes);
   const carve = useStore((s) => s.carve);
   const release = useStore((s) => s.release);
+  const convertToPolygon = useStore((s) => s.convertToPolygon);
   const showGrid = useStore((s) => s.showGrid);
   const showGhost = useStore((s) => s.showGhost);
   const showAbove = useStore((s) => s.showAbove);
@@ -173,6 +199,44 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
   useEffect(() => {
     if (tool !== "place") setPlaceCursor(null);
   }, [tool]);
+
+  /** The polygon tool's corners placed so far, and where the next one
+   *  would land -- both cleared whenever the tool stops being `polygon`. */
+  const [polyDraft, setPolyDraft] = useState<Point[] | null>(null);
+  const [polyCursor, setPolyCursor] = useState<Point | null>(null);
+  useEffect(() => {
+    if (tool !== "polygon") {
+      setPolyDraft(null);
+      setPolyCursor(null);
+    }
+  }, [tool]);
+  const commitPolygon = useCallback(
+    (points: Point[]) => {
+      if (points.length >= 3) addPolygonBox(points);
+      setPolyDraft(null);
+      setPolyCursor(null);
+      setTool("select");
+    },
+    [addPolygonBox, setTool],
+  );
+  const addPolyPoint = useCallback(
+    (raw: Point, shift: boolean) => {
+      setPolyDraft((prev) => {
+        const draft = prev ?? [];
+        const last = draft[draft.length - 1];
+        let pt: Point = last ? orthoPoint(last, raw, shift) : [snapToGrid(raw[0]), snapToGrid(raw[1])];
+        if (plot.on) {
+          pt = [Math.min(Math.max(pt[0], plot.left), plotRight(plot)), Math.min(Math.max(pt[1], plot.top), plotBottom(plot))];
+        }
+        if (draft.length >= 3 && Math.hypot(pt[0] - draft[0][0], pt[1] - draft[0][1]) < POLY_CLOSE_M) {
+          commitPolygon(draft);
+          return draft;
+        }
+        return [...draft, pt];
+      });
+    },
+    [commitPolygon, plot],
+  );
 
   const live = useMemo(() => liveBoxes(boxes, level), [boxes, level]);
   const shapes = useMemo(() => displayShapes(live, autoCarve), [live, autoCarve]);
@@ -259,30 +323,63 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
     } else if (g.kind === "resize") {
       const restored = g.snapshot;
       const box = restored.find((b) => b.id === g.id)!;
-      const dx = p.x - g.startX;
-      const dy = p.y - g.startY;
-      let { left, top, width: w, height: h } = g.start;
+      // Rotation doesn't change mid-resize, so the box's own axes (and
+      // the anchor corner's page position, captured at gesture start)
+      // stay fixed for the whole gesture -- only the pointer's projection
+      // onto them changes frame to frame.
+      const [dx, dy] = toLocalVector(p.x - g.startX, p.y - g.startY, frameOf(box));
+      // A turned zone doesn't snap to the world grid -- it isn't the
+      // zone's own grid any more (moving one doesn't snap either).
+      const snap = box.rotation ? (v: number) => v : snapToGrid;
+      let w = g.start.width;
+      let h = g.start.height;
       if (g.corner === "ne" || g.corner === "se") {
-        const right = snapToGrid(g.start.left + g.start.width + dx);
-        w = Math.max(box.minWidth, right - left);
+        const right = snap(g.start.left + g.start.width + dx);
+        w = Math.max(box.minWidth, right - g.start.left);
       }
       if (g.corner === "nw" || g.corner === "sw") {
-        const newLeft = snapToGrid(g.start.left + dx);
+        const newLeft = snap(g.start.left + dx);
         w = Math.max(box.minWidth, g.start.left + g.start.width - newLeft);
-        left = g.start.left + g.start.width - w;
       }
       if (g.corner === "se" || g.corner === "sw") {
-        const bottom = snapToGrid(g.start.top + g.start.height + dy);
-        h = Math.max(box.minHeight, bottom - top);
+        const bottom = snap(g.start.top + g.start.height + dy);
+        h = Math.max(box.minHeight, bottom - g.start.top);
       }
       if (g.corner === "ne" || g.corner === "nw") {
-        const newTop = snapToGrid(g.start.top + dy);
+        const newTop = snap(g.start.top + dy);
         h = Math.max(box.minHeight, g.start.top + g.start.height - newTop);
-        top = g.start.top + g.start.height - h;
       }
-      // Held to what the plot allows from where the zone started, so the
-      // corner you are not dragging stays exactly where it is.
-      const next = limitGrowth(box, { ...box, left, top, width: w, height: h }, plotRef.current, "inside");
+      // Rebuilt from the fixed anchor corner rather than from left/top,
+      // which is what kept the far corner of a turned zone from sliding.
+      const resized = resizedFromAnchor(box, g.anchor, g.sx, g.sy, w, h);
+      const next = limitGrowth(box, resized, plotRef.current, "inside");
+      setBoxes(mergeRef.current(restored.map((b) => (b.id === g.id ? next : b))));
+    } else if (g.kind === "resize-edge") {
+      const restored = g.snapshot;
+      const box = restored.find((b) => b.id === g.id)!;
+      const [dx, dy] = toLocalVector(p.x - g.startX, p.y - g.startY, frameOf(box));
+      const snap = box.rotation ? (v: number) => v : snapToGrid;
+      let w = g.start.width;
+      let h = g.start.height;
+      if (g.side === "e") w = Math.max(box.minWidth, snap(g.start.left + g.start.width + dx) - g.start.left);
+      if (g.side === "w") w = Math.max(box.minWidth, g.start.left + g.start.width - snap(g.start.left + dx));
+      if (g.side === "s") h = Math.max(box.minHeight, snap(g.start.top + g.start.height + dy) - g.start.top);
+      if (g.side === "n") h = Math.max(box.minHeight, g.start.top + g.start.height - snap(g.start.top + dy));
+      const resized = resizedFromAnchor(box, g.anchor, g.sx, g.sy, w, h);
+      const next = limitGrowth(box, resized, plotRef.current, "inside");
+      setBoxes(mergeRef.current(restored.map((b) => (b.id === g.id ? next : b))));
+    } else if (g.kind === "vertex") {
+      const restored = g.snapshot;
+      const box = restored.find((b) => b.id === g.id)!;
+      if (!box.points) return;
+      const [dx, dy] = toLocalVector(p.x - g.startX, p.y - g.startY, frameOf(box));
+      const [ofx, ofy] = box.points[g.index];
+      // Clamped to the box's own bounding box: reshaping doesn't grow it,
+      // resizing (the handles around it) does.
+      const fx = Math.min(1, Math.max(0, ofx + dx / box.width));
+      const fy = Math.min(1, Math.max(0, ofy + dy / box.height));
+      const points = box.points.map((pt, i): Point => (i === g.index ? [fx, fy] : pt));
+      const next = { ...box, points };
       setBoxes(mergeRef.current(restored.map((b) => (b.id === g.id ? next : b))));
     } else if (g.kind === "rotate") {
       const restored = g.snapshot;
@@ -411,7 +508,10 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
         deleteArrow(state.selectedArrow);
       } else if ((e.key === "Delete" || e.key === "Backspace") && state.selected.length) {
         e.preventDefault();
-        deleteBoxes(state.selected);
+        state.unplaceBoxes(state.selected);
+      } else if (e.key === "Enter" && tool === "polygon" && polyDraft && polyDraft.length >= 3) {
+        e.preventDefault();
+        commitPolygon(polyDraft);
       } else if (e.key === "Escape") {
         select(null);
         selectArrow(null);
@@ -420,7 +520,7 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [deleteArrow, deleteBoxes, select, selectArrow, setTool]);
+  }, [commitPolygon, deleteArrow, polyDraft, select, selectArrow, setTool, tool]);
 
   const startMove = (e: React.PointerEvent, b: Box) => {
     if (tool === "rect" || tool === "circle" || tool === "place") return; // drawing/placing starts on the sheet below
@@ -456,15 +556,58 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
     e.preventDefault();
     const p = toMeters(e);
     remember();
+    // The corner you are not dragging: what must hold still on the page,
+    // not just keep the same left/top numbers (geometry/poly.ts).
+    const sx: -1 | 1 = corner.includes("w") ? 1 : -1;
+    const sy: -1 | 1 = corner.includes("n") ? 1 : -1;
     gesture.current = {
       kind: "resize",
       id: b.id,
       corner,
       start: { left: b.left, top: b.top, width: b.width, height: b.height },
+      anchor: anchorPoint(b, sx, sy),
+      sx,
+      sy,
       startX: p.x,
       startY: p.y,
       snapshot: live,
     };
+    capture(e);
+  };
+
+  const startEdgeResize = (e: React.PointerEvent, b: Box) => (side: "n" | "s" | "e" | "w") => {
+    e.stopPropagation();
+    e.preventDefault();
+    const p = toMeters(e);
+    remember();
+    // The opposite wall is what stays put.
+    const sx: -1 | 0 | 1 = side === "e" ? -1 : side === "w" ? 1 : 0;
+    const sy: -1 | 0 | 1 = side === "s" ? -1 : side === "n" ? 1 : 0;
+    gesture.current = {
+      kind: "resize-edge",
+      id: b.id,
+      side,
+      start: { left: b.left, top: b.top, width: b.width, height: b.height },
+      anchor: anchorPoint(b, sx, sy),
+      sx,
+      sy,
+      startX: p.x,
+      startY: p.y,
+      snapshot: live,
+    };
+    capture(e);
+  };
+
+  /** Drag one corner of a polygon zone's own outline: the shape reshapes
+   * within its current bounding box (no other vertex moves, and the box
+   * itself doesn't grow) -- resize the box first, with the handles above,
+   * if a corner needs to go further than that. */
+  const startVertexDrag = (e: React.PointerEvent, b: Box, index: number) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const p = toMeters(e);
+    remember();
+    gesture.current = { kind: "vertex", id: b.id, index, startX: p.x, startY: p.y, snapshot: live };
     capture(e);
   };
 
@@ -489,7 +632,7 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
   const onDelete = (e: React.PointerEvent, b: Box) => {
     e.stopPropagation();
     e.preventDefault();
-    deleteBoxes(selected.includes(b.id) && selected.length > 1 ? selected : [b.id]);
+    unplaceBoxes(selected.includes(b.id) && selected.length > 1 ? selected : [b.id]);
   };
 
   const carvesSomething = (b: Box) => live.some((o) => o.carvedBy.includes(b.id));
@@ -521,6 +664,12 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
     else carve(b.id);
   };
 
+  const onConvertToPolygon = (e: React.PointerEvent, b: Box) => {
+    e.stopPropagation();
+    e.preventDefault();
+    convertToPolygon(b.id);
+  };
+
   // ---- the sheet: pan, marquee, draw ------------------------------------
 
   /** Pointer position in the SVG's own viewBox units, before the camera. */
@@ -550,10 +699,11 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
     (e: React.PointerEvent) => {
       const drawing = tool === "rect" || tool === "circle";
       const placing = tool === "place" && !!placingId;
-      // Only the background, unless drawing or placing: a new zone, or one
-      // dropped from the schedule, may land over an existing one, since
-      // zones are allowed to overlap.
-      if (!drawing && !placing && e.target !== e.currentTarget) return;
+      const polygoning = tool === "polygon";
+      // Only the background, unless drawing, placing or polygoning: a new
+      // zone, or one dropped from the schedule, may land over an existing
+      // one, since zones are allowed to overlap.
+      if (!drawing && !placing && !polygoning && e.target !== e.currentTarget) return;
       const middle = e.button === 1;
       if (tool === "pan" || middle) {
         e.currentTarget.setPointerCapture(e.pointerId);
@@ -567,6 +717,10 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
         if (box) placeBox(placingId, snapToGrid(p.x - box.width / 2), snapToGrid(p.y - box.height / 2));
         return;
       }
+      if (polygoning) {
+        addPolyPoint([p.x, p.y], e.shiftKey);
+        return;
+      }
       if (drawing) {
         gesture.current = { kind: "draw", shape: tool, x0: snapToGrid(p.x), y0: snapToGrid(p.y) };
         setRubber({ left: snapToGrid(p.x), top: snapToGrid(p.y), width: 0, height: 0 });
@@ -577,7 +731,7 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
       }
       e.currentTarget.setPointerCapture(e.pointerId);
     },
-    [boxes, cam.x, cam.y, placeBox, placingId, selectArrow, setRubber, toMeters, tool],
+    [addPolyPoint, boxes, cam.x, cam.y, placeBox, placingId, selectArrow, setRubber, toMeters, tool],
   );
 
   const onPanMove = useCallback((e: React.PointerEvent) => {
@@ -645,6 +799,12 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
           Drag on the sheet to draw a {tool === "rect" ? "rectangle (hold Shift for a square)" : "circle"}. Esc to cancel.
         </div>
       )}
+      {tool === "polygon" && (
+        <div className="pane-hint">
+          Click to place each corner (hold Shift to keep that wall square to the last one, for a rectilinear shape). Click the
+          first corner again, or press Enter, to close it. Esc to cancel.
+        </div>
+      )}
       {tool === "arrow" && <div className="pane-hint">Click a zone's wall to put a door arrow on it. Esc to cancel.</div>}
       {tool === "arrow-main" && <div className="pane-hint">Click a zone's exterior wall to place the main entrance. Esc to cancel.</div>}
       {tool === "arrow-side" && <div className="pane-hint">Click a zone's exterior wall to place a side or service entrance. Esc to cancel.</div>}
@@ -662,6 +822,10 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
           if (tool === "place") {
             const p = toMeters(e);
             setPlaceCursor({ x: snapToGrid(p.x), y: snapToGrid(p.y) });
+          }
+          if (tool === "polygon" && polyDraft && polyDraft.length) {
+            const p = toMeters(e);
+            setPolyCursor(orthoPoint(polyDraft[polyDraft.length - 1], [p.x, p.y], e.shiftKey));
           }
         }}
         onPointerDown={onSheetDown}
@@ -817,6 +981,41 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
                       onPointerDown={(e) => startResize(e, b)(c)}
                     />
                   ))}
+                {/* one grab bar per wall, along its middle third: drag a
+                    wall to move only that side, the opposite one held put */}
+                {solo &&
+                  (["n", "s", "e", "w"] as const).map((side) => {
+                    const horiz = side === "n" || side === "s";
+                    const thickness = HANDLE * 0.6;
+                    const length = Math.max(0.3, (horiz ? b.width : b.height) - HANDLE * 1.6);
+                    const x = side === "e" ? b.left + b.width - thickness / 2 : side === "w" ? b.left - thickness / 2 : b.left + (b.width - length) / 2;
+                    const y = side === "s" ? b.top + b.height - thickness / 2 : side === "n" ? b.top - thickness / 2 : b.top + (b.height - length) / 2;
+                    return (
+                      <rect
+                        key={side}
+                        className={`handle resize-edge ${side}`}
+                        x={x}
+                        y={y}
+                        width={horiz ? length : thickness}
+                        height={horiz ? thickness : length}
+                        onPointerDown={(e) => startEdgeResize(e, b)(side)}
+                      />
+                    );
+                  })}
+                {/* a polygon zone's own corners, reshaped one at a time
+                    within the bounding box the handles above resize */}
+                {solo &&
+                  b.shape === "polygon" &&
+                  b.points?.map((pt, i) => (
+                    <circle
+                      key={i}
+                      className="handle vertex"
+                      cx={b.left + pt[0] * b.width}
+                      cy={b.top + pt[1] * b.height}
+                      r={HANDLE * 0.4}
+                      onPointerDown={(e) => startVertexDrag(e, b, i)}
+                    />
+                  ))}
                 {isSel && (
                   <>
                     <line x1={cx} y1={b.top} x2={cx} y2={b.top - 0.9} stroke="#0b0b0b" strokeWidth={0.04} />
@@ -824,7 +1023,9 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
                     <text x={cx} y={b.top - 1.1} className="handle-glyph" textAnchor="middle" dominantBaseline="middle">
                       ↻
                     </text>
-                    <circle className="handle delete" cx={b.left + b.width + 0.55} cy={b.top - 0.55} r={HANDLE / 2} onPointerDown={(e) => onDelete(e, b)} />
+                    <circle className="handle delete" cx={b.left + b.width + 0.55} cy={b.top - 0.55} r={HANDLE / 2} onPointerDown={(e) => onDelete(e, b)}>
+                      <title>Take off the plan (stays in the schedule, ready to place again)</title>
+                    </circle>
                     <text x={b.left + b.width + 0.55} y={b.top - 0.55} className="handle-glyph" textAnchor="middle" dominantBaseline="middle">
                       ×
                     </text>
@@ -840,6 +1041,22 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
                         />
                         <text x={b.left - 0.55} y={b.top - 0.55} className="handle-glyph" textAnchor="middle" dominantBaseline="middle">
                           {carving ? "⊟" : "⊠"}
+                        </text>
+                      </>
+                    )}
+                    {solo && b.shape !== "polygon" && (
+                      <>
+                        <circle
+                          className="handle to-polygon"
+                          cx={b.left - 0.55}
+                          cy={b.top + b.height + 0.55}
+                          r={HANDLE / 2}
+                          onPointerDown={(e) => onConvertToPolygon(e, b)}
+                        >
+                          <title>Convert to a polygon: freezes this outline (as carved) so each corner can be dragged on its own</title>
+                        </circle>
+                        <text x={b.left - 0.55} y={b.top + b.height + 0.55} className="handle-glyph" textAnchor="middle" dominantBaseline="middle">
+                          ⬠
                         </text>
                       </>
                     )}
@@ -905,6 +1122,25 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
             <text x={rubber.left + rubber.width / 2} y={rubber.top - 0.3} className="anno" textAnchor="middle" style={{ fontSize: 0.42 }}>
               {rubber.width.toFixed(2)} × {rubber.height.toFixed(2)} m
             </text>
+          )}
+          {/* the polygon tool's corners so far, and the wall it would
+              draw next */}
+          {tool === "polygon" && polyDraft && polyDraft.length > 0 && (
+            <>
+              <polyline
+                points={pointsOf(polyCursor ? [...polyDraft, polyCursor] : polyDraft)}
+                fill="none"
+                className="drawing"
+              />
+              {polyDraft.length >= 3 && (
+                <circle className="handle poly-close" cx={polyDraft[0][0]} cy={polyDraft[0][1]} r={HANDLE / 2}>
+                  <title>Click to close the polygon here</title>
+                </circle>
+              )}
+              {polyDraft.map(([x, y], i) => (
+                <circle key={i} className="poly-vertex" cx={x} cy={y} r={0.08} />
+              ))}
+            </>
           )}
           {/* the zone waiting to be placed, following the pointer at its own size */}
           {tool === "place" &&

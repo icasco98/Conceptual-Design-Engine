@@ -12,6 +12,12 @@
  * the sheet gives it a position exactly as drawing a rectangle would.
  * Until then it has no area, no rotation, no priority and is invisible
  * everywhere geometry is computed (geometry/snap.ts, `liveBoxes`).
+ *
+ * A zone goes the other way too: × on a placed row (or its plan
+ * equivalent) does not delete it, it takes it off the plan and drops it
+ * back into "To place" -- cleaning up a layout is not the same as
+ * throwing the rooms away. × on a "To place" row deletes it for real,
+ * since there is nowhere else for it to go back to.
  */
 import { useMemo, useState } from "react";
 
@@ -127,6 +133,7 @@ export function Schedule() {
   const selected = useStore((s) => s.selected);
   const select = useStore((s) => s.select);
   const deleteBoxes = useStore((s) => s.deleteBoxes);
+  const unplaceBoxes = useStore((s) => s.unplaceBoxes);
   const updateBox = useStore((s) => s.updateBox);
   const carve = useStore((s) => s.carve);
   const release = useStore((s) => s.release);
@@ -438,8 +445,8 @@ export function Schedule() {
                   <button
                     type="button"
                     className="icon"
-                    title="Delete"
-                    onClick={() => deleteBoxes(selected.includes(b.id) && selected.length > 1 ? selected : [b.id])}
+                    title="Take off the plan (stays here, ready to place again)"
+                    onClick={() => unplaceBoxes(selected.includes(b.id) && selected.length > 1 ? selected : [b.id])}
                   >
                     ×
                   </button>

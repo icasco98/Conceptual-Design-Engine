@@ -11,8 +11,9 @@ import { create } from "zustand";
 import { api } from "../api/client";
 import type { ProjectSummary } from "../api/types";
 import { nearestWallPoint, newArrowId, suggestArrows } from "../geometry/arrows";
-import { carveWith, releaseCarve } from "../geometry/carve";
+import { carveWith, displayShapes, releaseCarve } from "../geometry/carve";
 import { clampDrawnRect, clampGroup, settleInPlot } from "../geometry/plot";
+import { localPolyOf } from "../geometry/poly";
 import { isOpenToBelow, liveBoxes } from "../geometry/snap";
 import { touchSelected } from "../geometry/touch";
 import type { Arrow, Box, BoxShape, Plot, Point } from "../geometry/types";
@@ -38,12 +39,15 @@ const HISTORY_MAX = 60;
 export type MassingMode = "zones" | "mass";
 
 /** What a drag on empty sheet does. `select` rubber-bands a selection,
- * `pan` moves the view, `rect` and `circle` draw a new zone, `arrow`
- * puts an interior door arrow on the wall you click, `arrow-main` and
+ * `pan` moves the view, `rect` and `circle` draw a new zone with one
+ * drag, `polygon` draws one click at a time -- hold Shift on a click to
+ * keep that wall square to the last one, or don't for a free angle --
+ * closed by clicking its own first point or pressing Enter. `arrow` puts
+ * an interior door arrow on the wall you click, `arrow-main` and
  * `arrow-side` do the same for the building's exterior doors. `place`
  * is not a drawing tool: it drops the zone named by `placingId` where
  * you next click, and is entered from the schedule, never the rail. */
-export type Tool = "select" | "pan" | "rect" | "circle" | "arrow" | "arrow-main" | "arrow-side" | "place";
+export type Tool = "select" | "pan" | "rect" | "circle" | "polygon" | "arrow" | "arrow-main" | "arrow-side" | "place";
 
 export interface State {
   boxes: Box[];
@@ -88,6 +92,11 @@ export interface State {
   selectMany: (ids: string[], additive?: boolean) => void;
   /** A new zone drawn on the current storey. Returns its id. */
   addBox: (shape: BoxShape, left: number, top: number, width: number, height: number) => string;
+  /** A new polygon zone, from the points the polygon tool collected
+   * (plan-frame meters, at least 3, in order). Its bounding box becomes
+   * `left`/`top`/`width`/`height` and the points are kept as fractions of
+   * it, so it resizes exactly like a rectangle. Returns its id. */
+  addPolygonBox: (points: Point[]) => string;
   /** A zone entered in the schedule, with a size but no position: sized
    * and typed, unplaced, on the current storey until `placeBox` gives it
    * one. Returns its id. */
@@ -101,10 +110,23 @@ export interface State {
   /** A schedule edit: name, type, floor, rotation, size. */
   updateBox: (id: string, patch: Partial<Box>) => void;
   deleteBoxes: (ids: string[]) => void;
+  /** Taken off the plan, not out of existence: it drops any carve
+   * relationships (both what carved it and what it carved) and reappears
+   * in the schedule's "To place" list, exactly like a zone typed there by
+   * hand, ready to be dropped onto the plot again. Its door arrows are
+   * left alone -- they come back with it if it is re-placed. */
+  unplaceBoxes: (ids: string[]) => void;
   /** The box cuts every room it sits over, on its own storey. */
   carve: (id: string) => void;
   /** The box stops cutting anything. */
   release: (id: string) => void;
+  /** Freezes the zone's outline as it stands right now -- cut by whatever
+   * currently carves it, or plain if nothing does -- into a polygon of
+   * its own that can be reshaped corner by corner. The carve that made
+   * this cut is released, since it is now baked into the shape and
+   * reapplying it live would cut the same bite twice; carving `id` does
+   * elsewhere is untouched. */
+  convertToPolygon: (id: string) => void;
   /** Move every selected zone to touch its nearest neighbour (touch.ts). */
   touchSelected: () => void;
   /** A door arrow on `hostId`'s wall nearest the page point. `kind`
@@ -296,6 +318,44 @@ export const useStore = create<State>((set, get) => ({
     return id;
   },
 
+  addPolygonBox(points) {
+    get().remember();
+    const level = get().level;
+    const info = roomTypeInfo("other");
+    const id = `zone:${Date.now().toString(36)}:${nextZone}`;
+    const xs = points.map((p) => p[0]);
+    const ys = points.map((p) => p[1]);
+    const left = Math.min(...xs);
+    const top = Math.min(...ys);
+    const width = Math.max(0.01, Math.max(...xs) - left);
+    const height = Math.max(0.01, Math.max(...ys) - top);
+    const rect = { left, top, width, height };
+    const normalised: Point[] = points.map(([x, y]) => [(x - left) / width, (y - top) / height]);
+    const box: Box = {
+      id,
+      name: `Zone ${nextZone++}`,
+      kind: "room",
+      shape: "polygon",
+      roomType: "other",
+      isEntry: false,
+      level,
+      levelTo: level,
+      heightM: STOREY_HEIGHT_M,
+      priority: DEFAULT_PRIORITY,
+      ...rect,
+      minWidth: info.minWidth,
+      minHeight: info.minHeight,
+      rotation: 0,
+      carvedBy: [],
+      deleted: false,
+      placed: true,
+      initial: rect,
+      points: normalised,
+    };
+    set({ boxes: [...get().boxes, box], selected: [id] });
+    return id;
+  },
+
   addUnplacedBox(roomType, name, width, height, shape) {
     get().remember();
     const level = get().level;
@@ -388,6 +448,15 @@ export const useStore = create<State>((set, get) => ({
     });
   },
 
+  unplaceBoxes(ids) {
+    get().remember();
+    const idSet = new Set(ids);
+    let boxes = get().boxes.map((b) => (idSet.has(b.id) ? { ...b, placed: false, carvedBy: [] } : b));
+    // Nothing it was cutting should still look cut once it is off the plan.
+    for (const id of ids) boxes = releaseCarve(id, boxes);
+    set({ boxes, selected: get().selected.filter((s) => !idSet.has(s)) });
+  },
+
   touchSelected() {
     const { boxes, selected, level } = get();
     if (!selected.length) return;
@@ -473,6 +542,26 @@ export const useStore = create<State>((set, get) => ({
   release(id) {
     get().remember();
     set({ boxes: releaseCarve(id, get().boxes) });
+  },
+
+  convertToPolygon(id) {
+    const boxes = get().boxes;
+    const box = boxes.find((b) => b.id === id);
+    if (!box) return;
+    const shape = displayShapes(liveBoxes(boxes, box.level), get().autoCarve).find((s) => s.id === id);
+    const local = shape?.local ?? localPolyOf(box);
+    if (local.length < 3) return;
+    get().remember();
+    const xs = local.map((p) => p[0]);
+    const ys = local.map((p) => p[1]);
+    const left = Math.min(...xs);
+    const top = Math.min(...ys);
+    const width = Math.max(0.01, Math.max(...xs) - left);
+    const height = Math.max(0.01, Math.max(...ys) - top);
+    const points: Point[] = local.map(([x, y]) => [(x - left) / width, (y - top) / height]);
+    set({
+      boxes: boxes.map((b) => (b.id === id ? { ...b, shape: "polygon", points, left, top, width, height, carvedBy: [] } : b)),
+    });
   },
 
   resetLayout() {

@@ -22,9 +22,10 @@ export type Poly = Point[];
 
 export type BoxKind = "room" | "corridor";
 
-/** A rectangle, or the ellipse inscribed in it. Drawn as a circle it
- * starts with width = height; the schedule can make it an ellipse. */
-export type BoxShape = "rect" | "circle";
+/** A rectangle, the ellipse inscribed in it, or a hand-drawn polygon.
+ * Drawn as a circle it starts with width = height; the schedule can make
+ * it an ellipse. */
+export type BoxShape = "rect" | "circle" | "polygon";
 
 export interface Box {
   /** Stable identity across edits. Not the display name. */
@@ -69,6 +70,12 @@ export interface Box {
   placed?: boolean;
   /** Where the sample put it, for Reset. */
   initial: Rect;
+  /** A `"polygon"` box's own outline, one point per vertex, each as a
+   * fraction (0..1) of the way across the bounding box (`left`/`top`/
+   * `width`/`height`) -- the same box drawn by hand, whichever direction
+   * it's dragged: a corner or wall resize scales every vertex with it,
+   * exactly as it already scales a rectangle. Unused on any other shape. */
+  points?: Point[];
 }
 
 /**

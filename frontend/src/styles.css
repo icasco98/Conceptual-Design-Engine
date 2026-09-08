@@ -293,10 +293,15 @@ button.icon:hover { color: var(--err); }
 .plan-svg .handle { fill: #fff; stroke: #0b0b0b; stroke-width: 0.05px; }
 .plan-svg .handle.resize { cursor: nwse-resize; }
 .plan-svg .handle.resize.ne, .plan-svg .handle.resize.sw { cursor: nesw-resize; }
+.plan-svg .handle.resize-edge { fill: #fff; fill-opacity: 0.001; stroke: none; }
+.plan-svg .handle.resize-edge.n, .plan-svg .handle.resize-edge.s { cursor: ns-resize; }
+.plan-svg .handle.resize-edge.e, .plan-svg .handle.resize-edge.w { cursor: ew-resize; }
 .plan-svg .handle.rotate { cursor: grab; }
 .plan-svg .handle.delete { fill: #fbeeec; cursor: pointer; }
 .plan-svg .handle.carve { fill: #f2f6f9; cursor: pointer; }
 .plan-svg .handle.flip { fill: #f2f6f9; cursor: pointer; }
+.plan-svg .handle.vertex { fill: #fff; stroke: #2f5d7c; stroke-width: 0.06px; cursor: move; }
+.plan-svg .handle.to-polygon { fill: #f2f6f9; cursor: pointer; }
 .plan-svg .arrow { cursor: grab; }
 .plan-svg .handle.carve.on { fill: #2f5d7c; }
 .plan-svg .handle-glyph { font-size: 0.34px; pointer-events: none; fill: #111; }
@@ -307,6 +312,8 @@ button.icon:hover { color: var(--err); }
 .plan-svg .box.open-below .room-label { fill: #7C8079; }
 .plan-svg .marquee { fill: #2f5d7c; fill-opacity: 0.08; stroke: #2f5d7c; stroke-width: 0.04px; stroke-dasharray: 0.2 0.15; }
 .plan-svg .drawing { fill: #2f5d7c; fill-opacity: 0.12; stroke: #2f5d7c; stroke-width: 0.06px; }
+.plan-svg .poly-vertex { fill: #2f5d7c; pointer-events: none; }
+.plan-svg .handle.poly-close { fill: #eaf1f6; cursor: pointer; }
 
 .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 11.5px; color: var(--muted); }
 .legend-item { display: inline-flex; align-items: center; gap: 6px; }

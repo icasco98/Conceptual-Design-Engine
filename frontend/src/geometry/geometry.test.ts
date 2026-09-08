@@ -5,7 +5,7 @@ import { arrowSegment, nearestWallPoint, suggestArrows } from "./arrows";
 import { touchingEdge } from "./doors";
 import { footprintRings } from "./footprint";
 import { clampDrawnRect, clampGroup, isOutsidePlot, limitGrowth, settleInPlot, shiftInside } from "./plot";
-import { polyArea, polyOfBox, rectPolyOf } from "./poly";
+import { anchorPoint, polyArea, polyOfBox, rectPolyOf, resizedFromAnchor } from "./poly";
 import { boxesTrulyIntersect, obbOf, obbsSeparated } from "./rect";
 import { isOpenToBelow, liveBoxes, snapToGrid, snapToNearbyNeighbors } from "./snap";
 import { polyGap, touchDelta, touchSelected } from "./touch";
@@ -528,5 +528,60 @@ describe("the plot as a boundary", () => {
 
   it("reports no shift for a zone already inside", () => {
     expect(shiftInside(polyOfBox(box({ id: "a", left: 5, top: 5, width: 2, height: 2 })), plot)).toEqual([0, 0]);
+  });
+});
+
+describe("resizing a rotated zone holds the corner you are not dragging still", () => {
+  it("keeps the anchor corner fixed on the page when the box is unrotated", () => {
+    const b = box({ id: "a", left: 0, top: 0, width: 4, height: 2 });
+    const anchor = anchorPoint(b, -1, -1); // nw, opposite an se drag
+    expect(anchor).toEqual([0, 0]);
+    const resized = resizedFromAnchor(b, anchor, -1, -1, 6, 5);
+    expect(resized.left).toBeCloseTo(0, 6);
+    expect(resized.top).toBeCloseTo(0, 6);
+    expect(resized.width).toBe(6);
+    expect(resized.height).toBe(5);
+  });
+
+  it("keeps the far corner fixed on the page for a 90-degree turned box", () => {
+    // left=0,top=0,4x2, rotated 90deg: cx=2,cy=1, cos=0,sin=1, so nw's
+    // page position works out to (3, -1) by hand.
+    const b = box({ id: "a", left: 0, top: 0, width: 4, height: 2, rotation: 90 });
+    const anchor = anchorPoint(b, -1, -1); // dragging se, nw is the anchor
+    expect(anchor[0]).toBeCloseTo(3, 6);
+    expect(anchor[1]).toBeCloseTo(-1, 6);
+    const resized = resizedFromAnchor(b, anchor, -1, -1, 6, 2);
+    // The anchor corner must still be exactly there after the resize.
+    const nwOnPage = anchorPoint(resized, -1, -1);
+    expect(nwOnPage[0]).toBeCloseTo(3, 6);
+    expect(nwOnPage[1]).toBeCloseTo(-1, 6);
+  });
+
+  it("keeps the far corner fixed for an arbitrary rotation, on every corner", () => {
+    const base = box({ id: "a", left: 1, top: 2, width: 5, height: 3, rotation: 37 });
+    for (const [sx, sy] of [
+      [-1, -1],
+      [-1, 1],
+      [1, -1],
+      [1, 1],
+    ] as const) {
+      const anchor = anchorPoint(base, sx, sy);
+      const resized = resizedFromAnchor(base, anchor, sx, sy, 8, 6);
+      const stillThere = anchorPoint(resized, sx, sy);
+      expect(stillThere[0]).toBeCloseTo(anchor[0], 6);
+      expect(stillThere[1]).toBeCloseTo(anchor[1], 6);
+    }
+  });
+
+  it("keeps the opposite wall's midpoint fixed for an edge drag on a rotated zone", () => {
+    const base = box({ id: "a", left: 0, top: 0, width: 4, height: 2, rotation: 30 });
+    // Dragging the east wall: the west wall's midpoint (sx=-1, sy=0) anchors.
+    const anchor = anchorPoint(base, -1, 0);
+    const resized = resizedFromAnchor(base, anchor, -1, 0, 9, 2);
+    const stillThere = anchorPoint(resized, -1, 0);
+    expect(stillThere[0]).toBeCloseTo(anchor[0], 6);
+    expect(stillThere[1]).toBeCloseTo(anchor[1], 6);
+    expect(resized.width).toBe(9);
+    expect(resized.height).toBe(2);
   });
 });

@@ -20,6 +20,7 @@ import {
   IconLayers,
   IconLayersUp,
   IconMagnet,
+  IconPolygon,
   IconRect,
   IconRedo,
   IconReset,
@@ -70,6 +71,7 @@ function Rail() {
       {toolButton("pan", "Pan the plan (or drag with the middle button)", <IconHand />)}
       {toolButton("rect", "Draw a rectangle zone (Shift for a square)", <IconRect />)}
       {toolButton("circle", "Draw a circle zone", <IconCircle />)}
+      {toolButton("polygon", "Draw a polygon zone: click each corner (Shift for a square wall), click the first corner or Enter to close", <IconPolygon />)}
       {toolButton("arrow", "Add an interior door arrow: click a zone's wall", <IconArrow />)}
       {toolButton("arrow-main", "Add the main entrance: click a zone's exterior wall", <IconDoorMain />)}
       <button

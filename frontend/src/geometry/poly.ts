@@ -84,10 +84,13 @@ function ellipsePolyOf(r: Rect): Poly {
 }
 
 /** The box's outline in its OWN frame -- unrotated, axis-aligned -- a
- * rectangle or the ellipse inside it. */
+ * rectangle, the ellipse inside it, or a hand-drawn polygon's vertices
+ * scaled out of their 0..1 fractions and into the bounding box. */
 export function localPolyOf(b: Box): Poly {
   const r = { left: b.left, top: b.top, width: b.width, height: b.height };
-  return b.shape === "circle" ? ellipsePolyOf(r) : rectPolyOf(r);
+  if (b.shape === "circle") return ellipsePolyOf(r);
+  if (b.shape === "polygon" && b.points?.length) return b.points.map(([fx, fy]) => [b.left + fx * b.width, b.top + fy * b.height]);
+  return rectPolyOf(r);
 }
 
 /** The box's outline on the page: its local outline turned by its
@@ -127,6 +130,43 @@ export function localToPagePoly(poly: Poly, fr: Frame): Poly {
     const dy = p[1] - fr.cy;
     return [fr.cx + dx * fr.cos - dy * fr.sin, fr.cy + dx * fr.sin + dy * fr.cos];
   });
+}
+
+/** A world-space vector (a pointer delta, not a point -- no translation)
+ * turned into the box's own unrotated axes. What a resize drag must use
+ * instead of the raw pointer delta once the box is turned: the box's
+ * edges are no longer the world's x and y. */
+export function toLocalVector(dx: number, dy: number, fr: Frame): Point {
+  if (!fr.rotated) return [dx, dy];
+  return [dx * fr.cos + dy * fr.sin, -dx * fr.sin + dy * fr.cos];
+}
+
+/** Where one of a box's corners or edge-midpoints sits on the page:
+ * `sx`/`sy` of -1/0/1 pick west/centre/east and north/centre/south in the
+ * box's own frame. `(±1, ±1)` is a corner, `(0, ±1)` or `(±1, 0)` the
+ * midpoint of a wall. What a resize holds fixed while the opposite side
+ * is dragged. */
+export function anchorPoint(b: Box, sx: -1 | 0 | 1, sy: -1 | 0 | 1): Point {
+  const local: Point = [b.left + b.width / 2 + sx * (b.width / 2), b.top + b.height / 2 + sy * (b.height / 2)];
+  return localToPagePoly([local], frameOf(b))[0];
+}
+
+/** `b` resized to `width` x `height`, with the corner or wall-midpoint at
+ * `(sx, sy)` (see `anchorPoint`) held exactly at `anchor` on the page.
+ * This is the rotated generalisation of "drag a corner, the opposite one
+ * doesn't move" / "drag a wall, the opposite wall doesn't move": solving
+ * for the new centre from the fixed point, rather than carrying `left`
+ * and `top` forward and rotating around whatever centre they land on,
+ * is what keeps that point from drifting once the box is turned. */
+export function resizedFromAnchor(b: Box, anchor: Point, sx: -1 | 0 | 1, sy: -1 | 0 | 1, width: number, height: number): Box {
+  const rad = (b.rotation * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const hw = width / 2;
+  const hh = height / 2;
+  const cx = anchor[0] - sx * hw * cos + sy * hh * sin;
+  const cy = anchor[1] - sx * hw * sin - sy * hh * cos;
+  return { ...b, width, height, left: cx - hw, top: cy - hh };
 }
 
 /** The four full-height / full-width strips left either side of a bite:
