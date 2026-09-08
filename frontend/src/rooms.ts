@@ -2,10 +2,9 @@
  * What the editor knows about each kind of room: a label, the smallest
  * workable size, and which zone it colours as.
  *
- * This table used to live in Python (src/defaults.py on the branch this
- * tool was forked from) because Python packed the rooms. Nothing packs
- * them now — the person drawing does — so the one place the numbers are
- * read is the browser, and this is the only copy.
+ * The browser is the only place these numbers are read, and this is the
+ * only copy of them. Keep it that way: a second copy anywhere is a second
+ * thing to hold in step.
  *
  * Minimums are conceptual-design minimums, not code minimums, except
  * where a code fact is stated directly (bathroom 1.5 × 1.75, hallway
@@ -20,7 +19,7 @@ interface RoomTypeInfo {
   minHeight: number;
   typicalWidth: number;
   typicalHeight: number;
-  /** Fixed zone, in place of the grouping Claude used to choose. */
+  /** Fixed by type: bedrooms private, living shared, garage service. */
   zone: CategoryKey;
 }
 
