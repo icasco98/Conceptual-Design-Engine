@@ -21,18 +21,48 @@
  * decision for a person, not a walk of the touching graph, so they are
  * placed by hand with their own tools and left alone here.
  */
-import { pageToLocalPoly, localToPagePoly, frameOf } from "./poly";
+import { pageToLocalPoly, localToPagePoly, localPolyOf, frameOf } from "./poly";
 import { rectOf, centerOf } from "./rect";
 import { boxesTrulyIntersect } from "./rect";
 import { isOpenToBelow } from "./snap";
-import { DOOR_INSET_M, type Arrow, type Box, type Point } from "./types";
+import { DOOR_INSET_M, type Arrow, type Box, type Point, type Poly } from "./types";
 import { touchingEdge } from "./doors";
 
+/** Twice a polygon's signed area (shoelace; only the sign is used, so
+ * there is no need to halve it). Positive for the winding a rectangle's
+ * own corners are listed in (poly.ts's `rectPolyOf`) -- a hand-drawn
+ * polygon may run either way, so this is worked out rather than assumed,
+ * to get its walls' outward side right regardless. */
+function signedArea(poly: Poly): number {
+  let a = 0;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    a += poly[j][0] * poly[i][1] - poly[i][0] * poly[j][1];
+  }
+  return a;
+}
+
+/** The point at parameter `t` along a polygon's own edge `side` (from
+ * vertex `side` to the next one, wrapping), and its outward normal. */
+function polygonWallPoint(poly: Poly, side: number, t: number): { p: Point; n: Point } {
+  const n = poly.length;
+  const i = ((side % n) + n) % n;
+  const a = poly[i];
+  const b = poly[(i + 1) % n];
+  const p: Point = [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
+  const ex = b[0] - a[0];
+  const ey = b[1] - a[1];
+  const len = Math.hypot(ex, ey) || 1;
+  const outward = signedArea(poly) >= 0 ? 1 : -1;
+  return { p, n: [(outward * ey) / len, (-outward * ex) / len] };
+}
+
 /** The point on the host's outline for (side, t), and the outward normal
- * there, both in the host's LOCAL frame. */
+ * there, both in the host's LOCAL frame. On a polygon, `side` is which
+ * of its own walls (edge `side` to edge `side + 1`, however many it
+ * has) -- not one of a rectangle's fixed four. */
 function wallPointLocal(host: Box, side: number, t: number): { p: Point; n: Point } {
-  const r = rectOf(host);
   if (host.shape === "circle") {
+    const r = rectOf(host);
     const a = t * Math.PI * 2;
     const cx = r.left + r.width / 2;
     const cy = r.top + r.height / 2;
@@ -43,6 +73,10 @@ function wallPointLocal(host: Box, side: number, t: number): { p: Point; n: Poin
     const len = Math.hypot(nx, ny) || 1;
     return { p, n: [nx / len, ny / len] };
   }
+  if (host.shape === "polygon" && host.points?.length) {
+    return polygonWallPoint(localPolyOf(host), side, t);
+  }
+  const r = rectOf(host);
   const x1 = r.left + r.width;
   const y1 = r.top + r.height;
   switch (side % 4) {
@@ -68,18 +102,40 @@ export function arrowSegment(host: Box, arrow: Arrow): [Point, Point] {
   return [a, b];
 }
 
+/** The point on a segment `a`-`b` nearest `q`, clamped to the segment
+ * rather than its infinite line, and how far along (0..1) it is. */
+function nearestOnSegment(q: Point, a: Point, b: Point): { p: Point; t: number } {
+  const ex = b[0] - a[0];
+  const ey = b[1] - a[1];
+  const len2 = ex * ex + ey * ey;
+  const t = len2 < 1e-9 ? 0 : clamp01(((q[0] - a[0]) * ex + (q[1] - a[1]) * ey) / len2);
+  return { p: [a[0] + t * ex, a[1] + t * ey], t };
+}
+
 /** The wall point on `host` nearest a page-frame point: which side, how
- * far along. What dragging an arrow snaps to. */
+ * far along. What dragging an arrow snaps to. On a polygon this checks
+ * every one of its own walls, not a rectangle's fixed four. */
 export function nearestWallPoint(host: Box, page: Point): { side: number; t: number } {
   const fr = frameOf(host);
   const [q] = pageToLocalPoly([page], fr);
-  const r = rectOf(host);
   if (host.shape === "circle") {
+    const r = rectOf(host);
     const cx = r.left + r.width / 2;
     const cy = r.top + r.height / 2;
     const a = Math.atan2((q[1] - cy) / (r.height / 2), (q[0] - cx) / (r.width / 2));
     return { side: 0, t: ((a / (Math.PI * 2)) % 1 + 1) % 1 };
   }
+  if (host.shape === "polygon" && host.points?.length) {
+    const poly = localPolyOf(host);
+    let best = { side: 0, t: 0, d: Infinity };
+    for (let i = 0; i < poly.length; i++) {
+      const { p, t } = nearestOnSegment(q, poly[i], poly[(i + 1) % poly.length]);
+      const d = Math.hypot(q[0] - p[0], q[1] - p[1]);
+      if (d < best.d) best = { side: i, t, d };
+    }
+    return { side: best.side, t: best.t };
+  }
+  const r = rectOf(host);
   const x1 = r.left + r.width;
   const y1 = r.top + r.height;
   const candidates: { side: number; t: number; d: number }[] = [

@@ -623,3 +623,70 @@ describe("snapping a polygon corner or wall to a neighbour", () => {
     expect(extra).toBe(0);
   });
 });
+
+describe("door arrows on a polygon zone read its own walls, not its bounding box", () => {
+  // An L: (0,0)-(6,0)-(6,2)-(3,2)-(3,4)-(0,4), missing the bottom-right
+  // quarter of its 6x4 bounding box -- clockwise, as rectPolyOf winds.
+  const lShapeCW: Box = box({
+    id: "l",
+    left: 0,
+    top: 0,
+    width: 6,
+    height: 4,
+    shape: "polygon",
+    points: [
+      [0, 0],
+      [1, 0],
+      [1, 0.5],
+      [0.5, 0.5],
+      [0.5, 1],
+      [0, 1],
+    ],
+  });
+
+  it("finds the real nearest wall for a point over the missing notch, not a bounding-box side", () => {
+    // (5, 3) sits inside the bounding box but outside the L, in the
+    // notch. Its true nearest wall is edge 2, the one facing the notch
+    // (from (6,2) to (3,2)), one metre away -- not either bounding-box
+    // side that would tie for "nearest" at the same distance.
+    const { side, t } = nearestWallPoint(lShapeCW, [5, 3]);
+    expect(side).toBe(2);
+    expect(t).toBeCloseTo(1 / 3, 6);
+  });
+
+  it("puts the arrow's midpoint exactly on that wall, not off in space", () => {
+    const arrow = { id: "a", level: 0, hostId: "l", side: 2, t: 1 / 3, dir: 1 as const };
+    const [tail, head] = arrowSegment(lShapeCW, arrow);
+    const mid: [number, number] = [(tail[0] + head[0]) / 2, (tail[1] + head[1]) / 2];
+    // Edge 2 runs from (6,2) to (3,2) at t=1/3: (6,2) + 1/3 * (3-6, 0).
+    expect(mid[0]).toBeCloseTo(5, 6);
+    expect(mid[1]).toBeCloseTo(2, 6);
+  });
+
+  /** Standard ray-cast point-in-polygon: true for a point inside `poly`. */
+  function inside(p: readonly [number, number], poly: readonly (readonly [number, number])[]): boolean {
+    let hit = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const [xi, yi] = poly[i];
+      const [xj, yj] = poly[j];
+      if (yi > p[1] !== yj > p[1] && p[0] < ((xj - xi) * (p[1] - yi)) / (yj - yi) + xi) hit = !hit;
+    }
+    return hit;
+  }
+
+  it("points the arrow outward on every wall regardless of which way the polygon winds", () => {
+    // The same L, wound the other way (its points listed in reverse) --
+    // the L is concave, so this also has to hold at the notch's own
+    // inner corner, not just its convex corners.
+    const lShapeCCW: Box = box({ ...lShapeCW, id: "l2", points: [...lShapeCW.points!].reverse() });
+    for (const host of [lShapeCW, lShapeCCW]) {
+      const abs = host.points!.map(([fx, fy]): [number, number] => [host.left + fx * host.width, host.top + fy * host.height]);
+      for (let side = 0; side < abs.length; side++) {
+        const arrow = { id: "a", level: 0, hostId: host.id, side, t: 0.5, dir: 1 as const };
+        const [tail, head] = arrowSegment(host, arrow);
+        expect(inside(tail, abs)).toBe(true);
+        expect(inside(head, abs)).toBe(false);
+      }
+    }
+  });
+});

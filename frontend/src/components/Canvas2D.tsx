@@ -641,6 +641,10 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
   };
 
   const startResize = (e: React.PointerEvent, b: Box) => (corner: Corner) => {
+    // A tool other than Select owns clicks on the zone itself (placing a
+    // door, say) -- let the handle be walked over rather than swallowing
+    // that click.
+    if (tool !== "select") return;
     e.stopPropagation();
     e.preventDefault();
     const p = toMeters(e);
@@ -665,6 +669,7 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
   };
 
   const startEdgeResize = (e: React.PointerEvent, b: Box) => (side: "n" | "s" | "e" | "w") => {
+    if (tool !== "select") return;
     e.stopPropagation();
     e.preventDefault();
     const p = toMeters(e);
@@ -692,6 +697,7 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
    * itself doesn't grow) -- resize the box first, with the handles above,
    * if a corner needs to go further than that. */
   const startVertexDrag = (e: React.PointerEvent, b: Box, index: number) => {
+    if (tool !== "select") return;
     e.stopPropagation();
     e.preventDefault();
     const p = toMeters(e);
@@ -705,6 +711,7 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
    * corners exactly where they are, unlike a rectangle's resize which
    * scales the whole thing. */
   const startPolyWallDrag = (e: React.PointerEvent, b: Box, i0: number, i1: number) => {
+    if (tool !== "select") return;
     e.stopPropagation();
     e.preventDefault();
     const p = toMeters(e);
