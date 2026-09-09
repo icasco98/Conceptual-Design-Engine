@@ -50,18 +50,34 @@ function reachabilitySentences(problems: ReachabilityProblem[], boxesById: Map<s
   });
 }
 
-function adjacencySentences(rows: AdjacencyStatus[]): string[] {
+/** `required` and `undesired` are hard problems: a real requirement
+ * unmet, or a real conflict present. `desired` is a softer, "usually a
+ * good idea" recommendation -- kept in its own list, not mixed in with
+ * the problems, so a person can tell "this must be fixed" apart from
+ * "this would help" at a glance rather than reading every sentence to
+ * find out which kind it is. */
+function adjacencyProblemSentences(rows: AdjacencyStatus[]): string[] {
   return rows
-    .filter((r) => !r.ok)
+    .filter((r) => !r.ok && r.relation !== "desired")
     .map((r) => {
       const a = roomTypeInfo(r.a).label;
       const b = roomTypeInfo(r.b).label;
       if (r.relation === "undesired") return `${a} and ${b} share a wall -- that's usually kept separate`;
-      // Two different reasons a required/desired pair can fail, worth
-      // telling apart: a wall with no door in it reads very differently
-      // from two rooms that were never placed near each other at all.
+      // Two different reasons a required pair can fail, worth telling
+      // apart: a wall with no door in it reads very differently from two
+      // rooms that were never placed near each other at all.
       if (r.touching) return `${a} and ${b} share a wall, but there's no door between them`;
-      return `${a} and ${b} aren't near each other, though they usually should be`;
+      return `${a} and ${b} aren't near each other at all, though they need to be`;
+    });
+}
+
+function adjacencyRecommendationSentences(rows: AdjacencyStatus[]): string[] {
+  return rows
+    .filter((r) => !r.ok && r.relation === "desired")
+    .map((r) => {
+      const a = roomTypeInfo(r.a).label;
+      const b = roomTypeInfo(r.b).label;
+      return `${a} and ${b} are a long way apart -- usually easier when they're close`;
     });
 }
 
@@ -100,15 +116,19 @@ export function StatusBar() {
 
   // Every storey at once, the same reasoning as `strays` above: a privacy
   // problem two floors up is exactly the kind of thing a person would not
-  // otherwise notice.
-  const privacySentences = useMemo(() => {
+  // otherwise notice. Split into hard problems (a real requirement unmet
+  // or conflict present -- tier skips and reachability problems are
+  // always this severity) and soft recommendations (a `desired` miss),
+  // so the two never read as equally urgent.
+  const { privacyProblems, privacyRecommendations } = useMemo(() => {
     const boxesById = new Map(boxes.map((b) => [b.id, b]));
     const findings = collectFindings(boxes, storeys, arrows, autoCarve, passableOf, tierOf, auxiliaryOf, isServiceOf);
-    return [
+    const problems = [
       ...tierSentences(findings.tier, boxesById),
       ...reachabilitySentences(findings.reachability, boxesById),
-      ...adjacencySentences(findings.adjacency),
+      ...adjacencyProblemSentences(findings.adjacency),
     ];
+    return { privacyProblems: problems, privacyRecommendations: adjacencyRecommendationSentences(findings.adjacency) };
   }, [boxes, storeys, arrows, autoCarve]);
 
   const plotArea = plot.width * plot.depth;
@@ -149,11 +169,18 @@ export function StatusBar() {
             <IconFootprints size={12} /> {sharedCount} shared stretch{sharedCount === 1 ? "" : "es"} of wall on this floor
           </span>
         )}
-        {privacySentences.length > 0 && (
-          <span className="status-item warning" title={privacySentences.join("\n")}>
-            <IconWarn size={12} /> {privacySentences.length} privacy {privacySentences.length === 1 ? "issue" : "issues"}:{" "}
-            {privacySentences.slice(0, 2).join("; ")}
-            {privacySentences.length > 2 && ` — and ${privacySentences.length - 2} more (hover to see all)`}
+        {privacyProblems.length > 0 && (
+          <span className="status-item error" title={privacyProblems.join("\n")}>
+            <IconWarn size={12} /> {privacyProblems.length} privacy {privacyProblems.length === 1 ? "problem" : "problems"}:{" "}
+            {privacyProblems.slice(0, 2).join("; ")}
+            {privacyProblems.length > 2 && ` — and ${privacyProblems.length - 2} more (hover to see all)`}
+          </span>
+        )}
+        {privacyRecommendations.length > 0 && (
+          <span className="status-item muted" title={privacyRecommendations.join("\n")}>
+            {privacyRecommendations.length} {privacyRecommendations.length === 1 ? "recommendation" : "recommendations"}:{" "}
+            {privacyRecommendations.slice(0, 2).join("; ")}
+            {privacyRecommendations.length > 2 && ` — and ${privacyRecommendations.length - 2} more (hover to see all)`}
           </span>
         )}
       </div>

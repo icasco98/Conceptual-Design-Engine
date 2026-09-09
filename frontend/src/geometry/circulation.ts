@@ -189,6 +189,45 @@ export function buildCirculationGraph(boxes: Box[], storeys: number, arrows: Arr
   return graph;
 }
 
+/** The fewest doors between any of `fromIds` and any of `toIds`, walking
+ * the same graph `buildCirculationGraph` returns -- 0 if a starting room
+ * is itself one of the targets, 1 for a direct door, 2 for one room
+ * between them, and so on. Null when nothing in `toIds` is reachable
+ * from any of `fromIds` at all.
+ *
+ * A plain unweighted breadth-first walk, deliberately not `shortestPath`
+ * (below): that one is Dijkstra over each edge's straight-line distance
+ * in meters, the right tool for "how far does an actor actually walk,"
+ * the wrong one for "how many rooms apart are these" -- a route through
+ * one large room can be longer in meters than one through two small
+ * ones, and a hop count should not care.
+ *
+ * Multi-source on purpose: `relationships.ts`'s "easy access" question is
+ * "how close is the nearest room of type B to the nearest one of type A,"
+ * not the hop count between one arbitrarily chosen pair -- either type
+ * can legitimately have more than one instance. */
+export function minHopCount(graph: CirculationGraph, fromIds: Iterable<string>, toIds: ReadonlySet<string>): number | null {
+  const dist = new Map<string, number>();
+  const queue: string[] = [];
+  for (const id of fromIds) {
+    if (dist.has(id)) continue;
+    dist.set(id, 0);
+    queue.push(id);
+  }
+  let head = 0;
+  while (head < queue.length) {
+    const cur = queue[head++];
+    const d = dist.get(cur)!;
+    if (toIds.has(cur)) return d;
+    for (const edge of graph.get(cur) ?? []) {
+      if (dist.has(edge.to)) continue;
+      dist.set(edge.to, d + 1);
+      queue.push(edge.to);
+    }
+  }
+  return null;
+}
+
 /** Whether one placed arrow is still, right now, a real door: an
  * interior one needs a real touch -- some neighbour whose current
  * outline actually meets the host's, right there -- and an exterior one

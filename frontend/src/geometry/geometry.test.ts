@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { carveWith, displayShapes, releaseCarve, shapeStillUsable, subtractKeepLargest } from "./carve";
 import { arrowSegment, liveWallPoint, nearestWallPoint, suggestArrows } from "./arrows";
-import { actorRoute, arrowIsLive, buildCirculationGraph, liveArrowIds, outOfBounds, reachabilityProblems, routeLength, sharedSegments, syncFrozenArrowPoints } from "./circulation";
+import { actorRoute, arrowIsLive, buildCirculationGraph, liveArrowIds, minHopCount, outOfBounds, reachabilityProblems, routeLength, sharedSegments, syncFrozenArrowPoints } from "./circulation";
 import { buildTouchGraph, touchingEdges } from "./doors";
 import { footprintRings } from "./footprint";
 import { clampDrawnRect, clampGroup, isOutsidePlot, limitGrowth, limitPointGrowth, settleInPlot, shiftInside } from "./plot";
@@ -1158,6 +1158,50 @@ describe("syncFrozenArrowPoints: a live door's frozenAt tracks it, a stale one's
   });
 });
 
+describe("minHopCount: how many doors apart, not how many meters", () => {
+  it("is 0 when a starting room is itself one of the targets", () => {
+    const a = box({ id: "a", left: 0, top: 0, width: 4, height: 4 });
+    const graph = buildCirculationGraph([a], 1, [], false);
+    expect(minHopCount(graph, ["a"], new Set(["a"]))).toBe(0);
+  });
+
+  it("is 1 for a direct door, 2 for one connecting room, growing with the walk", () => {
+    // a - b - c, doored the whole way, a straight line.
+    const a = box({ id: "a", left: 0, top: 0, width: 4, height: 4 });
+    const b = box({ id: "b", left: 4, top: 0, width: 3, height: 4 });
+    const c = box({ id: "c", left: 7, top: 0, width: 4, height: 4 });
+    const doors: Arrow[] = [
+      { id: "d1", level: 0, hostId: "a", kind: "interior", side: 1, t: 0.5, dir: 1 },
+      { id: "d2", level: 0, hostId: "b", kind: "interior", side: 1, t: 0.5, dir: 1 },
+    ];
+    const graph = buildCirculationGraph([a, b, c], 1, doors, false);
+    expect(minHopCount(graph, ["a"], new Set(["b"]))).toBe(1);
+    expect(minHopCount(graph, ["a"], new Set(["c"]))).toBe(2);
+  });
+
+  it("returns null when nothing in the targets is reachable at all", () => {
+    const a = box({ id: "a", left: 0, top: 0, width: 4, height: 4 });
+    const isolated = box({ id: "isolated", left: 20, top: 20, width: 4, height: 4 });
+    const graph = buildCirculationGraph([a, isolated], 1, [], false);
+    expect(minHopCount(graph, ["a"], new Set(["isolated"]))).toBeNull();
+  });
+
+  it("is multi-source: the nearest of several starting rooms decides the answer", () => {
+    // far - x - near - target: two candidate sources, one much closer.
+    const far = box({ id: "far", left: 0, top: 0, width: 4, height: 4 });
+    const x = box({ id: "x", left: 4, top: 0, width: 4, height: 4 });
+    const near = box({ id: "near", left: 8, top: 0, width: 4, height: 4 });
+    const target = box({ id: "target", left: 12, top: 0, width: 4, height: 4 });
+    const doors: Arrow[] = [
+      { id: "d1", level: 0, hostId: "far", kind: "interior", side: 1, t: 0.5, dir: 1 },
+      { id: "d2", level: 0, hostId: "x", kind: "interior", side: 1, t: 0.5, dir: 1 },
+      { id: "d3", level: 0, hostId: "near", kind: "interior", side: 1, t: 0.5, dir: 1 },
+    ];
+    const graph = buildCirculationGraph([far, x, near, target], 1, doors, false);
+    expect(minHopCount(graph, ["far", "near"], new Set(["target"]))).toBe(1);
+  });
+});
+
 describe("reachabilityProblems: every room reached from some exterior door, without walking through a non-passable one", () => {
   it("reports nothing for a plan every room is properly reached in", () => {
     const entry = box({ id: "entry", left: 0, top: 0, width: 4, height: 4, roomType: "entry" });
@@ -1338,6 +1382,58 @@ describe("checkAdjacency: required/desired need a real door; undesired only care
     const row = checkAdjacency([master, hisBath, herBath], 1, doors, false).find((r) => r.a === "master_bedroom" && r.b === "bathroom");
     expect(row?.ok).toBe(true);
     expect(row?.failedInstanceIds).toEqual([]);
+  });
+
+  it("satisfies a desired pair on easy access -- a direct door counts", () => {
+    const kitchen = box({ id: "kitchen", left: 0, top: 0, width: 4, height: 4, roomType: "kitchen" });
+    const laundry = box({ id: "laundry", left: 4, top: 0, width: 4, height: 4, roomType: "laundry" });
+    const door: Arrow = { id: "d", level: 0, hostId: "kitchen", kind: "interior", side: 1, t: 0.5, dir: 1 };
+    const row = checkAdjacency([kitchen, laundry], 1, [door], false).find((r) => r.a === "kitchen" && r.b === "laundry");
+    expect(row?.relation).toBe("desired");
+    expect(row?.ok).toBe(true);
+  });
+
+  it("satisfies a desired pair through one connecting room, without the two ever touching each other", () => {
+    const kitchen = box({ id: "kitchen", left: 0, top: 0, width: 4, height: 4, roomType: "kitchen" });
+    const hall = box({ id: "hall", left: 4, top: 0, width: 3, height: 4, roomType: "hallway" });
+    const laundry = box({ id: "laundry", left: 7, top: 0, width: 4, height: 4, roomType: "laundry" });
+    const doors: Arrow[] = [
+      { id: "d1", level: 0, hostId: "kitchen", kind: "interior", side: 1, t: 0.5, dir: 1 },
+      { id: "d2", level: 0, hostId: "hall", kind: "interior", side: 1, t: 0.5, dir: 1 },
+    ];
+    const row = checkAdjacency([kitchen, hall, laundry], 1, doors, false).find((r) => r.a === "kitchen" && r.b === "laundry");
+    expect(row?.touching).toBe(false);
+    expect(row?.ok).toBe(true);
+  });
+
+  it("fails a desired pair three or more rooms apart -- not \"easy\" any more", () => {
+    const kitchen = box({ id: "kitchen", left: 0, top: 0, width: 4, height: 4, roomType: "kitchen" });
+    const h1 = box({ id: "h1", left: 4, top: 0, width: 3, height: 4, roomType: "hallway" });
+    const h2 = box({ id: "h2", left: 7, top: 0, width: 3, height: 4, roomType: "hallway" });
+    const laundry = box({ id: "laundry", left: 10, top: 0, width: 4, height: 4, roomType: "laundry" });
+    const doors: Arrow[] = [
+      { id: "d1", level: 0, hostId: "kitchen", kind: "interior", side: 1, t: 0.5, dir: 1 },
+      { id: "d2", level: 0, hostId: "h1", kind: "interior", side: 1, t: 0.5, dir: 1 },
+      { id: "d3", level: 0, hostId: "h2", kind: "interior", side: 1, t: 0.5, dir: 1 },
+    ];
+    const row = checkAdjacency([kitchen, h1, h2, laundry], 1, doors, false).find((r) => r.a === "kitchen" && r.b === "laundry");
+    expect(row?.ok).toBe(false);
+  });
+
+  it("still evaluates a desired pair across two storeys, reached only through a stair", () => {
+    const kitchen = box({ id: "kitchen", left: 0, top: 0, width: 4, height: 4, roomType: "kitchen", level: 0, levelTo: 0 });
+    const stair = box({ id: "stair", left: 4, top: 0, width: 2, height: 4, roomType: "stair", level: 0, levelTo: 1 });
+    const laundry = box({ id: "laundry", left: 6, top: 0, width: 4, height: 4, roomType: "laundry", level: 1, levelTo: 1 });
+    const doors: Arrow[] = [
+      { id: "d1", level: 0, hostId: "kitchen", kind: "interior", side: 1, t: 0.5, dir: 1 },
+      { id: "d2", level: 1, hostId: "stair", kind: "interior", side: 1, t: 0.5, dir: 1 },
+    ];
+    const row = checkAdjacency([kitchen, stair, laundry], 2, doors, false).find((r) => r.a === "kitchen" && r.b === "laundry");
+    // Present at all (a same-storey-only check would have skipped this
+    // row entirely, since kitchen and laundry never share a floor), and
+    // satisfied at 2 hops via the stair.
+    expect(row).toBeDefined();
+    expect(row?.ok).toBe(true);
   });
 });
 

@@ -6,26 +6,42 @@
  * the other:
  *
  * `checkAdjacency` asks whether the *right* rooms ended up near each
- * other. For `undesired`, that's physical adjacency alone (a shared
- * wall, via `circulation.ts`'s own touch graph) -- a garage's noise and
- * heat cross a wall whether or not a door was ever cut into it, so a
- * touching pair is the problem regardless. For `required`/`desired`,
- * it's the opposite: a shared wall with no door on it satisfies nothing
- * -- the entire reason kitchen-dining adjacency is required is so people
- * can walk quickly between them, and a wall with no door achieves that
- * no better than not being adjacent at all. So required/desired checks
- * `circulation.ts`'s own door graph (the same one `reachabilityProblems`
- * and `tierViolations` already use), not the touch graph -- two rooms can
- * share a wall and still fail a required row if nobody ever put a door in
- * it. Checked at the type level by default ("does at least one instance
- * of each type connect"), with an opt-in, per-instance escape hatch
- * (`Box.attachedTo`) for the case type-level checking cannot see on its
- * own -- two required instances of the same type (two ensuite bathrooms
- * off one primary suite) where one being satisfied could otherwise
- * silently cover for the other failing. A declared `attachedTo` is
- * checked against the same door graph too: a bathroom touching its
- * claimed bedroom with no actual door between them is exactly as broken
- * as one that doesn't touch it at all.
+ * other -- and the three relations mean three different things by
+ * "near," not one physical fact checked three ways:
+ *
+ * - `undesired` is physical adjacency, full stop (a shared wall, via
+ *   `circulation.ts`'s own touch graph). A garage's noise and heat cross
+ *   a wall whether or not a door was ever cut into it, so a touching
+ *   pair is the problem regardless of doors.
+ * - `required` means a direct door: `circulation.ts`'s own door graph
+ *   (the same one `reachabilityProblems` and `tierViolations` already
+ *   use), not the touch graph -- two rooms can share a wall and still
+ *   fail a required row if nobody ever put a door in it. The whole
+ *   reason kitchen-dining adjacency is required is so people can walk
+ *   quickly between them; a wall with no door achieves that no better
+ *   than not being adjacent at all.
+ * - `desired` means *easy access*, which is a weaker and different claim
+ *   than either of the above: not touching, not necessarily a direct
+ *   door, but a short walk -- at most `EASY_ACCESS_HOPS` doors
+ *   (`circulation.ts`'s `minHopCount`, an unweighted hop count over that
+ *   same door graph, not `shortestPath`'s meter-weighted one, which
+ *   answers a different question and would let one large room in the
+ *   way count as "farther" than two small ones). Kitchen and laundry
+ *   don't need to touch; a hallway between them is fine.
+ *
+ * Required is checked at the *type* level by default -- "does at least
+ * one instance of each type connect" -- which is right for a type that
+ * normally has one instance (an Entry, a Kitchen) but is not enough once
+ * a type can legitimately appear more than once with each instance
+ * needing its own separate attachment: two ensuite bathrooms off one
+ * primary suite ("his" and "hers"), say. "At least one connects" would
+ * report success even if only one of the two actually does, silently
+ * covering for the other. `Box.attachedTo` is how an instance declares
+ * which one it is required to connect to; when it does, that specific
+ * claim is checked on its own, against the door graph, and failing it
+ * fails the row regardless of what some other, untagged instance
+ * satisfies. An instance that never declares an owner is judged exactly
+ * as it always was.
  *
  * `tierViolations` asks whether a *door* respects the public-to-private
  * gradient (rooms.ts's `tier`): a door may connect adjacent tiers but
@@ -45,7 +61,7 @@
  * auto-connects anything -- same "flag, never force" rule as the rest of
  * this tool.
  */
-import { buildCirculationGraph, levelTouchData, reachabilityProblems, type ReachabilityProblem } from "./circulation";
+import { buildCirculationGraph, levelTouchData, minHopCount, reachabilityProblems, type ReachabilityProblem } from "./circulation";
 import { liveBoxes } from "./snap";
 import type { Arrow, Box, PrivacyTier } from "./types";
 
@@ -113,16 +129,18 @@ export const ROOM_RELATIONSHIPS: RelationRow[] = [
 ];
 
 export interface AdjacencyStatus extends RelationRow {
-  /** True when the relation holds -- touching for required/desired, not
-   * touching for undesired. Only set when both room types actually have
-   * at least one instance somewhere in the plan; a row where either type
-   * is entirely absent is left out of the result altogether, not
-   * reported as failing. A house with no garage is never penalized for
-   * lacking a garage. */
+  /** True when the relation holds -- not touching for `undesired`, a
+   * direct door for `required`, at most `EASY_ACCESS_HOPS` doors away for
+   * `desired`. Only set when both room types actually have at least one
+   * instance somewhere in the plan; a row where either type is entirely
+   * absent is left out of the result altogether, not reported as
+   * failing. A house with no garage is never penalized for lacking a
+   * garage. */
   ok: boolean;
   /** Instance ids that declared an owner via `attachedTo` and don't
-   * actually touch it -- see `checkAdjacency`'s own doc comment. Empty
-   * whenever nothing declared one, which is most of the time. */
+   * actually have a real door to it -- see `checkAdjacency`'s own doc
+   * comment. Empty whenever nothing declared one, which is most of the
+   * time. */
   failedInstanceIds: string[];
   /** Whether the two types share a wall at all, independent of `ok` --
    * for `undesired` this is the same fact `ok` is built from, but for
@@ -161,12 +179,28 @@ export interface AdjacencyStatus extends RelationRow {
  * declares an owner is judged exactly as it always was -- this narrows
  * one real gap, it does not force every ensuite in the tool to be tagged
  * to get a correct answer. */
+/** At most this many doors between them still counts as easy access for
+ * a `desired` row -- a direct door (1) or one connecting room, a hallway
+ * say (2). Sourced from the same adjacency-matrix literature `required`
+ * and `undesired` draw on: "near but not touching... a corridor between
+ * them is fine" is a hop count of 2, not a distance in meters. */
+const EASY_ACCESS_HOPS = 2;
+
 export function checkAdjacency(boxes: Box[], storeys: number, arrows: Arrow[], autoCarve: boolean): AdjacencyStatus[] {
   const doorGraph = buildCirculationGraph(boxes, storeys, arrows, autoCarve);
   const out: AdjacencyStatus[] = [];
   for (const row of ROOM_RELATIONSHIPS) {
-    let present = false;
-    let satisfied = false;
+    // Present "anywhere," not "on the same storey": easy access can
+    // legitimately cross a storey via a stair, so a desired pair on
+    // different floors still deserves an answer, not a silent skip.
+    // required/undesired never connect across floors in this tool's own
+    // model (a door graph edge never crosses levels except through a
+    // stair's own bridging), so this wider net costs them nothing.
+    const anywhereA = boxes.filter((b) => !b.deleted && b.placed !== false && b.roomType === row.a);
+    const anywhereB = boxes.filter((b) => !b.deleted && b.placed !== false && b.roomType === row.b);
+    if (!anywhereA.length || !anywhereB.length) continue;
+
+    let doorConnected = false;
     let touchingAtAll = false;
     const failedInstanceIds: string[] = [];
     for (let level = 0; level < storeys; level++) {
@@ -174,7 +208,6 @@ export function checkAdjacency(boxes: Box[], storeys: number, arrows: Arrow[], a
       const as_ = live.filter((b) => b.roomType === row.a);
       const bs_ = live.filter((b) => b.roomType === row.b);
       if (!as_.length || !bs_.length) continue;
-      present = true;
       const { touchGraph } = levelTouchData(boxes, level, autoCarve);
       for (const a of as_) {
         if ((touchGraph.get(a.id) ?? []).some((e) => bs_.some((b) => b.id === e.to))) touchingAtAll = true;
@@ -182,17 +215,27 @@ export function checkAdjacency(boxes: Box[], storeys: number, arrows: Arrow[], a
       if (row.relation === "undesired") continue;
       for (const a of as_) {
         const edges = doorGraph.get(a.id) ?? [];
-        if (edges.some((e) => bs_.some((b) => b.id === e.to))) satisfied = true;
+        if (edges.some((e) => bs_.some((b) => b.id === e.to))) doorConnected = true;
         if (a.attachedTo && !edges.some((e) => e.to === a.attachedTo)) failedInstanceIds.push(a.id);
       }
       for (const b of bs_) {
         const edges = doorGraph.get(b.id) ?? [];
-        if (edges.some((e) => as_.some((a) => a.id === e.to))) satisfied = true;
+        if (edges.some((e) => as_.some((a) => a.id === e.to))) doorConnected = true;
         if (b.attachedTo && !edges.some((e) => e.to === b.attachedTo)) failedInstanceIds.push(b.id);
       }
     }
-    if (!present) continue;
+
+    let satisfied: boolean;
     if (row.relation === "undesired") satisfied = touchingAtAll;
+    else if (row.relation === "required") satisfied = doorConnected;
+    else {
+      const hops = minHopCount(
+        doorGraph,
+        anywhereA.map((a) => a.id),
+        new Set(anywhereB.map((b) => b.id)),
+      );
+      satisfied = hops !== null && hops <= EASY_ACCESS_HOPS;
+    }
     const ok = (row.relation === "undesired" ? !satisfied : satisfied) && failedInstanceIds.length === 0;
     out.push({ ...row, ok, failedInstanceIds, touching: touchingAtAll });
   }
