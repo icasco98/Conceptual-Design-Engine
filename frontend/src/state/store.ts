@@ -14,7 +14,7 @@ import { liveWallPoint, newArrowId, suggestArrows } from "../geometry/arrows";
 import { carveWith, displayShapes, releaseCarve } from "../geometry/carve";
 import { syncFrozenArrowPoints } from "../geometry/circulation";
 import { clampDrawnRect, clampGroup, settleInPlot } from "../geometry/plot";
-import { localPolyOf } from "../geometry/poly";
+import { localPolyOf, polyArea } from "../geometry/poly";
 import { isOpenToBelow, liveBoxes } from "../geometry/snap";
 import { touchSelected } from "../geometry/touch";
 import type { Actor, ActorRole, Arrow, Box, BoxShape, Plot, Point } from "../geometry/types";
@@ -143,6 +143,13 @@ export interface State {
    * reapplying it live would cut the same bite twice; carving `id` does
    * elsewhere is untouched. */
   convertToPolygon: (id: string) => void;
+  /** Reverts a polygon zone to a plain rectangle, sized to the same
+   * area the polygon actually enclosed (never its bounding box, which
+   * is only ever equal or larger) -- centred where the polygon was, at
+   * the bounding box's own aspect ratio. Not the inverse of
+   * `convertToPolygon`: this discards the exact outline for a round
+   * number, on purpose. */
+  convertToRect: (id: string) => void;
   /** Move every selected zone to touch its nearest neighbour (touch.ts). */
   touchSelected: () => void;
   /** A door arrow on `hostId`'s wall nearest the page point. `kind`
@@ -682,6 +689,28 @@ export const useStore = create<State>((set, get) => ({
     const points: Point[] = local.map(([x, y]) => [(x - left) / width, (y - top) / height]);
     set({
       boxes: boxes.map((b) => (b.id === id ? { ...b, shape: "polygon", points, left, top, width, height, carvedBy: [] } : b)),
+    });
+  },
+
+  convertToRect(id) {
+    const boxes = get().boxes;
+    const box = boxes.find((b) => b.id === id);
+    if (!box || box.shape !== "polygon" || !box.points || box.points.length < 3) return;
+    get().remember();
+    // box.points are fractions of the bounding box, so polyArea on them
+    // is the polygon's own area as a fraction of box.width * box.height
+    // -- scaling both dimensions by its square root keeps the bounding
+    // box's aspect ratio while making the new rectangle's actual area
+    // match what the polygon enclosed.
+    const scale = Math.sqrt(polyArea(box.points));
+    const width = Math.max(0.01, box.width * scale);
+    const height = Math.max(0.01, box.height * scale);
+    const cx = box.left + box.width / 2;
+    const cy = box.top + box.height / 2;
+    set({
+      boxes: boxes.map((b) =>
+        b.id === id ? { ...b, shape: "rect", points: undefined, left: cx - width / 2, top: cy - height / 2, width, height } : b,
+      ),
     });
   },
 

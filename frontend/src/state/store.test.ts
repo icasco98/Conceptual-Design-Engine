@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { DEFAULT_PLOT } from "../sample";
 import type { SavedProject } from "../api/types";
+import { polyArea } from "../geometry/poly";
 import { migrateLayout, useStore } from "./store";
 
 beforeEach(() => {
@@ -101,6 +102,54 @@ describe("deleting a zone cleans up after itself", () => {
     useStore.getState().addWaypoint(id, roomB.id);
     useStore.getState().deleteBoxes([roomA.id]);
     expect(useStore.getState().actors[0].waypoints).toEqual([roomB.id]);
+  });
+});
+
+describe("convertToRect: a polygon reverts to a rectangle of the same area", () => {
+  it("matches the polygon's own area, not its (larger) bounding box", () => {
+    const before = useStore.getState().boxes.find((b) => b.name === "Diwaniya")!;
+    expect(before.shape).toBe("polygon");
+    const expectedArea = polyArea(before.points!) * before.width * before.height;
+
+    useStore.getState().convertToRect(before.id);
+
+    const after = useStore.getState().boxes.find((b) => b.id === before.id)!;
+    expect(after.shape).toBe("rect");
+    expect(after.points).toBeUndefined();
+    expect(after.width * after.height).toBeCloseTo(expectedArea, 5);
+    // Smaller than the bounding box it replaces, since the polygon it
+    // came from was chamfered -- never larger.
+    expect(after.width * after.height).toBeLessThan(before.width * before.height);
+  });
+
+  it("keeps the same centre and the bounding box's own aspect ratio", () => {
+    const before = useStore.getState().boxes.find((b) => b.name === "Diwaniya")!;
+    const beforeCentre = [before.left + before.width / 2, before.top + before.height / 2];
+    const beforeRatio = before.width / before.height;
+
+    useStore.getState().convertToRect(before.id);
+
+    const after = useStore.getState().boxes.find((b) => b.id === before.id)!;
+    expect(after.left + after.width / 2).toBeCloseTo(beforeCentre[0], 5);
+    expect(after.top + after.height / 2).toBeCloseTo(beforeCentre[1], 5);
+    expect(after.width / after.height).toBeCloseTo(beforeRatio, 5);
+  });
+
+  it("is undoable", () => {
+    const before = useStore.getState().boxes.find((b) => b.name === "Diwaniya")!;
+    useStore.getState().convertToRect(before.id);
+    useStore.getState().undo();
+    const restored = useStore.getState().boxes.find((b) => b.id === before.id)!;
+    expect(restored.shape).toBe("polygon");
+    expect(restored.points).toEqual(before.points);
+  });
+
+  it("does nothing to a zone that is already a rectangle", () => {
+    const before = useStore.getState().boxes.find((b) => b.name === "Garage")!;
+    expect(before.shape).toBe("rect");
+    useStore.getState().convertToRect(before.id);
+    const after = useStore.getState().boxes.find((b) => b.id === before.id)!;
+    expect(after).toEqual(before);
   });
 });
 

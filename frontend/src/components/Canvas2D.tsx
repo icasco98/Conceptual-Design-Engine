@@ -160,6 +160,7 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
   const carve = useStore((s) => s.carve);
   const release = useStore((s) => s.release);
   const convertToPolygon = useStore((s) => s.convertToPolygon);
+  const convertToRect = useStore((s) => s.convertToRect);
   const showGrid = useStore((s) => s.showGrid);
   const showGhost = useStore((s) => s.showGhost);
   const showAbove = useStore((s) => s.showAbove);
@@ -827,6 +828,12 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
     convertToPolygon(b.id);
   };
 
+  const onConvertToRect = (e: React.PointerEvent, b: Box) => {
+    e.stopPropagation();
+    e.preventDefault();
+    convertToRect(b.id);
+  };
+
   // ---- the sheet: pan, marquee, draw ------------------------------------
 
   /** Pointer position in the SVG's own viewBox units, before the camera. */
@@ -1287,6 +1294,22 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
                         </circle>
                         <text x={b.left - 0.55} y={b.top + b.height + 0.55} className="handle-glyph" textAnchor="middle" dominantBaseline="middle">
                           ⬠
+                        </text>
+                      </>
+                    )}
+                    {solo && b.shape === "polygon" && (
+                      <>
+                        <circle
+                          className="handle to-rect"
+                          cx={b.left - 0.55}
+                          cy={b.top + b.height + 0.55}
+                          r={HANDLE / 2}
+                          onPointerDown={(e) => onConvertToRect(e, b)}
+                        >
+                          <title>Revert to a rectangle, sized to this shape's own area</title>
+                        </circle>
+                        <text x={b.left - 0.55} y={b.top + b.height + 0.55} className="handle-glyph" textAnchor="middle" dominantBaseline="middle">
+                          □
                         </text>
                       </>
                     )}
