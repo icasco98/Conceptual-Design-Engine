@@ -17,7 +17,7 @@
  */
 import { useMemo, useState } from "react";
 
-import { buildCirculationGraph, actorRoute, crossesPrivate, routeLength, sharedSegments } from "../geometry/circulation";
+import { buildCirculationGraph, actorRoute, outOfBounds, routeLength, sharedSegments } from "../geometry/circulation";
 import type { ActorRole } from "../geometry/types";
 import { zoneOf } from "../rooms";
 import { useStore } from "../state/store";
@@ -28,6 +28,19 @@ const ROLE_LABEL: Record<ActorRole, string> = {
   guest: "Guest",
   servant: "Staff",
   exterior: "Exterior only",
+  majlis_guest: "Majlis guest",
+};
+
+/** What to call the flag when `outOfBounds` finds one, in words that say
+ * what actually went wrong for that role rather than one flat phrase --
+ * a majlis guest in the kitchen is not the same problem as staff in a
+ * bedroom, even though both trip the same check. */
+const OUT_OF_BOUNDS_LABEL: Record<ActorRole, string> = {
+  served: "",
+  guest: "enters a private zone",
+  servant: "enters a private zone",
+  exterior: "enters a private zone",
+  majlis_guest: "leaves the reception room",
 };
 
 function AddActorForm() {
@@ -89,7 +102,7 @@ export function Actors() {
     const out = new Map<string, { length: number; crosses: boolean }>();
     for (const a of actors) {
       const segments = actorRoute(graph, boxes, a.waypoints);
-      out.set(a.id, { length: routeLength(segments), crosses: crossesPrivate(a.role, a.waypoints, boxesById, zoneOf) });
+      out.set(a.id, { length: routeLength(segments), crosses: outOfBounds(a.role, a.waypoints, boxesById, zoneOf) });
     }
     return out;
   }, [actors, graph, boxes, boxesById]);
@@ -100,6 +113,17 @@ export function Actors() {
   const sharedNames = useMemo(() => {
     const ids = new Set(shared.flatMap((s) => s.actorIds));
     return actors.filter((a) => ids.has(a.id)).map((a) => a.name);
+  }, [shared, actors]);
+  // A majlis guest sharing a stretch with the household or a household
+  // guest is a different order of problem than staff crossing a family
+  // corridor: the whole point of a reception room is that this never
+  // happens, so it reads as critical rather than a routine pinch point.
+  const sharedCritical = useMemo(() => {
+    const byId = new Map(actors.map((a) => [a.id, a]));
+    return shared.some((s) => {
+      const roles = s.actorIds.map((id) => byId.get(id)?.role);
+      return roles.includes("majlis_guest") && roles.some((r) => r === "served" || r === "guest");
+    });
   }, [shared, actors]);
 
   return (
@@ -187,8 +211,8 @@ export function Actors() {
                 )}
                 {a.waypoints.length > 1 && <span className="num actor-dist">{stats.length.toFixed(0)} m round trip</span>}
                 {stats.crosses && (
-                  <span className="actor-flag" title="This route crosses a private zone">
-                    <IconWarn size={12} /> crosses private
+                  <span className="actor-flag" title={`This route ${OUT_OF_BOUNDS_LABEL[a.role]}`}>
+                    <IconWarn size={12} /> {OUT_OF_BOUNDS_LABEL[a.role]}
                   </span>
                 )}
               </div>
@@ -197,9 +221,11 @@ export function Actors() {
         })}
       </div>
       {shared.length > 0 && (
-        <p className="actors-shared">
-          <IconWarn size={12} /> {shared.length} stretch{shared.length === 1 ? "" : "es"} of wall shared on this floor by{" "}
-          {sharedNames.join(" and ")}.
+        <p className={`actors-shared ${sharedCritical ? "critical" : ""}`}>
+          <IconWarn size={12} />{" "}
+          {sharedCritical
+            ? `${sharedNames.join(" and ")} cross paths on this floor -- the reception guest is not meant to meet the household.`
+            : `${shared.length} stretch${shared.length === 1 ? "" : "es"} of wall shared on this floor by ${sharedNames.join(" and ")}.`}
         </p>
       )}
     </div>

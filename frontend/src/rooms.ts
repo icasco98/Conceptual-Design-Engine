@@ -23,9 +23,18 @@ interface RoomTypeInfo {
   zone: CategoryKey;
 }
 
-/** category_a = private, category_b = shared, category_c = service. */
+/** category_a = private, category_b = shared, category_c = service,
+ *  category_d = reception (rooms.ts's own doc, api/types.ts's CategoryKey,
+ *  explains the fourth one). */
 export const ROOM_TYPES: Record<string, RoomTypeInfo> = {
   entry: { label: "Entry / Foyer", minWidth: 1.2, minHeight: 1.2, typicalWidth: 1.8, typicalHeight: 1.8, zone: "category_b" },
+  // Sized for floor or perimeter seating rather than furniture groupings,
+  // which is why its minimum and typical size both run well past a
+  // living room's -- a Gulf diwaniya routinely seats a dozen or more.
+  // Its own street-facing door (the arrow tools' side/service entrance)
+  // is what actually keeps a majlis guest's circulation out of the
+  // household's -- the room type only marks the destination.
+  majlis: { label: "Majlis / Diwaniya", minWidth: 4.5, minHeight: 5.5, typicalWidth: 6.5, typicalHeight: 8.0, zone: "category_d" },
   hallway: { label: "Hallway", minWidth: 1.2, minHeight: 2.0, typicalWidth: 1.2, typicalHeight: 3.0, zone: "category_b" },
   living_room: { label: "Living Room", minWidth: 3.5, minHeight: 4.0, typicalWidth: 4.5, typicalHeight: 5.5, zone: "category_b" },
   family_room: { label: "Family Room", minWidth: 3.3, minHeight: 3.6, typicalWidth: 4.2, typicalHeight: 4.8, zone: "category_b" },
@@ -52,6 +61,7 @@ export const ZONE_LABELS: Record<CategoryKey, string> = {
   category_a: "Private",
   category_b: "Shared",
   category_c: "Service",
+  category_d: "Reception",
 };
 
 export function roomTypeInfo(roomType: string): RoomTypeInfo {

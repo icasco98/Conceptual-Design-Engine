@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { carveWith, displayShapes, releaseCarve, shapeStillUsable, subtractKeepLargest } from "./carve";
 import { arrowSegment, nearestWallPoint, suggestArrows } from "./arrows";
-import { actorRoute, buildCirculationGraph, crossesPrivate, routeLength, sharedSegments } from "./circulation";
+import { actorRoute, buildCirculationGraph, outOfBounds, routeLength, sharedSegments } from "./circulation";
 import { touchingEdge } from "./doors";
 import { footprintRings } from "./footprint";
 import { clampDrawnRect, clampGroup, isOutsidePlot, limitGrowth, limitPointGrowth, settleInPlot, shiftInside } from "./plot";
@@ -796,17 +796,34 @@ describe("circulation: a route is the shortest walk of the touching graph", () =
     expect(actorRoute(graph, [a, turned, c], ["a", "c"])).toHaveLength(0);
   });
 
-  it("flags a servant's route through a private zone, never a served one through the same room", () => {
+  it("flags a servant's, a guest's or a majlis guest's route through a private zone, never the household's", () => {
     const bedroom = box({ id: "bedroom", left: 0, top: 0, width: 4, height: 4, roomType: "bedroom" });
     const kitchen = box({ id: "kitchen", left: 4, top: 0, width: 4, height: 4, roomType: "kitchen" });
     const byId = new Map([
       ["bedroom", bedroom],
       ["kitchen", kitchen],
     ]);
-    expect(crossesPrivate("servant", ["kitchen", "bedroom"], byId, zoneOf)).toBe(true);
-    expect(crossesPrivate("exterior", ["kitchen"], byId, zoneOf)).toBe(false);
-    expect(crossesPrivate("served", ["bedroom"], byId, zoneOf)).toBe(false);
-    expect(crossesPrivate("guest", ["bedroom"], byId, zoneOf)).toBe(false);
+    expect(outOfBounds("servant", ["kitchen", "bedroom"], byId, zoneOf)).toBe(true);
+    expect(outOfBounds("exterior", ["kitchen"], byId, zoneOf)).toBe(false);
+    expect(outOfBounds("served", ["bedroom"], byId, zoneOf)).toBe(false);
+    expect(outOfBounds("guest", ["bedroom"], byId, zoneOf)).toBe(true);
+    expect(outOfBounds("guest", ["kitchen"], byId, zoneOf)).toBe(false);
+  });
+
+  it("holds a majlis guest to the reception room alone -- shared and service zones are out of bounds too", () => {
+    const majlis = box({ id: "majlis", left: 0, top: 0, width: 6, height: 6, roomType: "majlis" });
+    const living = box({ id: "living", left: 6, top: 0, width: 4, height: 4, roomType: "living_room" });
+    const garage = box({ id: "garage", left: 0, top: 6, width: 4, height: 4, roomType: "garage_single" });
+    const byId = new Map([
+      ["majlis", majlis],
+      ["living", living],
+      ["garage", garage],
+    ]);
+    expect(outOfBounds("majlis_guest", ["majlis"], byId, zoneOf)).toBe(false);
+    expect(outOfBounds("majlis_guest", ["majlis", "living"], byId, zoneOf)).toBe(true);
+    expect(outOfBounds("majlis_guest", ["garage"], byId, zoneOf)).toBe(true);
+    // The same living room is perfectly fine for a household guest.
+    expect(outOfBounds("guest", ["living"], byId, zoneOf)).toBe(false);
   });
 
   it("finds the wall two actors' routes both cross, on the storey it happens on", () => {

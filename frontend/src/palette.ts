@@ -6,6 +6,7 @@ const CATEGORY_COLORS: Record<CategoryKey, string> = {
   category_a: "#4A6E96",
   category_b: "#C58A3E",
   category_c: "#6E8C74",
+  category_d: "#2E6E73",
 };
 
 const CORRIDOR_FILL = "#FCFCFB";

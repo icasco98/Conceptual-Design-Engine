@@ -173,17 +173,31 @@ export function routeLength(segments: RouteSegment[]): number {
   return total;
 }
 
-/** True once any waypoint a `servant` or `exterior` actor visits is a
- * private (`category_a`) zone -- the one check that matters most in a
- * house that already sorts every room into served, shared and service
- * (rooms.ts, palette.ts): staff and trades are not meant to have a
- * reason to be in a bedroom. Guests and the household itself are never
- * flagged; where they go is their own business. */
-export function crossesPrivate(role: ActorRole, waypoints: string[], boxesById: Map<string, Box>, zoneOf: (roomType: string) => string): boolean {
-  if (role !== "servant" && role !== "exterior") return false;
+/** Every category a role has no business being waypointed into. `served`
+ * is never checked -- the household goes anywhere in its own house.
+ * `guest` and `servant`/`exterior` share the one rule already here:
+ * stay out of the private (`category_a`) rooms. `majlis_guest` is
+ * stricter again -- a reception guest is received in the one room built
+ * for that (`category_d`) and has no business anywhere else the plan
+ * sorts rooms into, private or shared or service alike. */
+const FORBIDDEN: Record<ActorRole, (zone: string) => boolean> = {
+  served: () => false,
+  guest: (zone) => zone === "category_a",
+  servant: (zone) => zone === "category_a",
+  exterior: (zone) => zone === "category_a",
+  majlis_guest: (zone) => zone !== "category_d",
+};
+
+/** True once any waypoint an actor visits falls in a category its role
+ * has no business in (`FORBIDDEN`, above) -- the one check circulation
+ * makes automatically, because it is the one a house's own room
+ * categories (rooms.ts, palette.ts) already answer without anyone
+ * having to say so twice. */
+export function outOfBounds(role: ActorRole, waypoints: string[], boxesById: Map<string, Box>, zoneOf: (roomType: string) => string): boolean {
+  const forbidden = FORBIDDEN[role];
   return waypoints.some((id) => {
     const b = boxesById.get(id);
-    return !!b && zoneOf(b.roomType) === "category_a";
+    return !!b && forbidden(zoneOf(b.roomType));
   });
 }
 

@@ -295,6 +295,10 @@ input { font: inherit; }
   display: flex; align-items: center; gap: 6px; margin: 2px 0 0; padding: 6px 8px;
   background: var(--warn-bg); color: var(--warn); border-radius: 7px; font-size: 11.5px; line-height: 1.4;
 }
+/* A reception guest crossing the household's own circulation, not a
+   routine service pinch point: the same red the plan already uses for a
+   carve below minimum or a zone outside the plot. */
+.actors-shared.critical { background: var(--err-bg); color: var(--err); font-weight: 600; }
 .eye {
   display: flex; align-items: center; justify-content: center;
   width: 24px; height: 24px; flex: none; border-radius: 6px; color: var(--muted);

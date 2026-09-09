@@ -139,11 +139,18 @@ export const CIRCLE_SEGMENTS = 48;
  * `suggestArrows` starts its walk from. Missing `kind` (an arrow saved
  * before this existed) means `interior`. */
 /** Who someone is, for the one thing circulation checks automatically:
- * whether a `servant` or `exterior` route ever crosses a `category_a`
- * (private) zone. Not the same axis as a zone's own category -- an owner
+ * whether the route stays where that role belongs (geometry/circulation.ts,
+ * `outOfBounds`). Not the same axis as a zone's own category -- an owner
  * is `served` wherever they go, a caterer is `servant` even while
- * standing in the kitchen, which is `category_b`. */
-export type ActorRole = "served" | "guest" | "servant" | "exterior";
+ * standing in the kitchen, which is `category_b`.
+ *
+ * `majlis_guest` is its own role rather than a stricter `guest`: a guest
+ * the household has invited into its own life is welcome in the shared
+ * rooms (`category_b`), while a majlis or diwaniya guest is received in
+ * one room built for exactly that (`category_d`) and nowhere else in the
+ * house -- the point of a Gulf household building that room with its own
+ * street door in the first place. */
+export type ActorRole = "served" | "guest" | "servant" | "exterior" | "majlis_guest";
 
 /** Someone who walks through the building, and the rooms they visit, in
  * order. The walk between each pair of waypoints is never stored -- it is

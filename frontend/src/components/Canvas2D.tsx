@@ -927,7 +927,7 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
     <div className={`plan-pane tool-${tool}`} style={paneWidth ? { cursor, flex: "none", width: paneWidth } : { cursor }}>
       <div className="pane-tag label">Plan</div>
       <div className="legend" style={{ position: "absolute", top: 12, right: 16, maxWidth: 300, justifyContent: "flex-end" }}>
-        {(["category_a", "category_b", "category_c"] as CategoryKey[]).map((k) => (
+        {(["category_a", "category_b", "category_c", "category_d"] as CategoryKey[]).map((k) => (
           <span key={k} className="legend-item">
             <i style={{ background: zoneFill(k) }} /> {ZONE_LABELS[k]}
           </span>
