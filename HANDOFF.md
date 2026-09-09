@@ -265,6 +265,40 @@ would contradict it, not fix it.
 for Playwright's own output, `frontend/test-results/` and
 `frontend/playwright-report/`.
 
+**The side column (Schedule, Circulation, Plot, Save) is a tab strip,
+not a stack.** All four used to sit in one scrolling column; between
+them they no longer fit on one screen without it. Which tab is showing
+(`App.tsx`'s `SideTabs`) is local UI state, the same category as the
+camera or which storey is showing -- not saved, not undoable, opens on
+Schedule every time. Each panel component is unchanged; only what wraps
+them changed, so anything reading `.schedule`, `.actors-pane`,
+`.plot-panel` or `.sidebar` in a test now needs to click that tab
+(`page.getByRole("tab", { name: ... })`) before it is on screen.
+
+**The sample house's original 11 x 9.5 m block (Garage through
+Walk-in Closet) is untouched -- past x = 11 is a second wing added
+alongside it, not a replacement.** A diwaniya downstairs (a hand-drawn
+polygon, not a rectangle -- a chamfered street-facing corner is its own
+door, `sampleArrows`'s third exterior arrow) and a bay-windowed bedroom
+above it, plus two more exterior doors of their own for the garage and
+the utility room. This was deliberate: every existing test that names
+an original room (`byName("Kitchen")`, `.arrow.interior` counts, the
+"Garage routes via Living Room, not Kitchen" tests) still holds,
+because none of those rooms' own geometry moved -- only new rooms were
+added around them. Extend this house the same way: attach a new wing to
+one of the block's outer walls (left, top, right, or the partial
+stretches of the bottom not already shared with Utility/Kitchen), never
+by moving or resizing an existing room.
+
+Playwright specs that pick "the first interior arrow" learned this the
+hard way: the original block's own doors cluster tightly around the
+entry, and a carve-rectangle sized in absolute screen pixels can reach
+more than one of them once the view is zoomed out to fit the larger
+house. `e2e/arrows.spec.ts` sizes its carve from the target arrow's own
+current pixel size (so it scales with zoom) and targets the diwaniya's
+own side door specifically -- alone on its own wall, away from both the
+entry cluster and the tool rail at the plan's left edge.
+
 ## Open question for the owner
 
 **The magnet's rule.** The button is built and closes gaps under 1 m to

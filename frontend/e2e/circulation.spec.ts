@@ -5,6 +5,8 @@ test.describe("circulation: recording a route end to end", () => {
     await page.goto("/");
     await page.waitForSelector(".plan-svg");
     await page.click('button[title^="Show circulation"]');
+    // The Circulation panel is one of the side column's tabs now.
+    await page.getByRole("tab", { name: "Circulation" }).click();
   });
 
   test("recording a route draws it on the plan and shows a distance", async ({ page }) => {

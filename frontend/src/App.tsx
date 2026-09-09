@@ -1,9 +1,14 @@
 /**
  * Layout: a tool rail, then three columns — the plan, the massing, and
- * the room schedule with the saved layouts under it. All three are on
- * screen at all times: they are three readings of one arrangement, never
- * modes you switch between. The status line runs along the foot where it
- * cannot scroll away.
+ * a third column of its own. The plan and the massing are two readings
+ * of one arrangement, both on screen at all times, never modes you
+ * switch between. The third column is not: Schedule, Circulation, Plot
+ * and Save do not all fit on one screen at once without scrolling past
+ * each other, so it is a tab strip instead, one of the four showing at
+ * a time. Which tab is showing is picked the same way the level is --
+ * a `role="tablist"`, local to this component -- since it is where you
+ * are looking, not a fact about the drawing: not saved, not undoable.
+ * The status line runs along the foot where it cannot scroll away.
  */
 import { useEffect, useRef, useState } from "react";
 
@@ -216,6 +221,37 @@ function Levels() {
   );
 }
 
+type SideTab = "schedule" | "circulation" | "plot" | "save";
+const SIDE_TABS: { id: SideTab; label: string }[] = [
+  { id: "schedule", label: "Schedule" },
+  { id: "circulation", label: "Circulation" },
+  { id: "plot", label: "Plot" },
+  { id: "save", label: "Save" },
+];
+
+/** The third column's own tab strip: which of Schedule, Circulation,
+ *  Plot and Save is showing. A `role="tablist"`, the same pattern
+ *  `Levels`'s storey selector already uses, so a screen reader and the
+ *  keyboard both treat it the same way. */
+function SideTabs({ tab, onChange }: { tab: SideTab; onChange: (t: SideTab) => void }) {
+  return (
+    <div className="seg side-tabs" role="tablist" aria-label="Side panel">
+      {SIDE_TABS.map((t) => (
+        <button
+          key={t.id}
+          type="button"
+          role="tab"
+          aria-selected={tab === t.id}
+          className={tab === t.id ? "on" : ""}
+          onClick={() => onChange(t.id)}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 const MIN_PLAN_W = 340;
 const MAX_PLAN_W = 1100;
 const DEFAULT_PLAN_W = 640;
@@ -289,6 +325,7 @@ export default function App() {
   const savedName = useStore((s) => s.savedName);
   const [planW, setPlanW] = useStoredWidth("cde:planW", DEFAULT_PLAN_W);
   const [scheduleW, setScheduleW] = useStoredWidth("cde:scheduleW", DEFAULT_SCHEDULE_W);
+  const [sideTab, setSideTab] = useState<SideTab>("schedule");
 
   useEffect(() => {
     void boot();
@@ -325,13 +362,18 @@ export default function App() {
         <Massing />
         <Splitter onDrag={(dx) => setScheduleW((w) => clamp(w - dx, MIN_SCHEDULE_W, MAX_SCHEDULE_W))} />
         <div className="schedule-col" style={{ width: scheduleW }}>
-          <div className="schedule-pane">
-            <div className="label">Room schedule</div>
-            <Schedule />
+          <SideTabs tab={sideTab} onChange={setSideTab} />
+          <div className="side-tab-panel" role="tabpanel">
+            {sideTab === "schedule" && (
+              <div className="schedule-pane">
+                <div className="label">Room schedule</div>
+                <Schedule />
+              </div>
+            )}
+            {sideTab === "circulation" && <Actors />}
+            {sideTab === "plot" && <PlotPanel />}
+            {sideTab === "save" && <Sidebar />}
           </div>
-          <Actors />
-          <PlotPanel />
-          <Sidebar />
         </div>
       </div>
 

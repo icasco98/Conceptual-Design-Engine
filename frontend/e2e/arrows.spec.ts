@@ -7,7 +7,7 @@ test.describe("door arrows: two-way, and flagged once a carve takes their wall",
   });
 
   test("a door arrow has an arrowhead on both ends, not just one", async ({ page }) => {
-    const line = page.locator(".plan-svg .arrow.interior line[marker-end]").first();
+    const line = page.locator(".plan-svg .arrow.exterior-side line[marker-end]").first();
     await expect(line).toHaveAttribute("marker-start", /door-arrow/);
     await expect(line).toHaveAttribute("marker-end", /door-arrow/);
   });
@@ -16,17 +16,27 @@ test.describe("door arrows: two-way, and flagged once a carve takes their wall",
     const before = page.locator(".plan-svg .arrow.stale");
     await expect(before).toHaveCount(0);
 
-    const firstArrow = page.locator(".plan-svg .arrow.interior").first();
-    const arrowBox = await firstArrow.boundingBox();
+    // .last(): the diwaniya's own side door -- alone on its own wall,
+    // away from the cluster of doors around the entry and clear of the
+    // tool rail at the plan's left edge, so a carve centred on it never
+    // reaches a neighbour by accident.
+    const targetArrow = page.locator(".plan-svg .arrow.exterior-side").last();
+    const arrowBox = await targetArrow.boundingBox();
     if (!arrowBox) throw new Error("no arrow bounding box");
+    // A door renders at a fixed plan-meter size, so its own screen size
+    // is the current zoom level -- scale the carve rectangle from it
+    // rather than a fixed pixel count, so this still carves "a bit more
+    // than just the one door" regardless of how much of the sample
+    // house the view is zoomed out to fit.
+    const half = Math.max(arrowBox.width, arrowBox.height) * 1.3;
 
     // Draw a rectangle straight over that door's own wall.
     await page.click('button[title^="Draw a rectangle zone"]');
     const cx = arrowBox.x + arrowBox.width / 2;
     const cy = arrowBox.y + arrowBox.height / 2;
-    await page.mouse.move(cx - 40, cy - 40);
+    await page.mouse.move(cx - half, cy - half);
     await page.mouse.down();
-    await page.mouse.move(cx + 40, cy + 40, { steps: 5 });
+    await page.mouse.move(cx + half, cy + half, { steps: 5 });
     await page.mouse.up();
 
     // Carve the new (now selected) zone into whatever is under it.
@@ -41,26 +51,28 @@ test.describe("door arrows: two-way, and flagged once a carve takes their wall",
   });
 
   test("the add-door preview hugs the wall under the cursor near a carve, never stretches across the zone's original shape", async ({ page }) => {
-    const firstArrow = page.locator(".plan-svg .arrow.interior").first();
-    const arrowBox = await firstArrow.boundingBox();
+    const targetArrow = page.locator(".plan-svg .arrow.exterior-side").last();
+    const arrowBox = await targetArrow.boundingBox();
     if (!arrowBox) throw new Error("no arrow bounding box");
+    const half = Math.max(arrowBox.width, arrowBox.height) * 1.3;
 
     await page.click('button[title^="Draw a rectangle zone"]');
     const cx = arrowBox.x + arrowBox.width / 2;
     const cy = arrowBox.y + arrowBox.height / 2;
-    await page.mouse.move(cx - 40, cy - 40);
+    await page.mouse.move(cx - half, cy - half);
     await page.mouse.down();
-    await page.mouse.move(cx + 40, cy + 40, { steps: 5 });
+    await page.mouse.move(cx + half, cy + half, { steps: 5 });
     await page.mouse.up();
-    const carveBox = await page.locator(".plan-svg .box.selected").boundingBox();
-    if (!carveBox) throw new Error("no carve box");
     await page.locator(".plan-svg .box.selected .handle.carve").click({ force: true });
 
-    // Deselect, then hover the door tool right along the new notch --
-    // exactly where the old, now-hidden raw wall used to run.
-    await page.mouse.click(50, 50);
+    // Deselect, then hover the door tool right where the door used to
+    // be -- inside the fresh notch, close to where the old, now-hidden
+    // raw wall still thinks it runs. A few pixels off dead-centre: the
+    // frozen door itself now renders exactly at the centre point and
+    // would otherwise be the topmost thing under the cursor there.
+    await page.keyboard.press("Escape");
     await page.click('button[title^="Add an interior door arrow"]');
-    await page.mouse.move(carveBox.x + carveBox.width + 5, carveBox.y + carveBox.height / 2);
+    await page.mouse.move(cx + 10, cy + 10);
     await page.waitForTimeout(80);
 
     const preview = page.locator(".plan-svg .arrow-preview");
