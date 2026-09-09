@@ -21,12 +21,13 @@
  * decision for a person, not a walk of the touching graph, so they are
  * placed by hand with their own tools and left alone here.
  */
+import { displayShapes } from "./carve";
 import { pageToLocalPoly, localToPagePoly, localPolyOf, frameOf } from "./poly";
 import { rectOf, centerOf } from "./rect";
 import { boxesTrulyIntersect } from "./rect";
 import { isOpenToBelow } from "./snap";
 import { DOOR_INSET_M, type Arrow, type Box, type Point, type Poly } from "./types";
-import { touchingEdge } from "./doors";
+import { touchingEdges, touchMid } from "./doors";
 
 /** Twice a polygon's signed area (shoelace; only the sign is used, so
  * there is no need to halve it). Positive for the winding a rectangle's
@@ -170,7 +171,7 @@ const TOUCH_TOL_M = 0.04;
  * entry (or the stair), hosted on the zone it was reached from and
  * pointing into it; plus one per carve, hosted on the carver. Nothing is
  * added for a zone that already has an arrow pointing into it. */
-export function suggestArrows(all: Box[], existing: Arrow[], level: number): Arrow[] {
+export function suggestArrows(all: Box[], existing: Arrow[], level: number, autoCarve: boolean): Arrow[] {
   // A zone open to below is a void on this storey: no door leads into it
   // and none leads out of it, so it takes no part in the walk.
   const live = all.filter((b) => !isOpenToBelow(b, level));
@@ -192,9 +193,16 @@ export function suggestArrows(all: Box[], existing: Arrow[], level: number): Arr
     }
   }
 
-  // Then the walk from the entry, through shared walls, unrotated
-  // rectangles only: a rotated or round zone has no wall to share.
-  const plain = (b: Box) => b.shape === "rect" && !b.rotation;
+  // Then the walk from the entry, through every shared wall: a rotated
+  // box's own turned edges, a hand-drawn polygon's vertices, and the
+  // boundary a carve leaves behind all read the same way -- the same
+  // polygon test `buildTouchGraph` uses for circulation, run on each
+  // zone's actual outline right now (`displayShapes`, which already
+  // covers the carve loop above too; a zone reached only through a
+  // carve is picked up here as well, since the loop above marks it
+  // `covered` without adding it to the walk).
+  const shapes = displayShapes(live, autoCarve);
+  const polyById = new Map(shapes.map((s) => [s.id, s.page]));
   let start = live.findIndex((b) => b.isEntry);
   if (start === -1) start = live.findIndex((b) => b.roomType === "stair");
   if (start === -1) return out;
@@ -203,14 +211,18 @@ export function suggestArrows(all: Box[], existing: Arrow[], level: number): Arr
   while (queue.length) {
     const cur = queue.shift()!;
     const host = live[cur];
+    const hostPoly = polyById.get(host.id);
+    if (!hostPoly) continue;
     for (let j = 0; j < live.length; j++) {
       const other = live[j];
-      if (visited.has(other.id) || !plain(host) || !plain(other)) continue;
-      const touch = touchingEdge(rectOf(host), rectOf(other), TOUCH_TOL_M);
-      if (!touch) continue;
+      if (visited.has(other.id)) continue;
+      const otherPoly = polyById.get(other.id);
+      if (!otherPoly) continue;
+      const touches = touchingEdges(hostPoly, otherPoly, TOUCH_TOL_M);
+      if (!touches.length) continue;
       visited.add(other.id);
       queue.push(j);
-      const { side, t } = nearestWallPoint(host, touch.mid);
+      const { side, t } = nearestWallPoint(host, touchMid(touches[0]));
       add(host, other, side, t);
     }
   }

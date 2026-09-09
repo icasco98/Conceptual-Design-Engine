@@ -292,7 +292,7 @@ export const useStore = create<State>((set, get) => ({
     // The sample's own front door, plus its suggested arrows: one
     // interior door per room, walked out from that front door.
     let arrows: Arrow[] = sampleArrows(boxes);
-    for (let lv = 0; lv < SAMPLE_STOREYS; lv++) arrows = [...arrows, ...suggestArrows(liveBoxes(boxes, lv), arrows, lv)];
+    for (let lv = 0; lv < SAMPLE_STOREYS; lv++) arrows = [...arrows, ...suggestArrows(liveBoxes(boxes, lv), arrows, lv, get().autoCarve)];
     set({
       boxes,
       arrows,
@@ -577,9 +577,9 @@ export const useStore = create<State>((set, get) => ({
 
   suggestArrows() {
     get().remember();
-    const { boxes, arrows, level } = get();
+    const { boxes, arrows, level, autoCarve } = get();
     const mine = arrows.filter((a) => a.level === level);
-    set({ arrows: [...arrows, ...suggestArrows(liveBoxes(boxes, level), mine, level)] });
+    set({ arrows: [...arrows, ...suggestArrows(liveBoxes(boxes, level), mine, level, autoCarve)] });
   },
 
   addActor(name, role) {

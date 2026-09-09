@@ -289,7 +289,7 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
   // suggested, from the touching graph, never stored as a shape of its
   // own. Only computed while the overlay is on; an empty cast list costs
   // nothing either way.
-  const circGraph = useMemo(() => buildCirculationGraph(boxes, storeys, arrows), [boxes, storeys, arrows]);
+  const circGraph = useMemo(() => buildCirculationGraph(boxes, storeys, arrows, autoCarve), [boxes, storeys, arrows, autoCarve]);
   const circRoutes = useMemo(() => {
     if (!showCirculation) return [];
     return actors

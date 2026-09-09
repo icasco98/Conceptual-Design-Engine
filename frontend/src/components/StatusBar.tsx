@@ -48,10 +48,10 @@ export function StatusBar() {
     if (!showCirculation) return 0;
     const visible = actors.filter((a) => a.visible);
     if (!visible.length) return 0;
-    const graph = buildCirculationGraph(boxes, storeys, arrows);
+    const graph = buildCirculationGraph(boxes, storeys, arrows, autoCarve);
     const routes = visible.map((a) => ({ actorId: a.id, segments: actorRoute(graph, boxes, a.waypoints).segments }));
     return sharedSegments(routes, level).length;
-  }, [showCirculation, actors, boxes, storeys, level, arrows]);
+  }, [showCirculation, actors, boxes, storeys, level, arrows, autoCarve]);
 
   const plotArea = plot.width * plot.depth;
 

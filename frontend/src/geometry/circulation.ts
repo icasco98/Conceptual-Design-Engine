@@ -20,15 +20,23 @@
  * the route is possible; it must never assert something it does not
  * know to be true.
  *
- * Only axis-aligned, unrotated rectangles take part in the graph -- the
- * same limit `suggestArrows` already has, for the same reason: a rotated
- * or round zone has no wall to share, so there is nothing to walk across.
+ * A zone's own outline decides what it touches, not just a plain
+ * rectangle's four walls: a rotated box's turned edges, a hand-drawn
+ * polygon's own vertices, and the exact boundary a carve leaves behind
+ * are all read the same way (doors.ts's `touchingEdges`, fed each
+ * zone's post-carve outline via `displayShapes`). That last case is
+ * also what connects a zone carved into another with the zone that
+ * carved it, without any special-case carve logic here: subtracting one
+ * polygon from another leaves their outlines sharing exactly the cut's
+ * own edge, and this graph asks the same "do these outlines share a
+ * wall" question of every pair regardless of how they came to share it.
  *
  * A zone spanning several storeys (a stair) is the same node on each of
  * them, so it is what lets a route cross from one storey's graph to the
  * next -- there is no separate stair machinery here either.
  */
 import { arrowSegment } from "./arrows";
+import { displayShapes } from "./carve";
 import { buildTouchGraph, type Touch } from "./doors";
 import { centerOf, rectOf } from "./rect";
 import { liveBoxes } from "./snap";
@@ -50,11 +58,17 @@ interface CircEdge {
 export type CirculationGraph = Map<string, CircEdge[]>;
 
 /** Where a placed interior door between `a` and `b` actually sits on
- * this particular wall, checked against the wall's own run rather than
- * just its midpoint -- a door near one end of a long wall still counts.
- * A door on any other wall of either host (an exterior door, or one of
- * the host's other walls) is not this wall's door, and is skipped. */
+ * this particular wall run, checked against the run's own two endpoints
+ * rather than just its midpoint -- a door near one end of a long wall
+ * still counts, whatever angle the wall itself runs at. A door on any
+ * other wall of either host (an exterior door, or one of the host's
+ * other walls) is not this wall's door, and is skipped. */
 function doorOnWall(arrows: Arrow[], a: Box, b: Box, touch: Touch): Point | null {
+  const dx = touch.p2[0] - touch.p1[0];
+  const dy = touch.p2[1] - touch.p1[1];
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
   for (const arrow of arrows) {
     if (arrow.kind && arrow.kind !== "interior") continue;
     const host = arrow.hostId === a.id ? a : arrow.hostId === b.id ? b : null;
@@ -62,10 +76,15 @@ function doorOnWall(arrows: Arrow[], a: Box, b: Box, touch: Touch): Point | null
     const [p1, p2] = arrowSegment(host, arrow);
     const mx = (p1[0] + p2[0]) / 2;
     const my = (p1[1] + p2[1]) / 2;
-    const along = touch.axis === "x" ? my : mx;
-    const across = touch.axis === "x" ? mx : my;
-    if (Math.abs(across - touch.mid[touch.axis === "x" ? 0 : 1]) > DOOR_ON_WALL_TOL_M) continue;
-    if (along < touch.lo - DOOR_ON_WALL_TOL_M || along > touch.hi + DOOR_ON_WALL_TOL_M) continue;
+    // Distance along the wall run from its first endpoint, and
+    // perpendicular to it -- the general form of the old x/y split,
+    // which only worked because a plain wall always ran along one axis.
+    const vx = mx - touch.p1[0];
+    const vy = my - touch.p1[1];
+    const along = vx * ux + vy * uy;
+    const across = vx * uy - vy * ux;
+    if (Math.abs(across) > DOOR_ON_WALL_TOL_M) continue;
+    if (along < -DOOR_ON_WALL_TOL_M || along > len + DOOR_ON_WALL_TOL_M) continue;
     return [mx, my];
   }
   return null;
@@ -73,11 +92,15 @@ function doorOnWall(arrows: Arrow[], a: Box, b: Box, touch: Touch): Point | null
 
 /** Every pair of zones with a real door between them, on any storey,
  * both directions. Built fresh from the current arrangement -- there is
- * nothing here to keep in step by hand. `buildTouchGraph` still supplies
- * the candidate pairs (nothing without a shared wall could have a door
- * on one), but sharing a wall is no longer enough on its own: only a
- * pair `doorOnWall` actually finds a door for becomes an edge. */
-export function buildCirculationGraph(boxes: Box[], storeys: number, arrows: Arrow[]): CirculationGraph {
+ * nothing here to keep in step by hand. `buildTouchGraph`, fed each
+ * zone's actual post-carve outline (`displayShapes`, so `autoCarve`
+ * reads the same way here as it does on the plan), still supplies the
+ * candidate pairs -- nothing without a shared wall could have a door on
+ * one -- but sharing a wall is no longer enough on its own: only a pair
+ * `doorOnWall` actually finds a door for becomes an edge. A carve can
+ * leave two zones sharing more than one separate wall run, so every run
+ * between a pair is checked; the first one with a door on it wins. */
+export function buildCirculationGraph(boxes: Box[], storeys: number, arrows: Arrow[], autoCarve: boolean): CirculationGraph {
   const graph: CirculationGraph = new Map();
   const byId = new Map(boxes.map((b) => [b.id, b]));
   const push = (from: Box, to: Box, mid: Point, level: number) => {
@@ -92,22 +115,34 @@ export function buildCirculationGraph(boxes: Box[], storeys: number, arrows: Arr
   for (let level = 0; level < storeys; level++) {
     const live = liveBoxes(boxes, level);
     const levelArrows = arrows.filter((a) => a.level === level);
-    const touchGraph = buildTouchGraph(live, TOUCH_TOL_M);
-    const seen = new Set<string>();
+    const shapes = displayShapes(live, autoCarve);
+    const polyById = new Map(shapes.map((s) => [s.id, s.page]));
+    const touchGraph = buildTouchGraph(polyById, TOUCH_TOL_M);
+    const byPair = new Map<string, { from: Box; to: Box; touches: Touch[] }>();
     for (const [fromId, edges] of touchGraph) {
       const from = byId.get(fromId);
       if (!from) continue;
       for (const edge of edges) {
-        const pairKey = [fromId, edge.to].sort().join("|");
-        if (seen.has(pairKey)) continue;
-        seen.add(pairKey);
+        // The graph already carries both directions of every pair; walk
+        // each unordered pair once, from whichever id sorts first.
+        if (fromId > edge.to) continue;
         const to = byId.get(edge.to);
         if (!to) continue;
-        const door = doorOnWall(levelArrows, from, to, edge.touch);
-        if (!door) continue;
-        push(from, to, door, level);
-        push(to, from, door, level);
+        const pairKey = `${fromId}|${edge.to}`;
+        const entry = byPair.get(pairKey) ?? { from, to, touches: [] };
+        entry.touches.push(edge.touch);
+        byPair.set(pairKey, entry);
       }
+    }
+    for (const { from, to, touches } of byPair.values()) {
+      let door: Point | null = null;
+      for (const touch of touches) {
+        door = doorOnWall(levelArrows, from, to, touch);
+        if (door) break;
+      }
+      if (!door) continue;
+      push(from, to, door, level);
+      push(to, from, door, level);
     }
   }
   return graph;

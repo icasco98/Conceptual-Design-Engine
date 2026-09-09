@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { carveWith, displayShapes, releaseCarve, shapeStillUsable, subtractKeepLargest } from "./carve";
 import { arrowSegment, nearestWallPoint, suggestArrows } from "./arrows";
 import { actorRoute, buildCirculationGraph, outOfBounds, routeLength, sharedSegments } from "./circulation";
-import { buildTouchGraph, touchingEdge } from "./doors";
+import { buildTouchGraph, touchingEdges } from "./doors";
 import { footprintRings } from "./footprint";
 import { clampDrawnRect, clampGroup, isOutsidePlot, limitGrowth, limitPointGrowth, settleInPlot, shiftInside } from "./plot";
 import { anchorPoint, polyArea, polyOfBox, rectPolyOf, resizedFromAnchor } from "./poly";
@@ -213,8 +213,37 @@ describe("snapping", () => {
 
 describe("doors and footprint", () => {
   it("touching edges are found along shared walls only, never corners", () => {
-    expect(touchingEdge({ left: 0, top: 0, width: 4, height: 4 }, { left: 4, top: 1, width: 3, height: 3 }, 0.04)?.axis).toBe("x");
-    expect(touchingEdge({ left: 0, top: 0, width: 4, height: 4 }, { left: 4, top: 4, width: 3, height: 3 }, 0.04)).toBeNull();
+    const touches = touchingEdges(rectPolyOf({ left: 0, top: 0, width: 4, height: 4 }), rectPolyOf({ left: 4, top: 1, width: 3, height: 3 }), 0.04);
+    expect(touches).toHaveLength(1);
+    expect(touches[0].p1).toEqual([4, 1]);
+    expect(touches[0].p2).toEqual([4, 4]);
+    expect(touchingEdges(rectPolyOf({ left: 0, top: 0, width: 4, height: 4 }), rectPolyOf({ left: 4, top: 4, width: 3, height: 3 }), 0.04)).toHaveLength(0);
+  });
+
+  it("finds a shared wall between two rotated zones at whatever angle they actually touch", () => {
+    // Two 2x2 squares, each turned 45 degrees about its own centre: p
+    // sits at the origin, q at (root2, root2), placed so one of p's
+    // turned edges lies exactly along one of q's -- neither box, nor the
+    // wall between them, is axis-aligned.
+    const SQ2 = Math.SQRT2;
+    const p = box({ id: "p", left: -1, top: -1, width: 2, height: 2, rotation: 45 });
+    const q = box({ id: "q", left: SQ2 - 1, top: SQ2 - 1, width: 2, height: 2, rotation: 45 });
+    const touches = touchingEdges(polyOfBox(p), polyOfBox(q), 0.01);
+    expect(touches).toHaveLength(1);
+    const runLen = Math.hypot(touches[0].p2[0] - touches[0].p1[0], touches[0].p2[1] - touches[0].p1[1]);
+    expect(runLen).toBeCloseTo(2, 4);
+  });
+
+  it("finds the wall a hand-drawn polygon actually shares, not just its bounding box", () => {
+    const a = box({ id: "a", left: 0, top: 0, width: 4, height: 4 });
+    // A right triangle whose vertical edge (from its top-left corner
+    // down to its bottom-left) exactly matches a's right wall -- its
+    // hypotenuse and top edge share nothing with a at all.
+    const tri = box({ id: "tri", shape: "polygon", left: 4, top: 0, width: 3, height: 4, points: [[0, 0], [1, 0], [0, 1]] });
+    const touches = touchingEdges(polyOfBox(a), polyOfBox(tri), 0.04);
+    expect(touches).toHaveLength(1);
+    expect(touches[0].p1).toEqual([4, 0]);
+    expect(touches[0].p2).toEqual([4, 4]);
   });
 
   it("the outline is one ring around touching boxes", () => {
@@ -267,24 +296,45 @@ describe("door arrows", () => {
   const bed = box({ id: "b", name: "Bed", left: 8, top: 0, width: 3.3, height: 4 });
 
   it("suggests one arrow per zone, walking out from the entry", () => {
-    const out = suggestArrows([entry, hall, bed], [], 0);
+    const out = suggestArrows([entry, hall, bed], [], 0, false);
     expect(out).toHaveLength(2);
     expect(out.map((a) => a.hostId)).toEqual(["e", "h"]);
     expect(out.map((a) => a.targetId)).toEqual(["h", "b"]);
   });
 
   it("suggests nothing for a zone that already has an arrow into it", () => {
-    const existing = suggestArrows([entry, hall, bed], [], 0);
-    expect(suggestArrows([entry, hall, bed], existing, 0)).toEqual([]);
+    const existing = suggestArrows([entry, hall, bed], [], 0, false);
+    expect(suggestArrows([entry, hall, bed], existing, 0, false)).toEqual([]);
   });
 
   it("hosts a carve's arrow on the carving zone", () => {
     const room = box({ id: "r", left: 0, top: 0, width: 6, height: 6 });
     const cutter = box({ id: "c", left: 4, top: 4, width: 3, height: 3 });
     const live = carveWith(cutter, [room, cutter]);
-    const out = suggestArrows(live, [], 0);
+    const out = suggestArrows(live, [], 0, false);
     const forRoom = out.find((a) => a.targetId === "r")!;
     expect(forRoom.hostId).toBe("c");
+  });
+
+  it("walks out across a rotated zone's own turned wall, not just a plain rectangle's", () => {
+    // Hall shares its right wall with a room turned 90 degrees -- still
+    // axis-aligned on the page (a quarter turn swaps width and height
+    // without tilting it), chosen so that swap lands its left wall
+    // exactly on hall's right wall, x = 8, for hall's full height.
+    const turnedBed = box({ id: "b", name: "Bed", left: 7.65, top: 0.35, width: 4, height: 3.3, rotation: 90 });
+    const out = suggestArrows([entry, hall, turnedBed], [], 0, false);
+    expect(out.map((a) => a.targetId)).toContain("b");
+  });
+
+  it("connects a carved-into zone to its carver through the walk too, when only automatic carving is in effect", () => {
+    // No explicit `carvedBy` here -- carving is automatic, priority-only,
+    // so the explicit carve loop above (which only ever looks at
+    // `carvedBy`) never fires for this pair. Any connection between them
+    // can only come from the general walk, fed the auto-carved outline.
+    const carver = box({ id: "c", name: "Cutter", isEntry: true, priority: 1, left: 4, top: 4, width: 3, height: 3 });
+    const room = box({ id: "r", name: "Room", priority: 2, left: 0, top: 0, width: 6, height: 6 });
+    const out = suggestArrows([carver, room], [], 0, true);
+    expect(out.some((a) => a.targetId === "r")).toBe(true);
   });
 
   it("an arrow is perpendicular to its wall and turns with its host", () => {
@@ -337,10 +387,10 @@ describe("a tall zone seen from the storey above", () => {
   it("takes no part in the door-arrow walk on that storey", () => {
     const entry = box({ id: "e", name: "Landing", isEntry: true, roomType: "entry", left: 5, top: 0, width: 2, height: 5, level: 1 });
     // On the ground floor the tall zone is an ordinary room and gets a door.
-    const ground = suggestArrows([{ ...entry, level: 0, levelTo: 0 }, tall], [], 0);
+    const ground = suggestArrows([{ ...entry, level: 0, levelTo: 0 }, tall], [], 0, false);
     expect(ground.map((a) => a.targetId)).toEqual(["t"]);
     // Upstairs it is a void: no arrow to it, and none hosted on it.
-    const upstairs = suggestArrows([entry, tall], [], 1);
+    const upstairs = suggestArrows([entry, tall], [], 1, false);
     expect(upstairs).toEqual([]);
   });
 });
@@ -766,20 +816,22 @@ describe("circulation: a route is the shortest walk of real doors", () => {
   const doorBC: Arrow = { id: "dBC", level: 0, hostId: "b", kind: "interior", side: 1, t: 0.5, dir: 1 };
   const DOORS = [doorAB, doorBC];
 
+  const polyById = (boxes: Box[]) => new Map(boxes.map((bx) => [bx.id, polyOfBox(bx)]));
+
   it("finds no edge between zones that do not touch", () => {
-    const graph = buildCirculationGraph([a, isolated], 1, []);
+    const graph = buildCirculationGraph([a, isolated], 1, [], false);
     expect(graph.get("a") ?? []).toHaveLength(0);
   });
 
   it("buildTouchGraph is the one shared primitive: both directions, one entry per touching pair", () => {
-    const touchGraph = buildTouchGraph([a, b, c, isolated], 0.04);
+    const touchGraph = buildTouchGraph(polyById([a, b, c, isolated]), 0.04);
     expect(touchGraph.get("a")?.map((e) => e.to)).toEqual(["b"]);
     expect(touchGraph.get("b")?.map((e) => e.to).sort()).toEqual(["a", "c"]);
     expect(touchGraph.get("isolated") ?? []).toHaveLength(0);
   });
 
   it("a wall two zones share is not, on its own, a route -- no door placed on it means no edge at all", () => {
-    const graph = buildCirculationGraph([a, b, c], 1, []);
+    const graph = buildCirculationGraph([a, b, c], 1, [], false);
     expect(graph.get("a") ?? []).toHaveLength(0);
     const { segments, broken } = actorRoute(graph, [a, b, c], ["a", "c"]);
     expect(segments).toHaveLength(0);
@@ -787,7 +839,7 @@ describe("circulation: a route is the shortest walk of real doors", () => {
   });
 
   it("routes through a placed door, not straight through the room between", () => {
-    const graph = buildCirculationGraph([a, b, c], 1, DOORS);
+    const graph = buildCirculationGraph([a, b, c], 1, DOORS, false);
     const { segments, broken } = actorRoute(graph, [a, b, c], ["a", "c"]);
     expect(broken).toHaveLength(0);
     expect(segments).toHaveLength(1);
@@ -807,21 +859,44 @@ describe("circulation: a route is the shortest walk of real doors", () => {
   });
 
   it("skips a waypoint that no longer exists, rather than losing the rest of the route", () => {
-    const graph = buildCirculationGraph([a, b, c], 1, DOORS);
+    const graph = buildCirculationGraph([a, b, c], 1, DOORS, false);
     const { segments } = actorRoute(graph, [a, b, c], ["a", "gone", "c"]);
     expect(routeLength(segments)).toBeCloseTo(7, 6);
   });
 
-  it("excludes a rotated zone: it has no wall to share", () => {
-    const turned = box({ id: "turned", left: 4, top: 0, width: 3, height: 4, rotation: 20 });
-    const graph = buildCirculationGraph([a, turned, c], 1, DOORS);
-    expect(buildCirculationGraph([a, turned], 1, DOORS).get("a") ?? []).toHaveLength(0);
-    expect(actorRoute(graph, [a, turned, c], ["a", "c"]).segments).toHaveLength(0);
+  it("includes a rotated zone: its own turned wall, not a plain rectangle's, decides what it touches", () => {
+    // Turned 90 degrees, "turned" stays axis-aligned on the page (its
+    // width and height merely swap around the same centre) -- chosen so
+    // that swap lands its left wall exactly on a's right wall, x = 4,
+    // for the full height of both. b is dropped, so there is exactly
+    // one shared wall in this arrangement to find, and it belongs to a
+    // rotated zone.
+    const turned = box({ id: "turned", left: 3.5, top: 0.5, width: 4, height: 3, rotation: 90 });
+    const door: Arrow = { id: "dT", level: 0, hostId: "a", kind: "interior", side: 1, t: 0.5, dir: 1 };
+    const graph = buildCirculationGraph([a, turned], 1, [door], false);
+    const { segments, broken } = actorRoute(graph, [a, turned], ["a", "turned"]);
+    expect(broken).toHaveLength(0);
+    expect(segments).toHaveLength(1);
+  });
+
+  it("a carved-into zone routes to its carver: the cut boundary is a real shared wall too", () => {
+    // The cutter overlaps room's corner and sticks out past it; the
+    // notch this leaves in room and the cutter's own outline now share
+    // exactly the overlap's edges -- a real wall, with no special-case
+    // carve handling in the circulation graph at all, just the same
+    // "do these outlines share a wall" question asked of any pair.
+    const room = box({ id: "room", left: 0, top: 0, width: 6, height: 6, carvedBy: ["cutter"] });
+    const cutter = box({ id: "cutter", left: 4, top: 4, width: 3, height: 3 });
+    const door: Arrow = { id: "dCut", level: 0, hostId: "cutter", kind: "interior", side: 3, t: 0.6, dir: 1 };
+    const graph = buildCirculationGraph([room, cutter], 1, [door], false);
+    const { segments, broken } = actorRoute(graph, [room, cutter], ["cutter", "room"]);
+    expect(broken).toHaveLength(0);
+    expect(segments).toHaveLength(1);
   });
 
   it("routes through a placed door's real position, not the wall's geometric midpoint", () => {
     const door: Arrow = { id: "d1", level: 0, hostId: "a", kind: "interior", side: 1, t: 0.75, dir: 1 };
-    const graph = buildCirculationGraph([a, b, c], 1, [door]);
+    const graph = buildCirculationGraph([a, b, c], 1, [door], false);
     const { segments } = actorRoute(graph, [a, b, c], ["a", "b"]);
     expect(segments[0].pts[1][0]).toBeCloseTo(4, 6);
     expect(segments[0].pts[1][1]).toBeCloseTo(3, 6); // 75% down the wall, where the door actually is
@@ -829,7 +904,7 @@ describe("circulation: a route is the shortest walk of real doors", () => {
 
   it("ignores a door on one of the host's other walls -- it is not this wall's door, so there is still no route", () => {
     const door: Arrow = { id: "d2", level: 0, hostId: "a", kind: "interior", side: 0, t: 0.5, dir: 1 };
-    const graph = buildCirculationGraph([a, b, c], 1, [door]);
+    const graph = buildCirculationGraph([a, b, c], 1, [door], false);
     const { segments, broken } = actorRoute(graph, [a, b, c], ["a", "b"]);
     expect(segments).toHaveLength(0);
     expect(broken).toEqual([{ fromId: "a", toId: "b" }]);
@@ -837,7 +912,7 @@ describe("circulation: a route is the shortest walk of real doors", () => {
 
   it("ignores an exterior door -- it leads outside, not into the other zone, so there is still no route", () => {
     const door: Arrow = { id: "d3", level: 0, hostId: "a", kind: "exterior-main", side: 1, t: 0.75, dir: 1 };
-    const graph = buildCirculationGraph([a, b, c], 1, [door]);
+    const graph = buildCirculationGraph([a, b, c], 1, [door], false);
     const { segments, broken } = actorRoute(graph, [a, b, c], ["a", "b"]);
     expect(segments).toHaveLength(0);
     expect(broken).toEqual([{ fromId: "a", toId: "b" }]);
@@ -874,7 +949,7 @@ describe("circulation: a route is the shortest walk of real doors", () => {
   });
 
   it("finds the wall two actors' routes both cross, on the storey it happens on", () => {
-    const graph = buildCirculationGraph([a, b, c], 1, DOORS);
+    const graph = buildCirculationGraph([a, b, c], 1, DOORS, false);
     const owner = { actorId: "owner", segments: actorRoute(graph, [a, b, c], ["a", "c"]).segments };
     const staff = { actorId: "staff", segments: actorRoute(graph, [a, b, c], ["c", "a"]).segments };
     const shared = sharedSegments([owner, staff], 0);
@@ -889,7 +964,7 @@ describe("circulation: a route is the shortest walk of real doors", () => {
 
   it("finds nothing shared between routes that never cross", () => {
     const d = box({ id: "d", left: 0, top: 10, width: 4, height: 4 });
-    const graph = buildCirculationGraph([a, b, c, d], 1, DOORS);
+    const graph = buildCirculationGraph([a, b, c, d], 1, DOORS, false);
     const alone = { actorId: "alone", segments: actorRoute(graph, [a, b, c, d], ["a", "c"]).segments };
     expect(sharedSegments([alone], 0)).toHaveLength(0);
   });
@@ -900,8 +975,8 @@ describe("circulation: a route is the shortest walk of real doors", () => {
     // the sample's own placed doors, plus whatever Suggest adds on
     // each storey -- mirroring state/store.ts's newProject().
     let arrows: Arrow[] = sampleArrows(boxes);
-    for (let lv = 0; lv < SAMPLE_STOREYS; lv++) arrows = [...arrows, ...suggestArrows(liveBoxes(boxes, lv), arrows, lv)];
-    const graph = buildCirculationGraph(boxes, SAMPLE_STOREYS, arrows);
+    for (let lv = 0; lv < SAMPLE_STOREYS; lv++) arrows = [...arrows, ...suggestArrows(liveBoxes(boxes, lv), arrows, lv, false)];
+    const graph = buildCirculationGraph(boxes, SAMPLE_STOREYS, arrows, false);
     const byName = (name: string) => boxes.find((bx) => bx.name === name)!;
 
     it("crosses from the ground floor to storey 1 through the stair, not around it", () => {

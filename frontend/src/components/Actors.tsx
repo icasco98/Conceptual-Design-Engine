@@ -88,6 +88,7 @@ export function Actors() {
   const boxes = useStore((s) => s.boxes);
   const arrows = useStore((s) => s.arrows);
   const storeys = useStore((s) => s.storeys);
+  const autoCarve = useStore((s) => s.autoCarve);
   const level = useStore((s) => s.level);
   const updateActor = useStore((s) => s.updateActor);
   const deleteActor = useStore((s) => s.deleteActor);
@@ -100,7 +101,7 @@ export function Actors() {
   const toggleCirculation = useStore((s) => s.toggleCirculation);
 
   const boxesById = useMemo(() => new Map(boxes.map((b) => [b.id, b])), [boxes]);
-  const graph = useMemo(() => buildCirculationGraph(boxes, storeys, arrows), [boxes, storeys, arrows]);
+  const graph = useMemo(() => buildCirculationGraph(boxes, storeys, arrows, autoCarve), [boxes, storeys, arrows, autoCarve]);
   const info = useMemo(() => {
     const out = new Map<string, { length: number; crosses: boolean; broken: { fromId: string; toId: string }[] }>();
     for (const a of actors) {

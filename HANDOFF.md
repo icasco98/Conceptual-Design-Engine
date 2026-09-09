@@ -157,11 +157,21 @@ work on the canvas -- it is also why the Playwright suite (`frontend/e2e/`)
 runs against `npm run dev` and never starts `uvicorn`.
 
 **`buildTouchGraph` (doors.ts) is the one place that decides which zones
-touch.** Both `suggestArrows` and the circulation graph
-(`circulation.ts`) answer "does a wall exist here" the same way, because
-they ask the same function. If a third feature needs the same question
-answered, it calls this one rather than writing its own pairwise
-`touchingEdge` loop.
+touch, and it works on each zone's actual outline, not a box's raw
+rectangle.** It takes `Map<string, Poly>` -- the caller supplies each
+zone's real outline on the page, ordinarily `displayShapes`'s post-carve
+polygon -- and finds shared walls with a general polygon-edge overlap
+test (`touchingEdges`), not an axis-aligned shortcut. That one change
+does three things at once: a rotated zone's own turned wall is read
+correctly instead of being excluded outright, a hand-drawn polygon's
+own edges are too, and a zone carved into another now shows up as
+touching its carver with no special-case carve logic anywhere -- boolean
+subtraction leaves the two outlines sharing exactly the cut's own edge,
+and this is just another wall as far as the test is concerned. Both
+`suggestArrows` and the circulation graph (`circulation.ts`) build the
+same `polyById` map from `displayShapes(live, autoCarve)` and hand it to
+this one function, so "does a wall exist here" -- rotated, polygon or
+carved-flat -- is decided in exactly one place either way.
 
 **Circulation routes through a real door, and only a real door -- no
 door means no edge, full stop.** `circulation.ts`'s `doorOnWall` checks
@@ -176,12 +186,9 @@ Dijkstra cannot reach lands in `broken` and is named on the actor's card
 route the tool shows is the tool asserting that route is walkable; it
 must never assert that on a wall nobody has actually put a door in.
 
-**Two infrastructure ideas raised and deliberately not done:** adjacency
-that respects a carved shape rather than a box's raw rectangle was
-judged too easy to get subtly wrong (polygon-subtraction boundary
-checks) for the value it adds right now, and left alone rather than
-rushed. Giving the backend its own per-entity Pydantic schemas was
-considered and reversed on rereading `api/main.py`'s own docstring:
+**One infrastructure idea raised and deliberately not done:** giving the
+backend its own per-entity Pydantic schemas was considered and reversed
+on rereading `api/main.py`'s own docstring:
 "the browser owns that shape, and a copy of it here would only be a
 second thing to keep in step" is an explicit decision already recorded
 there, not an oversight -- redeclaring every entity's shape in Python
