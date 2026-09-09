@@ -186,28 +186,63 @@ card ("No route: X → Y") rather than silently skipped or drawn anyway. A
 route the tool shows is the tool asserting that route is walkable; it
 must never assert that on a wall nobody has actually put a door in.
 
-**An arrow's stored position can outlive the wall it was placed on --
-`arrowIsLive` (circulation.ts) is the read-time check for whether it
-still has.** An arrow is addressed relative to its host's own declared
-shape (`{hostId, side, t}`, arrows.ts), not the plan's current drawing,
-so nothing stops it moving with the box while a carve quietly takes its
-wall away underneath it: a later carve can shorten or delete the exact
-stretch it sits on, or -- the easier case to miss -- leave the host's
-own wall untouched while carving away whichever neighbour used to be on
-its other side. Either way the door stops being real without moving at
-all. `arrowIsLive` checks an interior door against the level's current
-touch graph (does *some* neighbour's outline still meet the host's,
-right there) and an exterior door against the host's own current
-outline; `liveArrowIds` runs it for every arrow on the plan at once.
-Canvas2D reads it to draw a dead door dashed and in the error colour,
-with a title explaining why -- the same "stay put, get flagged, never
-silently move, never silently vanish" treatment `broken` already gives
-an unreachable route leg. The carve loop in `suggestArrows` was the
-other half of this fix: it used to guess a carve's door position as the
-carver's wall nearest the victim's raw centre, which had no guarantee of
-landing on the actual cut; it now finds the real boundary with
-`touchingEdges` (the victim's carved outline against the carver's raw
-one) and places the door there, or places nothing if no such edge
+**An arrow's stored position can outlive the wall it was placed on.**
+`{hostId, side, t}` (arrows.ts) addresses a point on the host's own
+*declared* shape, not the plan's current drawing -- carving can shorten
+or delete the exact stretch a door sits on, or, easier to miss, leave
+the host's own wall untouched while carving away whichever neighbour
+used to be on its other side. Either way the door stops being real
+without moving at all. Three pieces close this, each answering a
+different question, deliberately kept separate:
+
+- *Is this arrow real right now?* `arrowIsLive`/`liveArrowIds`
+  (circulation.ts): an interior door needs a real touch in the level's
+  current touch graph; an exterior door needs to still sit on the
+  host's own current outline. Recomputed fresh every time, like a
+  route -- nothing here is stored.
+- *Where does a click or drag resolve to?* `liveWallPoint` (arrows.ts),
+  used by `addArrow`/`moveArrow` (store.ts): the nearest point on the
+  box's *current, carved* outline, never a point a carve has already
+  taken away -- hosted on whichever raw shape that point actually
+  belongs to, the box's own or a direct carver's (`ownerOf`, the same
+  rule `suggestArrows`'s walk uses to decide which of a touching pair
+  hosts a carve-boundary door, regardless of which side the walk
+  reached it from first -- a plain wall belongs to both, a cut boundary
+  only to the carver). A carved-away wall position is not filtered
+  after the fact; it is simply never offered.
+- *Where does a door that has already gone stale draw itself?*
+  `Arrow.frozenAt` (types.ts) plus `syncFrozenArrowPoints`
+  (circulation.ts): a stale arrow's raw `hostId`/`side`/`t` position can
+  by now be anywhere the host's declared shape says, including inside
+  some unrelated zone drawn over that spot since -- not safe to draw or
+  to keep recomputing. `frozenAt` is a door's last real `[tail, head]`,
+  kept in sync automatically for as long as it stays real and left
+  completely untouched the instant it stops -- a snapshot, not a rule,
+  which is why it needs the one field. `useStore.subscribe` (bottom of
+  store.ts) is where this actually runs: once, centrally, after every
+  single state change, rather than each of the many actions that could
+  move a wall (draw, resize, rotate, carve, release, undo, redo, load a
+  layout) having to remember to call it. It is a no-op, the same
+  `arrows` array back, once nothing has changed, so this costs one extra
+  pass rather than looping.
+
+Canvas2D draws a live door at its current computed position and a dead
+one at `frozenAt` instead, dashed and in the error colour, with a title
+explaining why -- stay exactly where it broke, get flagged, never
+silently move again and never silently vanish, the same treatment
+`broken` already gives an unreachable route leg. Door arrows are drawn
+two-headed (`markerStart` and `markerEnd` both set, using the same
+marker definition each way via `orient="auto-start-reverse"`) since a
+door is walked in both directions; this makes the existing per-arrow
+Flip control cosmetically inert (both ends now look the same regardless
+of `dir`), left in place rather than removed since nothing asked for
+that.
+
+The carve loop in `suggestArrows` no longer guesses a carve's door
+position as the carver's wall nearest the victim's raw centre, which had
+no guarantee of landing on the actual cut; it finds the real boundary
+with `touchingEdges` (the victim's carved outline against the carver's
+raw one) and places the door there, or places nothing if no such edge
 exists rather than guessing one into being.
 
 **One infrastructure idea raised and deliberately not done:** giving the

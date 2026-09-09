@@ -22,7 +22,7 @@
  * placed by hand with their own tools and left alone here.
  */
 import { displayShapes } from "./carve";
-import { pageToLocalPoly, localToPagePoly, localPolyOf, frameOf, polyOfBox } from "./poly";
+import { pageToLocalPoly, localToPagePoly, localPolyOf, frameOf, nearestPointOnPoly, pointOnPolyBoundary, polyOfBox } from "./poly";
 import { rectOf } from "./rect";
 import { boxesTrulyIntersect } from "./rect";
 import { isOpenToBelow } from "./snap";
@@ -159,6 +159,48 @@ function clamp01(v: number): number {
   return Math.max(0, Math.min(1, v));
 }
 
+/** Which of two touching zones' own raw outlines a point on their
+ * shared boundary actually belongs to. A plain wall sits on both zones'
+ * outlines at once, so either answer names the same wall; a carve's cut
+ * boundary sits only on the carver's, so getting this right matters
+ * there. `nearestWallPoint` never checks whether a point is actually on
+ * the shape it is asked about -- it always returns whichever of that
+ * shape's own walls is nearest regardless -- so asking the wrong one
+ * does not fail, it silently returns nonsense. */
+function ownerOf(a: Box, b: Box, point: Point): Box {
+  if (pointOnPolyBoundary(polyOfBox(a), point, TOUCH_TOL_M)) return a;
+  if (pointOnPolyBoundary(polyOfBox(b), point, TOUCH_TOL_M)) return b;
+  return a;
+}
+
+/** Where a click or drag near `box` actually resolves to a door, given
+ * the plan exactly as it is right now: the nearest point on `box`'s own
+ * current, carved outline -- never a point a carve has taken away, and
+ * never the wall nearest regardless of whether it is even close. That
+ * point may belong to `box`'s own raw wall, or, if it falls on a cut
+ * boundary, to whichever zone is carving it there; either way the door
+ * ends up hosted on whichever raw shape the point actually belongs to --
+ * the same rule the carve loop above already follows for its own doors,
+ * now the one placement and drag route through as well. Null only when
+ * `box` has no outline at all right now (not live on this storey). */
+export function liveWallPoint(box: Box, live: Box[], polyById: Map<string, Poly>, at: Point): { host: Box; side: number; t: number } | null {
+  const outline = polyById.get(box.id);
+  if (!outline) return null;
+  const near = nearestPointOnPoly(outline, at);
+  let host = box;
+  if (!pointOnPolyBoundary(polyOfBox(box), near, TOUCH_TOL_M)) {
+    for (const carverId of box.carvedBy) {
+      const carver = live.find((b) => b.id === carverId);
+      if (carver && pointOnPolyBoundary(polyOfBox(carver), near, TOUCH_TOL_M)) {
+        host = carver;
+        break;
+      }
+    }
+  }
+  const { side, t } = nearestWallPoint(host, near);
+  return { host, side, t };
+}
+
 let counter = 0;
 export function newArrowId(): string {
   counter += 1;
@@ -217,7 +259,11 @@ export function suggestArrows(all: Box[], existing: Arrow[], level: number, auto
   // polygon test `buildTouchGraph` uses for circulation, run on each
   // zone's actual outline right now. A zone reached only through a
   // carve is picked up here as well, since the loop above marks it
-  // `covered` without adding it to the walk.
+  // `covered` without adding it to the walk. Which of the pair actually
+  // hosts the door is decided by `ownerOf`, not by which direction the
+  // walk happened to reach the pair from: for a plain wall the two agree
+  // regardless, but a carve's cut boundary belongs to the carver alone,
+  // and the walk can reach that pair from either side.
   let start = live.findIndex((b) => b.isEntry);
   if (start === -1) start = live.findIndex((b) => b.roomType === "stair");
   if (start === -1) return out;
@@ -225,20 +271,23 @@ export function suggestArrows(all: Box[], existing: Arrow[], level: number, auto
   const queue = [start];
   while (queue.length) {
     const cur = queue.shift()!;
-    const host = live[cur];
-    const hostPoly = polyById.get(host.id);
-    if (!hostPoly) continue;
+    const from = live[cur];
+    const fromPoly = polyById.get(from.id);
+    if (!fromPoly) continue;
     for (let j = 0; j < live.length; j++) {
       const other = live[j];
       if (visited.has(other.id)) continue;
       const otherPoly = polyById.get(other.id);
       if (!otherPoly) continue;
-      const touches = touchingEdges(hostPoly, otherPoly, TOUCH_TOL_M);
+      const touches = touchingEdges(fromPoly, otherPoly, TOUCH_TOL_M);
       if (!touches.length) continue;
       visited.add(other.id);
       queue.push(j);
-      const { side, t } = nearestWallPoint(host, touchMid(touches[0]));
-      add(host, other, side, t);
+      const mid = touchMid(touches[0]);
+      const host = ownerOf(from, other, mid);
+      const target = host === from ? other : from;
+      const { side, t } = nearestWallPoint(host, mid);
+      add(host, target, side, t);
     }
   }
   return out;

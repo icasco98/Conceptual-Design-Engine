@@ -151,3 +151,88 @@ describe("migrateLayout: one place a saved layout, however old, gets read", () =
     expect(migrated.plot).toEqual(state.plot);
   });
 });
+
+describe("a door is placed against the plan's current, carved outline -- never a wall that is no longer there", () => {
+  // Well clear of the sample house, so nothing there interferes.
+  const place = () => {
+    const a = useStore.getState().addBox("rect", 100, 0, 4, 4);
+    const b = useStore.getState().addBox("rect", 104, 0, 3, 4);
+    return { a, b };
+  };
+
+  it("a second placement at the same spot lands on the cutter once a carve has taken that stretch of wall", () => {
+    const { a } = place();
+    useStore.getState().addArrow(a, [104, 2], "interior");
+    const firstId = useStore.getState().selectedArrow;
+    expect(useStore.getState().arrows.find((ar) => ar.id === firstId)?.hostId).toBe(a);
+
+    // Eats the middle of a's right wall, right where the door sits.
+    const cutter = useStore.getState().addBox("rect", 103, 1, 1, 2);
+    useStore.getState().carve(cutter);
+
+    // A point inside the notch, close to the cutter's own left edge --
+    // not the corner where the notch meets a's remaining wall, which is
+    // equidistant from both and would not pin down which one it means.
+    useStore.getState().addArrow(a, [103.2, 2], "interior");
+    const secondId = useStore.getState().selectedArrow;
+    expect(secondId).not.toBe(firstId);
+    expect(useStore.getState().arrows.find((ar) => ar.id === secondId)?.hostId).toBe(cutter);
+  });
+
+  it("dragging a door towards a cut boundary re-hosts it onto the cutter, the same rule a fresh placement follows", () => {
+    const { a } = place();
+    useStore.getState().addArrow(a, [104, 3.9], "interior");
+    const id = useStore.getState().selectedArrow!;
+
+    const cutter = useStore.getState().addBox("rect", 103, 1, 1, 2);
+    useStore.getState().carve(cutter);
+
+    useStore.getState().moveArrow(id, [103.2, 2]);
+    const arrow = useStore.getState().arrows.find((ar) => ar.id === id)!;
+    expect(arrow.hostId).toBe(cutter);
+  });
+});
+
+describe("a door's frozen position, kept in sync while it is real, held once it is not", () => {
+  const place = () => {
+    const a = useStore.getState().addBox("rect", 200, 0, 4, 4);
+    useStore.getState().addBox("rect", 204, 0, 3, 4);
+    return a;
+  };
+
+  it("addArrow's own door gets a frozen position immediately, without a separate edit", () => {
+    const a = place();
+    useStore.getState().addArrow(a, [204, 2], "interior");
+    const id = useStore.getState().selectedArrow!;
+    const arrow = useStore.getState().arrows.find((ar) => ar.id === id)!;
+    expect(arrow.frozenAt).toBeDefined();
+    // The wall's own x, not the door graphic's inset tail/head -- their
+    // midpoint lands exactly back on it.
+    const midX = (arrow.frozenAt![0][0] + arrow.frozenAt![1][0]) / 2;
+    expect(midX).toBeCloseTo(204, 6);
+  });
+
+  it("stays fixed at its last real position once a carve invalidates it, instead of following the raw wall formula", () => {
+    const a = place();
+    useStore.getState().addArrow(a, [204, 2], "interior");
+    const id = useStore.getState().selectedArrow!;
+    const before = useStore.getState().arrows.find((ar) => ar.id === id)!.frozenAt;
+
+    const cutter = useStore.getState().addBox("rect", 203, 1, 1, 2);
+    useStore.getState().carve(cutter);
+
+    const after = useStore.getState().arrows.find((ar) => ar.id === id)!;
+    expect(after.frozenAt).toEqual(before);
+  });
+
+  it("a still-live door's frozen point tracks an ordinary move, rather than pinning it to where it used to be", () => {
+    const a = place();
+    useStore.getState().addArrow(a, [204, 2], "interior");
+    const id = useStore.getState().selectedArrow!;
+    // A small shift that still leaves a and b's walls overlapping --
+    // the door stays real, just at a new spot along it.
+    useStore.getState().updateBox(a, { top: 1 });
+    const arrow = useStore.getState().arrows.find((ar) => ar.id === id)!;
+    expect(arrow.frozenAt![0][1]).toBeCloseTo(3, 6);
+  });
+});

@@ -10,8 +10,9 @@ import { create } from "zustand";
 
 import { api } from "../api/client";
 import type { ProjectSummary, SavedProject } from "../api/types";
-import { nearestWallPoint, newArrowId, suggestArrows } from "../geometry/arrows";
+import { liveWallPoint, newArrowId, suggestArrows } from "../geometry/arrows";
 import { carveWith, displayShapes, releaseCarve } from "../geometry/carve";
+import { syncFrozenArrowPoints } from "../geometry/circulation";
 import { clampDrawnRect, clampGroup, settleInPlot } from "../geometry/plot";
 import { localPolyOf } from "../geometry/poly";
 import { isOpenToBelow, liveBoxes } from "../geometry/snap";
@@ -528,29 +529,45 @@ export const useStore = create<State>((set, get) => ({
   },
 
   addArrow(hostId, at, kind = "interior") {
-    const host = get().boxes.find((b) => b.id === hostId);
+    const { boxes, level, autoCarve } = get();
+    const host = boxes.find((b) => b.id === hostId);
     // No door into a void: on a storey above its own floor a zone is
     // open to below, and there is no floor there to walk on.
-    if (!host || isOpenToBelow(host, get().level)) return;
+    if (!host || isOpenToBelow(host, level)) return;
+    // Resolved against the zone's current, carved outline -- never a
+    // point a carve has already taken away -- and hosted on whichever
+    // zone (this one, or a carver cutting into it) that point actually
+    // belongs to.
+    const live = liveBoxes(boxes, level);
+    const polyById = new Map(displayShapes(live, autoCarve).map((s) => [s.id, s.page]));
+    const resolved = liveWallPoint(host, live, polyById, at);
+    if (!resolved) return;
     get().remember();
-    const { side, t } = nearestWallPoint(host, at);
-    const arrow: Arrow = { id: newArrowId(), level: get().level, hostId, side, t, dir: 1, kind };
+    const arrow: Arrow = { id: newArrowId(), level, hostId: resolved.host.id, side: resolved.side, t: resolved.t, dir: 1, kind };
     // The main entrance is one zone at a time: this one takes it, and
     // whichever zone had it loses it.
-    const boxes =
+    const nextBoxes =
       kind === "exterior-main"
-        ? get().boxes.map((b) => (b.id === hostId ? { ...b, isEntry: true } : b.isEntry ? { ...b, isEntry: false } : b))
-        : get().boxes;
-    set({ arrows: [...get().arrows, arrow], selectedArrow: arrow.id, selected: [], boxes });
+        ? boxes.map((b) => (b.id === resolved.host.id ? { ...b, isEntry: true } : b.isEntry ? { ...b, isEntry: false } : b))
+        : boxes;
+    set({ arrows: [...get().arrows, arrow], selectedArrow: arrow.id, selected: [], boxes: nextBoxes });
   },
 
   moveArrow(id, at) {
-    const arrow = get().arrows.find((a) => a.id === id);
-    const host = arrow && get().boxes.find((b) => b.id === arrow.hostId);
+    const { boxes, level, autoCarve, arrows } = get();
+    const arrow = arrows.find((a) => a.id === id);
+    const host = arrow && boxes.find((b) => b.id === arrow.hostId);
     if (!arrow || !host) return;
-    const { side, t } = nearestWallPoint(host, at);
+    const live = liveBoxes(boxes, level);
+    const polyById = new Map(displayShapes(live, autoCarve).map((s) => [s.id, s.page]));
+    const resolved = liveWallPoint(host, live, polyById, at);
+    if (!resolved) return;
     // Moved by hand: it no longer stands for the suggestion it came from.
-    set({ arrows: get().arrows.map((a) => (a.id === id ? { ...a, side, t, targetId: undefined } : a)) });
+    set({
+      arrows: arrows.map((a) =>
+        a.id === id ? { ...a, hostId: resolved.host.id, side: resolved.side, t: resolved.t, targetId: undefined } : a,
+      ),
+    });
   },
 
   flipArrow(id) {
@@ -836,3 +853,15 @@ export const useStore = create<State>((set, get) => ({
     set({ error: null });
   },
 }));
+
+// Every arrow's frozen position (Arrow.frozenAt, circulation.ts) kept in
+// sync after every single edit, in one place, rather than each of the
+// many actions that could move a wall -- draw, resize, rotate, carve,
+// release a carve, undo, redo, load a layout -- having to remember to
+// call it themselves. `syncFrozenArrowPoints` is a no-op (same array
+// back) once nothing has changed, so this settles in one extra pass
+// rather than looping.
+useStore.subscribe((state) => {
+  const arrows = syncFrozenArrowPoints(state.boxes, state.arrows, state.autoCarve);
+  if (arrows !== state.arrows) useStore.setState({ arrows });
+});

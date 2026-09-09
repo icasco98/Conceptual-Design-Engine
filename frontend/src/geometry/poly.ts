@@ -99,12 +99,14 @@ export function polyOfBox(b: Box): Poly {
   return localToPagePoly(localPolyOf(b), frameOf(b));
 }
 
-/** Whether `p` sits within `tol` of `poly`'s own boundary -- on one of
- * its edges, not merely somewhere inside it. What decides whether a
- * placed door is still on a wall that is actually there: `poly` is a
- * zone's current, post-carve outline, so a stretch a carve has taken
- * away no longer counts, exactly as a stretch it never had did not. */
-export function pointOnPolyBoundary(poly: Poly, p: Point, tol: number): boolean {
+/** The point on `poly`'s own boundary nearest `p` -- on an edge, not
+ * merely somewhere inside it. What a click or drag near a zone actually
+ * resolves to: `poly` is a zone's current, post-carve outline, so a
+ * stretch a carve has taken away is no longer a candidate, exactly as a
+ * stretch it never had never was. */
+export function nearestPointOnPoly(poly: Poly, p: Point): Point {
+  let best: Point = poly[0] ?? p;
+  let bestD = Infinity;
   for (let i = 0; i < poly.length; i++) {
     const a = poly[i];
     const b = poly[(i + 1) % poly.length];
@@ -112,11 +114,21 @@ export function pointOnPolyBoundary(poly: Poly, p: Point, tol: number): boolean 
     const ey = b[1] - a[1];
     const len2 = ex * ex + ey * ey;
     const t = len2 < 1e-9 ? 0 : Math.max(0, Math.min(1, ((p[0] - a[0]) * ex + (p[1] - a[1]) * ey) / len2));
-    const qx = a[0] + t * ex;
-    const qy = a[1] + t * ey;
-    if (Math.hypot(p[0] - qx, p[1] - qy) <= tol) return true;
+    const q: Point = [a[0] + t * ex, a[1] + t * ey];
+    const d = Math.hypot(p[0] - q[0], p[1] - q[1]);
+    if (d < bestD) {
+      bestD = d;
+      best = q;
+    }
   }
-  return false;
+  return best;
+}
+
+/** Whether `p` sits within `tol` of `poly`'s own boundary. What decides
+ * whether a placed door is still on a wall that is actually there. */
+export function pointOnPolyBoundary(poly: Poly, p: Point, tol: number): boolean {
+  const q = nearestPointOnPoly(poly, p);
+  return Math.hypot(p[0] - q[0], p[1] - q[1]) <= tol;
 }
 
 /** A box's own frame: for a rotated box the world is turned around it so

@@ -1030,6 +1030,9 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
           <marker id="door-arrow-preview" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse" markerUnits="strokeWidth">
             <path d="M 0 0 L 10 5 L 0 10 z" fill="#9aa0a6" />
           </marker>
+          <marker id="door-arrow-stale" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse" markerUnits="strokeWidth">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#9c3b2c" />
+          </marker>
         </defs>
         <g transform={`translate(${cam.x} ${cam.y}) scale(${cam.z})`} pointerEvents="none">
         <g ref={gRef} transform={`translate(${MARGIN} ${MARGIN + HEADROOM}) scale(${PX})`}>
@@ -1290,16 +1293,22 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
               </g>
             );
           })}
-          {/* door arrows: on their host's wall, perpendicular to it */}
+          {/* door arrows: on their host's wall, perpendicular to it --
+              two-headed, since a door is walked both ways. A stale one
+              (its wall carved away, or the zone that used to be on its
+              other side gone) draws at its last real position instead
+              of wherever its raw wall reference now falls, which can be
+              anywhere, including inside an unrelated zone drawn over
+              that spot since. */}
           {liveArrows.map(({ arrow, host }) => {
-            const [a, c] = arrowSegment(host, arrow);
+            const real = realDoorIds.has(arrow.id);
+            const [a, c] = real ? arrowSegment(host, arrow) : (arrow.frozenAt ?? arrowSegment(host, arrow));
             const sel = arrow.id === selectedArrow;
             const kind = arrow.kind ?? "interior";
-            const real = realDoorIds.has(arrow.id);
             const mx = (a[0] + c[0]) / 2;
             const my = (a[1] + c[1]) / 2;
             const stroke = !real ? "#9c3b2c" : sel ? "#2f5d7c" : kind === "exterior-side" ? "#b3392b" : kind === "exterior-main" ? "#111111" : "#1a1a1a";
-            const marker = kind === "exterior-side" ? "door-arrow-side" : kind === "exterior-main" ? "door-arrow-main" : "door-arrow";
+            const marker = !real ? "door-arrow-stale" : kind === "exterior-side" ? "door-arrow-side" : kind === "exterior-main" ? "door-arrow-main" : "door-arrow";
             return (
               <g key={arrow.id} className={`arrow ${kind} ${sel ? "selected" : ""} ${real ? "" : "stale"}`} pointerEvents="all" onPointerDown={(e) => startArrowDrag(e, arrow)}>
                 {/* a fat invisible stroke so a thin arrow is easy to grab */}
@@ -1313,9 +1322,10 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
                   strokeOpacity={sel || !real || kind !== "interior" ? 1 : 0.55}
                   strokeWidth={sel ? 0.1 : kind !== "interior" ? 0.09 : 0.07}
                   strokeDasharray={real ? undefined : "0.06 0.05"}
+                  markerStart={`url(#${marker})`}
                   markerEnd={`url(#${marker})`}
                 >
-                  {!real && <title>Not on a real wall any more -- the plan has changed since this door was placed</title>}
+                  {!real && <title>Not a real door any more -- shown at its last real position, from before the plan changed under it</title>}
                 </line>
                 {sel && (
                   <>
@@ -1431,7 +1441,9 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
               const host = live.find((b) => b.id === arrowPreview.hostId);
               if (!host) return null;
               const [a, c] = arrowSegment(host, { id: "preview", level, hostId: host.id, side: arrowPreview.side, t: arrowPreview.t, dir: 1 });
-              return <line x1={a[0]} y1={a[1]} x2={c[0]} y2={c[1]} className="arrow-preview" markerEnd="url(#door-arrow-preview)" />;
+              return (
+                <line x1={a[0]} y1={a[1]} x2={c[0]} y2={c[1]} className="arrow-preview" markerStart="url(#door-arrow-preview)" markerEnd="url(#door-arrow-preview)" />
+              );
             })()}
           {/* the zone waiting to be placed, following the pointer at its own size */}
           {tool === "place" &&

@@ -43,6 +43,17 @@
  * (and `liveArrowIds`, every level at once) is the read-time check for
  * this -- an arrow that fails it is not deleted or moved, only flagged,
  * the same "say so, do not guess" treatment a broken route leg gets.
+ *
+ * A flagged arrow still has to be drawn somewhere, and its raw
+ * `hostId`/`side`/`t` position is no longer trustworthy for that -- it
+ * can now sit anywhere the host's declared shape says, including inside
+ * whatever other zone has since been drawn over that spot. `frozenAt`
+ * (`Arrow`, types.ts) is where it is drawn instead once that happens:
+ * its last real position, kept in sync by `syncFrozenArrowPoints` for
+ * as long as the door stays real, and left alone the instant it stops
+ * being one. A frozen door does not drift as the rest of the plan keeps
+ * changing around it -- it stays exactly where it broke until someone
+ * moves it or the wall comes back.
  */
 import { arrowSegment } from "./arrows";
 import { displayShapes } from "./carve";
@@ -70,6 +81,8 @@ interface CircEdge {
 }
 
 export type CirculationGraph = Map<string, CircEdge[]>;
+
+const closeEnough = (a: Point, b: Point) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-6;
 
 /** Whether a point sits on a wall run, within tolerance -- perpendicular
  * distance from the line, and distance along it from either endpoint,
@@ -215,6 +228,43 @@ export function liveArrowIds(boxes: Box[], storeys: number, arrows: Arrow[], aut
   return live;
 }
 
+/** Every arrow, with `frozenAt` brought up to date: still exactly where
+ * it draws today for anything `arrowIsLive` still stands behind, and
+ * left completely untouched for anything it does not. Call this after
+ * every edit that could move a wall -- the store does, once, centrally,
+ * rather than each of the many actions that could invalidate a door
+ * having to remember to. The moment a door goes stale, whatever is
+ * written here is its last real position; nothing after that moment
+ * ever overwrites it again, until the door is real once more (moved
+ * back onto a wall, or replaced by hand). */
+export function syncFrozenArrowPoints(boxes: Box[], arrows: Arrow[], autoCarve: boolean): Arrow[] {
+  const byId = new Map(boxes.map((b) => [b.id, b]));
+  const perLevel = new Map<number, ReturnType<typeof levelTouchData>>();
+  const dataFor = (level: number) => {
+    let d = perLevel.get(level);
+    if (!d) {
+      d = levelTouchData(boxes, level, autoCarve);
+      perLevel.set(level, d);
+    }
+    return d;
+  };
+  let changed = false;
+  const out = arrows.map((arrow) => {
+    const host = byId.get(arrow.hostId);
+    if (!host) return arrow;
+    const { polyById, touchGraph } = dataFor(arrow.level);
+    const outline = polyById.get(host.id);
+    if (!outline) return arrow;
+    const touches = (touchGraph.get(host.id) ?? []).map((e) => e.touch);
+    if (!arrowIsLive(arrow, host, touches, outline)) return arrow;
+    const segment = arrowSegment(host, arrow);
+    if (arrow.frozenAt && closeEnough(arrow.frozenAt[0], segment[0]) && closeEnough(arrow.frozenAt[1], segment[1])) return arrow;
+    changed = true;
+    return { ...arrow, frozenAt: segment };
+  });
+  return changed ? out : arrows;
+}
+
 interface PathResult {
   nodes: string[];
   /** `edges[k]` connects `nodes[k]` to `nodes[k + 1]`. */
@@ -290,8 +340,6 @@ export interface ActorRouteResult {
   segments: RouteSegment[];
   broken: BrokenLeg[];
 }
-
-const closeEnough = (a: Point, b: Point) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-6;
 
 /** An actor's route, chained through its waypoints in order and split
  * into one segment per storey it crosses. A waypoint that no longer

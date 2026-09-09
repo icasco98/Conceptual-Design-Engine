@@ -188,4 +188,14 @@ export interface Arrow {
   t: number;
   /** 1 = out of the host, -1 = into it. */
   dir: 1 | -1;
+  /** Where this arrow was last drawn while it was still a real door --
+   * `[tail, head]` in page-frame meters, kept in sync automatically for
+   * as long as `hostId`/`side`/`t` resolve onto a real wall, and left
+   * untouched the moment they stop to. Undefined only for an arrow that
+   * has never once been live (a stale one loaded from a layout saved
+   * before this field existed). Never read to decide whether a door is
+   * real -- that is `arrowIsLive`'s question, answered fresh from
+   * `hostId`/`side`/`t` every time -- only to decide where to draw one
+   * that already failed it. */
+  frozenAt?: [Point, Point];
 }

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { carveWith, displayShapes, releaseCarve, shapeStillUsable, subtractKeepLargest } from "./carve";
-import { arrowSegment, nearestWallPoint, suggestArrows } from "./arrows";
-import { actorRoute, arrowIsLive, buildCirculationGraph, liveArrowIds, outOfBounds, routeLength, sharedSegments } from "./circulation";
+import { arrowSegment, liveWallPoint, nearestWallPoint, suggestArrows } from "./arrows";
+import { actorRoute, arrowIsLive, buildCirculationGraph, liveArrowIds, outOfBounds, routeLength, sharedSegments, syncFrozenArrowPoints } from "./circulation";
 import { buildTouchGraph, touchingEdges } from "./doors";
 import { footprintRings } from "./footprint";
 import { clampDrawnRect, clampGroup, isOutsidePlot, limitGrowth, limitPointGrowth, settleInPlot, shiftInside } from "./plot";
@@ -344,6 +344,19 @@ describe("door arrows", () => {
     expect(out.some((a) => a.targetId === "r")).toBe(true);
   });
 
+  it("hosts a carve-boundary arrow on the carver even when the walk reaches the pair from the victim's side first", () => {
+    // The entry -- so the walk's own starting point -- is the victim
+    // here, the opposite direction from the test just above. The door
+    // this finds must still be hosted on the carver: the cut boundary
+    // is congruent to the carver's own edge, not the victim's, whatever
+    // direction the walk happened to reach it from.
+    const room = box({ id: "r", name: "Room", isEntry: true, priority: 2, left: 0, top: 0, width: 6, height: 6 });
+    const carver = box({ id: "c", name: "Cutter", priority: 1, left: 4, top: 4, width: 3, height: 3 });
+    const out = suggestArrows([room, carver], [], 0, true);
+    expect(out).toHaveLength(1);
+    expect(out[0].hostId).toBe("c");
+  });
+
   it("an arrow is perpendicular to its wall and turns with its host", () => {
     const host = box({ id: "h2", left: 0, top: 0, width: 4, height: 4 });
     const arrow = { id: "a", level: 0, hostId: "h2", side: 1, t: 0.5, dir: 1 as const };
@@ -373,6 +386,44 @@ describe("door arrows", () => {
     expect(nearestWallPoint(host, [2, 4.3]).side).toBe(2);
     expect(nearestWallPoint(host, [-0.3, 2]).side).toBe(3);
     expect(nearestWallPoint(host, [1, -0.3]).t).toBeCloseTo(0.25);
+  });
+});
+
+describe("liveWallPoint: a click or drag resolves to whichever real wall it actually lands on", () => {
+  it("resolves onto the host's own wall for an ordinary click near it, untouched by any carve", () => {
+    const room = box({ id: "r", left: 0, top: 0, width: 6, height: 6 });
+    const live = [room];
+    const polyById = new Map(live.map((b) => [b.id, polyOfBox(b)]));
+    const resolved = liveWallPoint(room, live, polyById, [6.2, 3]);
+    expect(resolved?.host.id).toBe("r");
+    expect(resolved?.side).toBe(1);
+    expect(resolved?.t).toBeCloseTo(0.5, 6);
+  });
+
+  it("resolves onto the carver once a carve has taken the clicked stretch of the host's own wall", () => {
+    const room = box({ id: "r", left: 0, top: 0, width: 6, height: 6, carvedBy: ["c"] });
+    const carver = box({ id: "c", left: 4, top: 4, width: 3, height: 3 });
+    const live = [room, carver];
+    const polyById = new Map(displayShapes(live, false).map((s) => [s.id, s.page]));
+    // Exactly on the notch's own left edge -- the carver's, not room's.
+    const resolved = liveWallPoint(room, live, polyById, [4, 5]);
+    expect(resolved?.host.id).toBe("c");
+  });
+
+  it("still resolves onto the host's own wall elsewhere on it, once a carve has only taken a different stretch", () => {
+    const room = box({ id: "r", left: 0, top: 0, width: 6, height: 6, carvedBy: ["c"] });
+    const carver = box({ id: "c", left: 4, top: 4, width: 3, height: 3 });
+    const live = [room, carver];
+    const polyById = new Map(displayShapes(live, false).map((s) => [s.id, s.page]));
+    // room's left wall is nowhere near the carve.
+    const resolved = liveWallPoint(room, live, polyById, [-0.2, 3]);
+    expect(resolved?.host.id).toBe("r");
+  });
+
+  it("returns null when the box has no outline at all right now", () => {
+    const room = box({ id: "r", left: 0, top: 0, width: 6, height: 6 });
+    const polyById = new Map<string, Poly>();
+    expect(liveWallPoint(room, [room], polyById, [6, 3])).toBeNull();
   });
 });
 
@@ -1072,5 +1123,39 @@ describe("arrow liveness: a door stays exactly where it was put, but is flagged 
     const touches = (touchGraph.get("a") ?? []).map((e) => e.touch);
     expect(arrowIsLive(door, a, touches, polyOfBox(a))).toBe(true);
     expect(arrowIsLive(door, a, [], polyOfBox(a))).toBe(false);
+  });
+});
+
+describe("syncFrozenArrowPoints: a live door's frozenAt tracks it, a stale one's is left exactly as it was", () => {
+  const a = box({ id: "a", left: 0, top: 0, width: 4, height: 4 });
+  const b = box({ id: "b", left: 4, top: 0, width: 3, height: 4 });
+  const door: Arrow = { id: "d", level: 0, hostId: "a", kind: "interior", side: 1, t: 0.5, dir: 1 };
+
+  it("stamps frozenAt on a live arrow that does not have one yet", () => {
+    const [synced] = syncFrozenArrowPoints([a, b], [door], false);
+    expect(synced.frozenAt).toBeDefined();
+    expect(synced.frozenAt![0][1]).toBeCloseTo(2, 6);
+  });
+
+  it("is a no-op, the very same array, once an arrow's frozenAt already matches its live position", () => {
+    const [synced] = syncFrozenArrowPoints([a, b], [door], false);
+    const again = syncFrozenArrowPoints([a, b], [synced], false);
+    expect(again[0]).toBe(synced);
+  });
+
+  it("leaves frozenAt exactly as it is once the door goes stale, rather than following the raw wall formula", () => {
+    const [live] = syncFrozenArrowPoints([a, b], [door], false);
+    const cutter = box({ id: "cutter", left: 3, top: 1, width: 2, height: 2, carvedBy: [] });
+    const carvedA: Box = { ...a, carvedBy: ["cutter"] };
+    // Confirm it really did go stale, so this is the interesting case.
+    expect(liveArrowIds([carvedA, b, cutter], 1, [live], false).has("d")).toBe(false);
+    const [afterCarve] = syncFrozenArrowPoints([carvedA, b, cutter], [live], false);
+    expect(afterCarve.frozenAt).toEqual(live.frozenAt);
+  });
+
+  it("does nothing for an arrow whose host does not exist", () => {
+    const orphan: Arrow = { id: "o", level: 0, hostId: "gone", side: 0, t: 0.5, dir: 1 };
+    const [synced] = syncFrozenArrowPoints([a, b], [orphan], false);
+    expect(synced).toBe(orphan);
   });
 });
