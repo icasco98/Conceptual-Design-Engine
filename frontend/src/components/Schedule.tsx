@@ -26,13 +26,9 @@ import { polyArea } from "../geometry/poly";
 import { isOpenToBelow, liveBoxes } from "../geometry/snap";
 import type { Box, BoxShape, PrivacyTier } from "../geometry/types";
 import { fillFor } from "../palette";
-import { ROOM_TYPES, roomTypeInfo, tierOf } from "../rooms";
+import { floorLabel, ROOM_TYPES, roomTypeInfo, tierOf } from "../rooms";
 import { useStore } from "../state/store";
 import { IconCircle, IconRect } from "./icons";
-
-function floorLabel(i: number): string {
-  return i === 0 ? "G" : String(i);
-}
 
 const PRIVACY_TIER_LABEL: Record<PrivacyTier, string> = { public: "Public", "semi-public": "Semi-public", private: "Private" };
 

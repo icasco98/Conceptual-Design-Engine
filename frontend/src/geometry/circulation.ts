@@ -478,6 +478,9 @@ export interface ReachabilityProblem {
    * broken route leg already gets. */
   kind: "unreachable" | "through_room";
   viaIds: string[];
+  /** The room's own storey -- so a message can say which floor to go
+   * fix this on, not just what's wrong. */
+  level: number;
 }
 
 /** Every room the plan fails to serve properly, walking out from *every*
@@ -555,9 +558,9 @@ export function reachabilityProblems(
       if (neighborIds.length && blockers.length) {
         const attachedToItsOwner = auxiliaryOf(b.roomType) && blockers.every((id) => !isServiceOf(byId.get(id)!.roomType));
         if (attachedToItsOwner) continue;
-        problems.push({ roomId: b.id, kind: "through_room", viaIds: blockers.slice(0, 2) });
+        problems.push({ roomId: b.id, kind: "through_room", viaIds: blockers.slice(0, 2), level });
       } else {
-        problems.push({ roomId: b.id, kind: "unreachable", viaIds: [] });
+        problems.push({ roomId: b.id, kind: "unreachable", viaIds: [], level });
       }
     }
   }

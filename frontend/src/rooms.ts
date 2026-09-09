@@ -58,13 +58,22 @@ interface RoomTypeInfo {
    * through one specific other room is exactly the problem this check
    * exists to catch for them. */
   auxiliary?: boolean;
+  /** A dedicated movement space -- Entry, Hallway, Mudroom, Stair --
+   * rather than a destination room that merely happens to be walkable
+   * through (`passable`, above, is the broader set: it also includes
+   * Living Room and Dining Room, which are destinations first). Used
+   * only by `relationships.ts`'s `stairConnectionProblems`: a stair's
+   * door should land on another circulation space, not directly inside
+   * a bedroom, kitchen, or any other room that has to serve everyone
+   * using the stairs as an involuntary through-route. */
+  circulation?: boolean;
 }
 
 /** category_a = private, category_b = shared, category_c = service,
  *  category_d = reception (rooms.ts's own doc, api/types.ts's CategoryKey,
  *  explains the fourth one). */
 export const ROOM_TYPES: Record<string, RoomTypeInfo> = {
-  entry: { label: "Entry / Foyer", minWidth: 1.2, minHeight: 1.2, typicalWidth: 1.8, typicalHeight: 1.8, zone: "category_b", passable: true, tier: "public" },
+  entry: { label: "Entry / Foyer", minWidth: 1.2, minHeight: 1.2, typicalWidth: 1.8, typicalHeight: 1.8, zone: "category_b", passable: true, tier: "public", circulation: true },
   // Sized for floor or perimeter seating rather than furniture groupings,
   // which is why its minimum and typical size both run well past a
   // living room's -- a Gulf diwaniya routinely seats a dozen or more.
@@ -79,7 +88,7 @@ export const ROOM_TYPES: Record<string, RoomTypeInfo> = {
   // rather than a separate door -- unlike the diwaniya, not structurally
   // isolated from the rest of the house.
   reception: { label: "Reception", minWidth: 3.5, minHeight: 4.0, typicalWidth: 4.5, typicalHeight: 5.5, zone: "category_b", passable: false, tier: "public" },
-  hallway: { label: "Hallway", minWidth: 1.2, minHeight: 2.0, typicalWidth: 1.2, typicalHeight: 3.0, zone: "category_b", passable: true, tier: "semi-public" },
+  hallway: { label: "Hallway", minWidth: 1.2, minHeight: 2.0, typicalWidth: 1.2, typicalHeight: 3.0, zone: "category_b", passable: true, tier: "semi-public", circulation: true },
   living_room: { label: "Living Room", minWidth: 3.5, minHeight: 4.0, typicalWidth: 4.5, typicalHeight: 5.5, zone: "category_b", passable: true, tier: "private" },
   dining_room: { label: "Dining Room", minWidth: 3.0, minHeight: 3.3, typicalWidth: 3.6, typicalHeight: 4.2, zone: "category_b", passable: true, tier: "semi-public" },
   kitchen: { label: "Kitchen", minWidth: 2.7, minHeight: 3.0, typicalWidth: 3.6, typicalHeight: 4.2, zone: "category_b", passable: false, tier: "private" },
@@ -95,10 +104,10 @@ export const ROOM_TYPES: Record<string, RoomTypeInfo> = {
   garage_double: { label: "Double Garage", minWidth: 5.5, minHeight: 6.0, typicalWidth: 6.0, typicalHeight: 6.5, zone: "category_c", passable: false },
   closet: { label: "Closet", minWidth: 0.9, minHeight: 0.6, typicalWidth: 1.5, typicalHeight: 0.6, zone: "category_a", passable: false, tier: "private", auxiliary: true },
   storage: { label: "Storage", minWidth: 1.5, minHeight: 1.5, typicalWidth: 2.0, typicalHeight: 2.0, zone: "category_c", passable: false },
-  mudroom: { label: "Mudroom", minWidth: 1.5, minHeight: 1.8, typicalWidth: 1.8, typicalHeight: 2.1, zone: "category_c", passable: true, tier: "semi-public" },
+  mudroom: { label: "Mudroom", minWidth: 1.5, minHeight: 1.8, typicalWidth: 1.8, typicalHeight: 2.1, zone: "category_c", passable: true, tier: "semi-public", circulation: true },
   // A straight flight with a landing, sized in plan. Height is the run
   // direction; a 3.0 m storey needs roughly this much.
-  stair: { label: "Stair", minWidth: 1.0, minHeight: 2.4, typicalWidth: 1.2, typicalHeight: 3.0, zone: "category_b", passable: true, tier: "semi-public" },
+  stair: { label: "Stair", minWidth: 1.0, minHeight: 2.4, typicalWidth: 1.2, typicalHeight: 3.0, zone: "category_b", passable: true, tier: "semi-public", circulation: true },
   // Staff quarters: Service by zone (colour), Private by tier -- the
   // staff member who lives here belongs there and no one else does, same
   // as any other bedroom, even though it's not part of the family's own
@@ -112,6 +121,14 @@ export const ROOM_TYPES: Record<string, RoomTypeInfo> = {
   prayer_room: { label: "Prayer Room", minWidth: 2.0, minHeight: 2.5, typicalWidth: 2.5, typicalHeight: 3.0, zone: "category_a", passable: false, tier: "private" },
   other: { label: "Room", minWidth: 2.0, minHeight: 2.0, typicalWidth: 3.0, typicalHeight: 3.0, zone: "category_b", passable: false },
 };
+
+/** "G" for the ground floor, else the storey number -- the one place
+ * this label is decided, so the schedule's own Floor column and any
+ * message naming a storey (StatusBar's privacy findings) read the same
+ * way. */
+export function floorLabel(i: number): string {
+  return i === 0 ? "G" : String(i);
+}
 
 export const ZONE_LABELS: Record<CategoryKey, string> = {
   category_a: "Private",
@@ -138,6 +155,10 @@ export function tierOf(roomType: string): PrivacyTier | undefined {
 
 export function auxiliaryOf(roomType: string): boolean {
   return !!roomTypeInfo(roomType).auxiliary;
+}
+
+export function circulationOf(roomType: string): boolean {
+  return !!roomTypeInfo(roomType).circulation;
 }
 
 /** Service-category, for `reachabilityProblems`'s own purpose: whether a

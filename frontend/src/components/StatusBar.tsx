@@ -16,27 +16,28 @@ import { displayShapes } from "../geometry/carve";
 import { actorRoute, buildCirculationGraph, sharedSegments, type ReachabilityProblem } from "../geometry/circulation";
 import { outsidePlot } from "../geometry/plot";
 import { polyArea } from "../geometry/poly";
-import { collectFindings, TIER_ORDER, type AdjacencyStatus, type TierViolation } from "../geometry/relationships";
+import { collectFindings, TIER_ORDER, type AdjacencyStatus, type StairConnectionProblem, type TierViolation } from "../geometry/relationships";
 import { liveBoxes } from "../geometry/snap";
-import { auxiliaryOf, isServiceOf, passableOf, roomTypeInfo, tierOf } from "../rooms";
+import { auxiliaryOf, circulationOf, floorLabel, isServiceOf, passableOf, roomTypeInfo, tierOf } from "../rooms";
 import type { Box } from "../geometry/types";
 import { IconFootprints, IconTick, IconWarn } from "./icons";
 import { useStore } from "../state/store";
 
-/** One plain sentence per finding, naming the actual rooms and the
- * actual consequence -- never "tier," "gradient" or "category," so
- * nobody needs to know this tool's own vocabulary to understand what's
- * wrong. Lives here, in the component, the same way `Actors.tsx` keeps
- * `ROLE_LABEL`/`OUT_OF_BOUNDS_LABEL` next to where they're shown rather
- * than in `geometry/`, which hands back structured data and stops there
- * on purpose. */
+/** One plain sentence per finding, naming the actual rooms, the storey
+ * and the actual consequence -- never "tier," "gradient" or "category,"
+ * so nobody needs to know this tool's own vocabulary to understand
+ * what's wrong, and never just "Kitchen and Dining Room" with no floor
+ * to go find them on. Lives here, in the component, the same way
+ * `Actors.tsx` keeps `ROLE_LABEL`/`OUT_OF_BOUNDS_LABEL` next to where
+ * they're shown rather than in `geometry/`, which hands back structured
+ * data and stops there on purpose. */
 function tierSentences(violations: TierViolation[], boxesById: Map<string, Box>): string[] {
   return violations.flatMap((v) => {
     const a = boxesById.get(v.roomAId);
     const b = boxesById.get(v.roomBId);
     if (!a || !b) return [];
     const [outer, inner] = TIER_ORDER[v.tierA] < TIER_ORDER[v.tierB] ? [a, b] : [b, a];
-    return [`${outer.name} opens straight into ${inner.name}`];
+    return [`Floor ${floorLabel(v.level)}: ${outer.name} opens straight into ${inner.name}`];
   });
 }
 
@@ -45,8 +46,18 @@ function reachabilitySentences(problems: ReachabilityProblem[], boxesById: Map<s
     const room = boxesById.get(p.roomId);
     if (!room) return [];
     const via = p.viaIds.map((id) => boxesById.get(id)?.name).filter((n): n is string => !!n);
-    if (via.length) return [`The only way to ${room.name} is through ${via.join(" or ")}`];
-    return [`Nothing connects to ${room.name} yet`];
+    const floor = `Floor ${floorLabel(p.level)}`;
+    if (via.length) return [`${floor}: The only way to ${room.name} is through ${via.join(" or ")}`];
+    return [`${floor}: Nothing connects to ${room.name} yet`];
+  });
+}
+
+function stairConnectionSentences(problems: StairConnectionProblem[], boxesById: Map<string, Box>): string[] {
+  return problems.flatMap((s) => {
+    const stair = boxesById.get(s.stairId);
+    const other = boxesById.get(s.otherRoomId);
+    if (!stair || !other) return [];
+    return [`Floor ${floorLabel(s.level)}: ${stair.name} opens straight into ${other.name} instead of a hallway or other circulation space`];
   });
 }
 
@@ -62,12 +73,13 @@ function adjacencyProblemSentences(rows: AdjacencyStatus[]): string[] {
     .map((r) => {
       const a = roomTypeInfo(r.a).label;
       const b = roomTypeInfo(r.b).label;
-      if (r.relation === "undesired") return `${a} and ${b} share a wall -- that's usually kept separate`;
+      const floor = `Floor ${floorLabel(r.level)}`;
+      if (r.relation === "undesired") return `${floor}: ${a} and ${b} share a wall -- that's usually kept separate`;
       // Two different reasons a required pair can fail, worth telling
       // apart: a wall with no door in it reads very differently from two
       // rooms that were never placed near each other at all.
-      if (r.touching) return `${a} and ${b} share a wall, but there's no door between them`;
-      return `${a} and ${b} aren't near each other at all, though they need to be`;
+      if (r.touching) return `${floor}: ${a} and ${b} share a wall, but there's no door between them`;
+      return `${floor}: ${a} and ${b} aren't near each other at all, though they need to be`;
     });
 }
 
@@ -77,7 +89,7 @@ function adjacencyRecommendationSentences(rows: AdjacencyStatus[]): string[] {
     .map((r) => {
       const a = roomTypeInfo(r.a).label;
       const b = roomTypeInfo(r.b).label;
-      return `${a} and ${b} are a long way apart -- usually easier when they're close`;
+      return `Floor ${floorLabel(r.level)}: ${a} and ${b} are a long way apart -- usually easier when they're close`;
     });
 }
 
@@ -117,15 +129,17 @@ export function StatusBar() {
   // Every storey at once, the same reasoning as `strays` above: a privacy
   // problem two floors up is exactly the kind of thing a person would not
   // otherwise notice. Split into hard problems (a real requirement unmet
-  // or conflict present -- tier skips and reachability problems are
-  // always this severity) and soft recommendations (a `desired` miss),
-  // so the two never read as equally urgent.
+  // or conflict present -- tier skips, reachability problems and a
+  // stair opening onto the wrong room are always this severity) and soft
+  // recommendations (a `desired` miss), so the two never read as equally
+  // urgent.
   const { privacyProblems, privacyRecommendations } = useMemo(() => {
     const boxesById = new Map(boxes.map((b) => [b.id, b]));
-    const findings = collectFindings(boxes, storeys, arrows, autoCarve, passableOf, tierOf, auxiliaryOf, isServiceOf);
+    const findings = collectFindings(boxes, storeys, arrows, autoCarve, passableOf, tierOf, auxiliaryOf, isServiceOf, circulationOf);
     const problems = [
       ...tierSentences(findings.tier, boxesById),
       ...reachabilitySentences(findings.reachability, boxesById),
+      ...stairConnectionSentences(findings.stairConnection, boxesById),
       ...adjacencyProblemSentences(findings.adjacency),
     ];
     return { privacyProblems: problems, privacyRecommendations: adjacencyRecommendationSentences(findings.adjacency) };

@@ -8,12 +8,12 @@ import { footprintRings } from "./footprint";
 import { clampDrawnRect, clampGroup, isOutsidePlot, limitGrowth, limitPointGrowth, settleInPlot, shiftInside } from "./plot";
 import { anchorPoint, polyArea, polyOfBox, rectPolyOf, resizedFromAnchor } from "./poly";
 import { boxesTrulyIntersect, centerOf, obbOf, obbsSeparated, rectOf } from "./rect";
-import { checkAdjacency, collectFindings, tierViolations } from "./relationships";
+import { checkAdjacency, collectFindings, stairConnectionProblems, tierViolations } from "./relationships";
 import { isOpenToBelow, liveBoxes, nearestNeighborPoint, snapToGrid, snapToNearbyNeighbors, wallSnapAdjust } from "./snap";
 import { touchDelta, touchSelected, polyGap } from "./touch";
 import type { Arrow, Box, Plot, Point, Poly } from "./types";
 import { SAMPLE_STOREYS, sampleArrows, sampleBoxes } from "../sample";
-import { auxiliaryOf, isServiceOf, passableOf, tierOf, zoneOf } from "../rooms";
+import { auxiliaryOf, circulationOf, isServiceOf, passableOf, tierOf, zoneOf } from "../rooms";
 
 function box(partial: Partial<Box> & { id: string; left: number; top: number; width: number; height: number }): Box {
   return {
@@ -1229,7 +1229,7 @@ describe("reachabilityProblems: every room reached from some exterior door, with
     const problems = reachabilityProblems([entry, garage, bed], 1, arrows, false, passableOf, auxiliaryOf, isServiceOf);
     // The garage itself is reached (entry can walk into it); only the
     // bedroom beyond it, which nothing else reaches, is a problem.
-    expect(problems).toEqual([{ roomId: "bed", kind: "through_room", viaIds: ["garage"] }]);
+    expect(problems).toEqual([{ roomId: "bed", kind: "through_room", viaIds: ["garage"], level: 0 }]);
   });
 
   it("reports a room with no doored connection to anything as unreachable, not through_room", () => {
@@ -1237,7 +1237,7 @@ describe("reachabilityProblems: every room reached from some exterior door, with
     const isolated = box({ id: "isolated", left: 20, top: 20, width: 4, height: 4, roomType: "bedroom" });
     const arrows: Arrow[] = [{ id: "ext", level: 0, hostId: "entry", kind: "exterior-main", side: 3, t: 0.5, dir: 1 }];
     const problems = reachabilityProblems([entry, isolated], 1, arrows, false, passableOf, auxiliaryOf, isServiceOf);
-    expect(problems).toEqual([{ roomId: "isolated", kind: "unreachable", viaIds: [] }]);
+    expect(problems).toEqual([{ roomId: "isolated", kind: "unreachable", viaIds: [], level: 0 }]);
   });
 
   it("treats a diwaniya's own street door as a second, independent root -- not only the main entry", () => {
@@ -1287,7 +1287,7 @@ describe("reachabilityProblems: every room reached from some exterior door, with
       { id: "d2", level: 0, hostId: "garage", kind: "interior", side: 1, t: 0.5, dir: 1 },
     ];
     const problems = reachabilityProblems([entry, garage, bath], 1, arrows, false, passableOf, auxiliaryOf, isServiceOf);
-    expect(problems).toEqual([{ roomId: "bath", kind: "through_room", viaIds: ["garage"] }]);
+    expect(problems).toEqual([{ roomId: "bath", kind: "through_room", viaIds: ["garage"], level: 0 }]);
   });
 });
 
@@ -1487,13 +1487,38 @@ describe("collectFindings: the one call that ties all three checks together", ()
     const bed = box({ id: "bed", left: 4, top: 0, width: 4, height: 4, roomType: "bedroom" });
     const ext: Arrow = { id: "ext", level: 0, hostId: "entry", kind: "exterior-main", side: 3, t: 0.5, dir: 1 };
     const door: Arrow = { id: "d", level: 0, hostId: "entry", kind: "interior", side: 1, t: 0.5, dir: 1 };
-    const findings = collectFindings([entry, bed], 1, [ext, door], false, passableOf, tierOf, auxiliaryOf, isServiceOf);
+    const findings = collectFindings([entry, bed], 1, [ext, door], false, passableOf, tierOf, auxiliaryOf, isServiceOf, circulationOf);
     // Same door, evaluated three different ways: it does connect the
     // household to the entry (no reachability problem), it is not a
     // room-type pair the adjacency table has an opinion on, and it does
-    // skip a privacy tier.
+    // skip a privacy tier. No stair involved at all, so nothing there either.
     expect(findings.reachability).toEqual([]);
     expect(findings.adjacency).toEqual([]);
     expect(findings.tier).toHaveLength(1);
+    expect(findings.stairConnection).toEqual([]);
+  });
+});
+
+describe("stairConnectionProblems: a stair should open onto circulation, not a specific room", () => {
+  it("reports nothing when a stair opens onto a hallway", () => {
+    const stair = box({ id: "stair", left: 0, top: 0, width: 4, height: 4, roomType: "stair" });
+    const hall = box({ id: "hall", left: 4, top: 0, width: 3, height: 4, roomType: "hallway" });
+    const door: Arrow = { id: "d", level: 0, hostId: "stair", kind: "interior", side: 1, t: 0.5, dir: 1 };
+    expect(stairConnectionProblems([stair, hall], 1, [door], false, circulationOf)).toEqual([]);
+  });
+
+  it("reports nothing when a stair opens onto the entry, or onto another stair", () => {
+    const stair = box({ id: "stair", left: 0, top: 0, width: 4, height: 4, roomType: "stair" });
+    const entry = box({ id: "entry", left: 4, top: 0, width: 3, height: 4, roomType: "entry" });
+    const door: Arrow = { id: "d", level: 0, hostId: "stair", kind: "interior", side: 1, t: 0.5, dir: 1 };
+    expect(stairConnectionProblems([stair, entry], 1, [door], false, circulationOf)).toEqual([]);
+  });
+
+  it("flags a stair that opens straight into a bedroom", () => {
+    const stair = box({ id: "stair", left: 0, top: 0, width: 4, height: 4, roomType: "stair" });
+    const bed = box({ id: "bed", left: 4, top: 0, width: 4, height: 4, roomType: "bedroom" });
+    const door: Arrow = { id: "d", level: 0, hostId: "stair", kind: "interior", side: 1, t: 0.5, dir: 1 };
+    const problems = stairConnectionProblems([stair, bed], 1, [door], false, circulationOf);
+    expect(problems).toEqual([{ stairId: "stair", otherRoomId: "bed", otherRoomType: "bedroom", level: 0 }]);
   });
 });

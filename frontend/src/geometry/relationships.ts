@@ -1,9 +1,10 @@
 /**
- * Two checks over the same idea -- a room-type adjacency table, sourced
- * where it could be (see each row's comment) and marked provisional where
- * it could not, per Task 2 -- but kept as two independent functions, not
- * merged, because they answer different questions and neither implies
- * the other:
+ * Three checks, kept as three independent functions rather than merged
+ * into one, because they answer three different questions and none of
+ * them implies the others -- `checkAdjacency` (a room-type adjacency
+ * table, sourced where it could be, see each row's comment, and marked
+ * provisional where it could not, per Task 2), `tierViolations`, and
+ * `stairConnectionProblems`:
  *
  * `checkAdjacency` asks whether the *right* rooms ended up near each
  * other -- and the three relations mean three different things by
@@ -49,15 +50,23 @@
  * zones can share a wall with no door at all, which is `circulation.ts`'s
  * question, not this one.
  *
- * `collectFindings`, at the bottom, ties this file's two checks and
- * `circulation.ts`'s third (`reachabilityProblems`) into the one call a
- * consumer needs -- but it hands back raw, structured results only
- * (room ids, tiers, relation kinds), no wording and no UI. Turning that
- * into something a person reads (icons, plain-language sentences, a
- * panel) is deliberately a separate step: this file's job stops at
- * making the findings computable, not at deciding how they look.
+ * `stairConnectionProblems` asks a narrower question the gradient check
+ * cannot: not "does this door skip a tier" (Stair-Bedroom is adjacent
+ * tiers, which is normally fine -- that's what a Hallway-Bedroom door
+ * is) but "did a stair's door land on another circulation space at all."
+ * A stair serves every room on the floors it reaches, not just one; a
+ * stair opening straight into a specific bedroom or kitchen makes that
+ * room an involuntary through-route for everyone using the stairs.
  *
- * Both checks are read-only diagnostics. Neither ever moves, resizes or
+ * `collectFindings`, at the bottom, ties this file's checks and
+ * `circulation.ts`'s `reachabilityProblems` into the one call a consumer
+ * needs -- but it hands back raw, structured results only (room ids,
+ * tiers, relation kinds), no wording and no UI. Turning that into
+ * something a person reads (icons, plain-language sentences, a panel) is
+ * deliberately a separate step: this file's job stops at making the
+ * findings computable, not at deciding how they look.
+ *
+ * All of these are read-only diagnostics. None of them ever moves, resizes or
  * auto-connects anything -- same "flag, never force" rule as the rest of
  * this tool.
  */
@@ -150,7 +159,21 @@ export interface AdjacencyStatus extends RelationRow {
    * each other." A consumer building a message can use this to say
    * which one actually happened. */
   touching: boolean;
+  /** A representative storey to point someone at -- the lowest floor
+   * both types share, or (for a `desired` pair with no shared floor at
+   * all, reached only across a stair) the lower of the two types' own
+   * lowest floors. Not a claim that the *problem* lives on this exact
+   * floor when a type has several instances spread across the house,
+   * only a reasonable "start looking here." */
+  level: number;
 }
+
+/** At most this many doors between them still counts as easy access for
+ * a `desired` row -- a direct door (1) or one connecting room, a hallway
+ * say (2). Sourced from the same adjacency-matrix literature `required`
+ * and `undesired` draw on: "near but not touching... a corridor between
+ * them is fine" is a hop count of 2, not a distance in meters. */
+const EASY_ACCESS_HOPS = 2;
 
 /** Every relationship-table row whose two room types both appear
  * somewhere in the plan. `undesired` is checked against
@@ -179,13 +202,6 @@ export interface AdjacencyStatus extends RelationRow {
  * declares an owner is judged exactly as it always was -- this narrows
  * one real gap, it does not force every ensuite in the tool to be tagged
  * to get a correct answer. */
-/** At most this many doors between them still counts as easy access for
- * a `desired` row -- a direct door (1) or one connecting room, a hallway
- * say (2). Sourced from the same adjacency-matrix literature `required`
- * and `undesired` draw on: "near but not touching... a corridor between
- * them is fine" is a hop count of 2, not a distance in meters. */
-const EASY_ACCESS_HOPS = 2;
-
 export function checkAdjacency(boxes: Box[], storeys: number, arrows: Arrow[], autoCarve: boolean): AdjacencyStatus[] {
   const doorGraph = buildCirculationGraph(boxes, storeys, arrows, autoCarve);
   const out: AdjacencyStatus[] = [];
@@ -202,12 +218,14 @@ export function checkAdjacency(boxes: Box[], storeys: number, arrows: Arrow[], a
 
     let doorConnected = false;
     let touchingAtAll = false;
+    let sharedLevel: number | null = null;
     const failedInstanceIds: string[] = [];
     for (let level = 0; level < storeys; level++) {
       const live = liveBoxes(boxes, level);
       const as_ = live.filter((b) => b.roomType === row.a);
       const bs_ = live.filter((b) => b.roomType === row.b);
       if (!as_.length || !bs_.length) continue;
+      if (sharedLevel === null) sharedLevel = level;
       const { touchGraph } = levelTouchData(boxes, level, autoCarve);
       for (const a of as_) {
         if ((touchGraph.get(a.id) ?? []).some((e) => bs_.some((b) => b.id === e.to))) touchingAtAll = true;
@@ -224,6 +242,10 @@ export function checkAdjacency(boxes: Box[], storeys: number, arrows: Arrow[], a
         if (b.attachedTo && !edges.some((e) => e.to === b.attachedTo)) failedInstanceIds.push(b.id);
       }
     }
+    // No storey shared at all -- only possible for `desired`, reached
+    // only across a stair -- so fall back to the lower of the two
+    // types' own lowest floors as the best available "start here."
+    const level = sharedLevel ?? Math.min(...anywhereA.map((a) => a.level), ...anywhereB.map((b) => b.level));
 
     let satisfied: boolean;
     if (row.relation === "undesired") satisfied = touchingAtAll;
@@ -237,7 +259,7 @@ export function checkAdjacency(boxes: Box[], storeys: number, arrows: Arrow[], a
       satisfied = hops !== null && hops <= EASY_ACCESS_HOPS;
     }
     const ok = (row.relation === "undesired" ? !satisfied : satisfied) && failedInstanceIds.length === 0;
-    out.push({ ...row, ok, failedInstanceIds, touching: touchingAtAll });
+    out.push({ ...row, ok, failedInstanceIds, touching: touchingAtAll, level });
   }
   return out;
 }
@@ -252,6 +274,8 @@ export interface TierViolation {
   roomBId: string;
   tierA: PrivacyTier;
   tierB: PrivacyTier;
+  /** The storey the door itself is on. */
+  level: number;
 }
 
 function resolveTier(b: Box, tierOf: (roomType: string) => PrivacyTier | undefined): PrivacyTier | undefined {
@@ -289,8 +313,51 @@ export function tierViolations(
       const tierB = resolveTier(b, tierOf);
       if (tierA === undefined || tierB === undefined) continue;
       if (Math.abs(TIER_ORDER[tierA] - TIER_ORDER[tierB]) > 1) {
-        out.push({ roomAId: a.id, roomBId: b.id, tierA, tierB });
+        out.push({ roomAId: a.id, roomBId: b.id, tierA, tierB, level: edge.level });
       }
+    }
+  }
+  return out;
+}
+
+export interface StairConnectionProblem {
+  stairId: string;
+  otherRoomId: string;
+  otherRoomType: string;
+  level: number;
+}
+
+/** Every door that connects a stair straight to something that isn't
+ * itself a circulation space (rooms.ts's `circulation` -- Entry, Hallway,
+ * Mudroom, another Stair). A stair has to serve every room on the floors
+ * it reaches, not just one; landing inside a specific bedroom or kitchen
+ * makes that room an involuntary through-route for everyone using the
+ * stairs, and the tier check alone won't catch it -- Stair and Bedroom
+ * are adjacent tiers (Semi-public, Private), which is normally exactly
+ * fine (that's what a Hallway-Bedroom door is). This is a narrower,
+ * dedicated rule about what a stair specifically may open onto, not a
+ * gradient question. */
+export function stairConnectionProblems(
+  boxes: Box[],
+  storeys: number,
+  arrows: Arrow[],
+  autoCarve: boolean,
+  circulationOf: (roomType: string) => boolean,
+): StairConnectionProblem[] {
+  const graph = buildCirculationGraph(boxes, storeys, arrows, autoCarve);
+  const byId = new Map(boxes.map((b) => [b.id, b]));
+  const seen = new Set<string>();
+  const out: StairConnectionProblem[] = [];
+  for (const [fromId, edges] of graph) {
+    const from = byId.get(fromId);
+    if (!from || from.roomType !== "stair") continue;
+    for (const edge of edges) {
+      const to = byId.get(edge.to);
+      if (!to || circulationOf(to.roomType)) continue;
+      const key = `${fromId}|${edge.to}|${edge.level}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ stairId: from.id, otherRoomId: to.id, otherRoomType: to.roomType, level: edge.level });
     }
   }
   return out;
@@ -300,6 +367,7 @@ export interface Findings {
   reachability: ReachabilityProblem[];
   adjacency: AdjacencyStatus[];
   tier: TierViolation[];
+  stairConnection: StairConnectionProblem[];
 }
 
 /**
@@ -323,10 +391,12 @@ export function collectFindings(
   tierOf: (roomType: string) => PrivacyTier | undefined,
   auxiliaryOf: (roomType: string) => boolean,
   isServiceOf: (roomType: string) => boolean,
+  circulationOf: (roomType: string) => boolean,
 ): Findings {
   return {
     reachability: reachabilityProblems(boxes, storeys, arrows, autoCarve, passableOf, auxiliaryOf, isServiceOf),
     adjacency: checkAdjacency(boxes, storeys, arrows, autoCarve),
     tier: tierViolations(boxes, storeys, arrows, autoCarve, tierOf),
+    stairConnection: stairConnectionProblems(boxes, storeys, arrows, autoCarve, circulationOf),
   };
 }
