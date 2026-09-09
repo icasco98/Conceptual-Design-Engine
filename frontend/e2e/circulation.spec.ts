@@ -15,7 +15,7 @@ test.describe("circulation: recording a route end to end", () => {
     const row = page.locator(".actor-row").first();
     await row.getByText("Record route").click();
 
-    for (const name of ["Front Entry", "Living Room", "Dining Room"]) {
+    for (const name of ["Entry", "Living Room", "Dining Room"]) {
       await page.locator(`.room-label:text-is("${name}")`).first().click({ force: true });
     }
     await row.getByText("Done recording").click();
@@ -31,9 +31,9 @@ test.describe("circulation: recording a route end to end", () => {
     await page.click(".actors-pane >> text=+ Add actor");
     const row = page.locator(".actor-row").first();
     await row.getByText("Record route").click();
-    // Pantry is roomType "closet" -> category_a (private): a caterer has
+    // Closet is roomType "closet" -> category_a (private): a caterer has
     // no business there.
-    for (const name of ["Garage", "Pantry"]) {
+    for (const name of ["Garage", "Closet"]) {
       await page.locator(`.room-label:text-is("${name}")`).first().click({ force: true });
     }
     await row.getByText("Done recording").click();

@@ -275,29 +275,40 @@ them changed, so anything reading `.schedule`, `.actors-pane`,
 `.plot-panel` or `.sidebar` in a test now needs to click that tab
 (`page.getByRole("tab", { name: ... })`) before it is on screen.
 
-**The sample house's original 11 x 9.5 m block (Garage through
-Walk-in Closet) is untouched -- past x = 11 is a second wing added
-alongside it, not a replacement.** A diwaniya downstairs (a hand-drawn
-polygon, not a rectangle -- a chamfered street-facing corner is its own
-door, `sampleArrows`'s third exterior arrow) and a bay-windowed bedroom
-above it, plus two more exterior doors of their own for the garage and
-the utility room. This was deliberate: every existing test that names
-an original room (`byName("Kitchen")`, `.arrow.interior` counts, the
-"Garage routes via Living Room, not Kitchen" tests) still holds,
-because none of those rooms' own geometry moved -- only new rooms were
-added around them. Extend this house the same way: attach a new wing to
-one of the block's outer walls (left, top, right, or the partial
-stretches of the bottom not already shared with Utility/Kitchen), never
-by moving or resizing an existing room.
+**The sample house was rebuilt from scratch (September 2026) to actually
+exercise rotation- and carve-aware circulation, not just avoid breaking
+it.** It is a from-the-ground-up two-storey design, not the old 11 x
+9.5 m block with a wing bolted on: a non-convex L-shaped Living Room, a
+chamfered hexagonal Diwaniya, and a genuinely rotated bay (Study
+downstairs, Bedroom 3 above it, both at 15°) that shares a real wall
+with Dining Room / Bedroom 2, not just a bounding box. Five exterior
+doors -- the front door plus the garage's, the utility room's, the
+diwaniya's and the study's own.
 
-Playwright specs that pick "the first interior arrow" learned this the
-hard way: the original block's own doors cluster tightly around the
-entry, and a carve-rectangle sized in absolute screen pixels can reach
-more than one of them once the view is zoomed out to fit the larger
-house. `e2e/arrows.spec.ts` sizes its carve from the target arrow's own
-current pixel size (so it scales with zoom) and targets the diwaniya's
-own side door specifically -- alone on its own wall, away from both the
-entry cluster and the tool rail at the plan's left edge.
+**The rotated-bay technique, if this house is extended with another
+one:** a room's `left/top/width/height` and `points` describe its
+*unrotated* local shape; `rotation` then turns it in place around its
+own centre, exactly as `frameOf` reads it for rendering and for the
+touch graph. A straight wall shared between a rotated room and an
+axis-aligned neighbour only lines up if the rotated room's own local
+edge is pre-tilted by `-rotation` before the rotation is applied --
+so that turning it by `+rotation` brings that one edge back to
+horizontal (or vertical), landing exactly on the straight wall it
+needs to touch, while every other edge of the room stays visibly
+rotated. `sample.ts`'s own doc comment spells out the math; verify any
+new rotated room numerically (a throwaway `_scratch.test.ts`, deleted
+before committing) before trusting it -- a wall that's off by more than
+`TOUCH_TOL_M` (4 cm) reads as "no door" even though it looks connected
+on screen.
+
+Playwright specs that pick "the last exterior-side arrow" learned to do
+that the hard way: doors placed near the entry cluster tightly, and a
+carve-rectangle sized in absolute screen pixels can reach more than one
+of them once the view is zoomed out to fit the whole house.
+`e2e/arrows.spec.ts` sizes its carve from the target arrow's own
+current pixel size (so it scales with zoom) and targets the rotated
+Study's own side door specifically -- alone on its own wall, away from
+both the entry cluster and the tool rail at the plan's left edge.
 
 ## Open question for the owner
 

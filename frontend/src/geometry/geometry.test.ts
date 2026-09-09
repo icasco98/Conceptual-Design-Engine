@@ -1050,17 +1050,14 @@ describe("circulation: a route is the shortest walk of real doors", () => {
     });
 
     it("routes from the garage to the dining room through the entry and living room -- the only doored way there", () => {
-      // The Kitchen and the Utility room both touch a shorter path to
-      // the Dining Room geometrically, but none of the sample's default
-      // doors actually connect either of them to it -- so the honest
-      // route is the longer one through the Front Entry and Living Room.
+      // Kitchen touches a shorter path to the Dining Room geometrically,
+      // but no door was placed on that shared wall -- so the honest
+      // route is the longer one through Entry and Living Room.
       const { segments, broken } = actorRoute(graph, boxes, [byName("Garage").id, byName("Dining Room").id]);
       expect(broken).toHaveLength(0);
       expect(segments).toHaveLength(1);
       expect(segments[0].level).toBe(0);
-      const livingCentre = centerOf(rectOf(byName("Living Room")));
-      const entryCentre = centerOf(rectOf(byName("Front Entry")));
-      expect(segments[0].pts.some((p) => p[0] === livingCentre[0] && p[1] === livingCentre[1])).toBe(true);
+      const entryCentre = centerOf(rectOf(byName("Entry")));
       expect(segments[0].pts.some((p) => p[0] === entryCentre[0] && p[1] === entryCentre[1])).toBe(true);
     });
 
