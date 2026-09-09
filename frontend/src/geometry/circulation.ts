@@ -34,18 +34,32 @@
  * A zone spanning several storeys (a stair) is the same node on each of
  * them, so it is what lets a route cross from one storey's graph to the
  * next -- there is no separate stair machinery here either.
+ *
+ * An arrow's own position (arrows.ts) is stored relative to its host's
+ * declared shape, not the plan's current drawing, so it can outlive the
+ * wall it was placed on: a later carve can shorten or delete that
+ * stretch, or simply carve away the neighbour that used to be on its
+ * other side, without the arrow itself moving at all. `arrowIsLive`
+ * (and `liveArrowIds`, every level at once) is the read-time check for
+ * this -- an arrow that fails it is not deleted or moved, only flagged,
+ * the same "say so, do not guess" treatment a broken route leg gets.
  */
 import { arrowSegment } from "./arrows";
 import { displayShapes } from "./carve";
 import { buildTouchGraph, type Touch } from "./doors";
+import { pointOnPolyBoundary } from "./poly";
 import { centerOf, rectOf } from "./rect";
 import { liveBoxes } from "./snap";
-import type { ActorRole, Arrow, Box, Point } from "./types";
+import type { ActorRole, Arrow, Box, Point, Poly } from "./types";
 
 const TOUCH_TOL_M = 0.04;
 /** How close a placed door must sit to a wall's own run to count as
  * being on it -- generous enough for a door dragged anywhere along a
- * real wall, tight enough not to pick up a door on a different one. */
+ * real wall, tight enough not to pick up a door on a different one. The
+ * same tolerance decides whether an arrow is still live at all: a door
+ * that no longer reads as "on" its wall by this measure is not on it,
+ * whether the question is "is there a door here" or "is this door
+ * still real." */
 const DOOR_ON_WALL_TOL_M = 0.15;
 
 interface CircEdge {
@@ -57,37 +71,50 @@ interface CircEdge {
 
 export type CirculationGraph = Map<string, CircEdge[]>;
 
-/** Where a placed interior door between `a` and `b` actually sits on
- * this particular wall run, checked against the run's own two endpoints
- * rather than just its midpoint -- a door near one end of a long wall
- * still counts, whatever angle the wall itself runs at. A door on any
- * other wall of either host (an exterior door, or one of the host's
- * other walls) is not this wall's door, and is skipped. */
-function doorOnWall(arrows: Arrow[], a: Box, b: Box, touch: Touch): Point | null {
+/** Whether a point sits on a wall run, within tolerance -- perpendicular
+ * distance from the line, and distance along it from either endpoint,
+ * both inside `tol`. General on purpose: a touch is a page-frame
+ * segment at whatever angle the two zones actually meet at, not
+ * necessarily one of the plan's own x/y axes. */
+function pointOnTouch(p: Point, touch: Touch, tol: number): boolean {
   const dx = touch.p2[0] - touch.p1[0];
   const dy = touch.p2[1] - touch.p1[1];
   const len = Math.hypot(dx, dy) || 1;
   const ux = dx / len;
   const uy = dy / len;
+  const vx = p[0] - touch.p1[0];
+  const vy = p[1] - touch.p1[1];
+  const along = vx * ux + vy * uy;
+  const across = vx * uy - vy * ux;
+  return Math.abs(across) <= tol && along >= -tol && along <= len + tol;
+}
+
+/** Where a placed interior door between `a` and `b` actually sits on
+ * this particular wall run. A door on any other wall of either host (an
+ * exterior door, or one of the host's other walls) is not this wall's
+ * door, and is skipped. */
+function doorOnWall(arrows: Arrow[], a: Box, b: Box, touch: Touch): Point | null {
   for (const arrow of arrows) {
     if (arrow.kind && arrow.kind !== "interior") continue;
     const host = arrow.hostId === a.id ? a : arrow.hostId === b.id ? b : null;
     if (!host) continue;
     const [p1, p2] = arrowSegment(host, arrow);
-    const mx = (p1[0] + p2[0]) / 2;
-    const my = (p1[1] + p2[1]) / 2;
-    // Distance along the wall run from its first endpoint, and
-    // perpendicular to it -- the general form of the old x/y split,
-    // which only worked because a plain wall always ran along one axis.
-    const vx = mx - touch.p1[0];
-    const vy = my - touch.p1[1];
-    const along = vx * ux + vy * uy;
-    const across = vx * uy - vy * ux;
-    if (Math.abs(across) > DOOR_ON_WALL_TOL_M) continue;
-    if (along < -DOOR_ON_WALL_TOL_M || along > len + DOOR_ON_WALL_TOL_M) continue;
-    return [mx, my];
+    const mid: Point = [(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2];
+    if (pointOnTouch(mid, touch, DOOR_ON_WALL_TOL_M)) return mid;
   }
   return null;
+}
+
+/** A storey's zones, their current post-carve outlines, and which of
+ * them touch -- the one computation `buildCirculationGraph` and
+ * `liveArrowIds` both need, so they read the same geometry rather than
+ * two slightly different copies of it. */
+function levelTouchData(boxes: Box[], level: number, autoCarve: boolean) {
+  const live = liveBoxes(boxes, level);
+  const shapes = displayShapes(live, autoCarve);
+  const polyById = new Map(shapes.map((s) => [s.id, s.page]));
+  const touchGraph = buildTouchGraph(polyById, TOUCH_TOL_M);
+  return { polyById, touchGraph };
 }
 
 /** Every pair of zones with a real door between them, on any storey,
@@ -113,11 +140,8 @@ export function buildCirculationGraph(boxes: Box[], storeys: number, arrows: Arr
     graph.set(from.id, list);
   };
   for (let level = 0; level < storeys; level++) {
-    const live = liveBoxes(boxes, level);
     const levelArrows = arrows.filter((a) => a.level === level);
-    const shapes = displayShapes(live, autoCarve);
-    const polyById = new Map(shapes.map((s) => [s.id, s.page]));
-    const touchGraph = buildTouchGraph(polyById, TOUCH_TOL_M);
+    const { touchGraph } = levelTouchData(boxes, level, autoCarve);
     const byPair = new Map<string, { from: Box; to: Box; touches: Touch[] }>();
     for (const [fromId, edges] of touchGraph) {
       const from = byId.get(fromId);
@@ -146,6 +170,49 @@ export function buildCirculationGraph(boxes: Box[], storeys: number, arrows: Arr
     }
   }
   return graph;
+}
+
+/** Whether one placed arrow is still, right now, a real door: an
+ * interior one needs a real touch -- some neighbour whose current
+ * outline actually meets the host's, right there -- and an exterior one
+ * needs to still sit on the host's own current outline. Neither is
+ * about where the arrow was put; both are about what is true of the
+ * plan this instant. A carve can take either away without the arrow
+ * moving at all: it can shorten or delete the very stretch of wall a
+ * door sits on, or -- just as real a loss -- leave the host's wall
+ * itself untouched while carving away the neighbour that used to be on
+ * its other side. Either way the door stops being real, and this is the
+ * one place that notices. */
+export function arrowIsLive(arrow: Arrow, host: Box, touchesForHost: Touch[], hostOutline: Poly): boolean {
+  const [p1, p2] = arrowSegment(host, arrow);
+  const mid: Point = [(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2];
+  if (arrow.kind && arrow.kind !== "interior") {
+    return pointOnPolyBoundary(hostOutline, mid, DOOR_ON_WALL_TOL_M);
+  }
+  return touchesForHost.some((touch) => pointOnTouch(mid, touch, DOOR_ON_WALL_TOL_M));
+}
+
+/** Every arrow on the plan that `arrowIsLive` still stands behind, right
+ * now. Nothing here is stored -- like a route, it is recomputed from
+ * wherever the zones, carves and other arrows currently are, so a stale
+ * door starts and stops being flagged the instant the plan changes
+ * under it, with no separate state to fall out of step. */
+export function liveArrowIds(boxes: Box[], storeys: number, arrows: Arrow[], autoCarve: boolean): Set<string> {
+  const byId = new Map(boxes.map((b) => [b.id, b]));
+  const live = new Set<string>();
+  for (let level = 0; level < storeys; level++) {
+    const { polyById, touchGraph } = levelTouchData(boxes, level, autoCarve);
+    for (const arrow of arrows) {
+      if (arrow.level !== level) continue;
+      const host = byId.get(arrow.hostId);
+      if (!host) continue;
+      const outline = polyById.get(host.id);
+      if (!outline) continue;
+      const touches = (touchGraph.get(host.id) ?? []).map((e) => e.touch);
+      if (arrowIsLive(arrow, host, touches, outline)) live.add(arrow.id);
+    }
+  }
+  return live;
 }
 
 interface PathResult {

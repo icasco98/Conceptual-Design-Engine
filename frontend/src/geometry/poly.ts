@@ -99,6 +99,26 @@ export function polyOfBox(b: Box): Poly {
   return localToPagePoly(localPolyOf(b), frameOf(b));
 }
 
+/** Whether `p` sits within `tol` of `poly`'s own boundary -- on one of
+ * its edges, not merely somewhere inside it. What decides whether a
+ * placed door is still on a wall that is actually there: `poly` is a
+ * zone's current, post-carve outline, so a stretch a carve has taken
+ * away no longer counts, exactly as a stretch it never had did not. */
+export function pointOnPolyBoundary(poly: Poly, p: Point, tol: number): boolean {
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % poly.length];
+    const ex = b[0] - a[0];
+    const ey = b[1] - a[1];
+    const len2 = ex * ex + ey * ey;
+    const t = len2 < 1e-9 ? 0 : Math.max(0, Math.min(1, ((p[0] - a[0]) * ex + (p[1] - a[1]) * ey) / len2));
+    const qx = a[0] + t * ex;
+    const qy = a[1] + t * ey;
+    if (Math.hypot(p[0] - qx, p[1] - qy) <= tol) return true;
+  }
+  return false;
+}
+
 /** A box's own frame: for a rotated box the world is turned around it so
  * the box is an axis-aligned rectangle again and every carve, strip and
  * minimum-rectangle test works unchanged. For an unrotated box both

@@ -175,16 +175,40 @@ carved-flat -- is decided in exactly one place either way.
 
 **Circulation routes through a real door, and only a real door -- no
 door means no edge, full stop.** `circulation.ts`'s `doorOnWall` checks
-a candidate door against the wall's own run (`Touch.lo`/`Touch.hi`), not
-merely how close it is to the midpoint, so a door near one end of a long
-wall still counts and a door on a *different* wall of the same host does
-not. Two zones sharing a wall with no door on it get no edge in the
-graph at all -- not a fainter line, not a fallback to the wall's
-geometric midpoint. `actorRoute` returns `{segments, broken}`; a leg
-Dijkstra cannot reach lands in `broken` and is named on the actor's card
-("No route: X → Y") rather than silently skipped or drawn anyway. A
+a candidate door against the wall run's own two endpoints (`Touch.p1`/
+`p2`), not merely how close it is to the midpoint, so a door near one
+end of a long wall still counts and a door on a *different* wall of the
+same host does not. Two zones sharing a wall with no door on it get no
+edge in the graph at all -- not a fainter line, not a fallback to the
+wall's geometric midpoint. `actorRoute` returns `{segments, broken}`; a
+leg Dijkstra cannot reach lands in `broken` and is named on the actor's
+card ("No route: X → Y") rather than silently skipped or drawn anyway. A
 route the tool shows is the tool asserting that route is walkable; it
 must never assert that on a wall nobody has actually put a door in.
+
+**An arrow's stored position can outlive the wall it was placed on --
+`arrowIsLive` (circulation.ts) is the read-time check for whether it
+still has.** An arrow is addressed relative to its host's own declared
+shape (`{hostId, side, t}`, arrows.ts), not the plan's current drawing,
+so nothing stops it moving with the box while a carve quietly takes its
+wall away underneath it: a later carve can shorten or delete the exact
+stretch it sits on, or -- the easier case to miss -- leave the host's
+own wall untouched while carving away whichever neighbour used to be on
+its other side. Either way the door stops being real without moving at
+all. `arrowIsLive` checks an interior door against the level's current
+touch graph (does *some* neighbour's outline still meet the host's,
+right there) and an exterior door against the host's own current
+outline; `liveArrowIds` runs it for every arrow on the plan at once.
+Canvas2D reads it to draw a dead door dashed and in the error colour,
+with a title explaining why -- the same "stay put, get flagged, never
+silently move, never silently vanish" treatment `broken` already gives
+an unreachable route leg. The carve loop in `suggestArrows` was the
+other half of this fix: it used to guess a carve's door position as the
+carver's wall nearest the victim's raw centre, which had no guarantee of
+landing on the actual cut; it now finds the real boundary with
+`touchingEdges` (the victim's carved outline against the carver's raw
+one) and places the door there, or places nothing if no such edge
+exists rather than guessing one into being.
 
 **One infrastructure idea raised and deliberately not done:** giving the
 backend its own per-entity Pydantic schemas was considered and reversed

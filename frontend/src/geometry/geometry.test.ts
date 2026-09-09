@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { carveWith, displayShapes, releaseCarve, shapeStillUsable, subtractKeepLargest } from "./carve";
 import { arrowSegment, nearestWallPoint, suggestArrows } from "./arrows";
-import { actorRoute, buildCirculationGraph, outOfBounds, routeLength, sharedSegments } from "./circulation";
+import { actorRoute, arrowIsLive, buildCirculationGraph, liveArrowIds, outOfBounds, routeLength, sharedSegments } from "./circulation";
 import { buildTouchGraph, touchingEdges } from "./doors";
 import { footprintRings } from "./footprint";
 import { clampDrawnRect, clampGroup, isOutsidePlot, limitGrowth, limitPointGrowth, settleInPlot, shiftInside } from "./plot";
@@ -307,13 +307,20 @@ describe("door arrows", () => {
     expect(suggestArrows([entry, hall, bed], existing, 0, false)).toEqual([]);
   });
 
-  it("hosts a carve's arrow on the carving zone", () => {
+  it("hosts a carve's arrow on the carving zone, placed on the real cut boundary", () => {
     const room = box({ id: "r", left: 0, top: 0, width: 6, height: 6 });
     const cutter = box({ id: "c", left: 4, top: 4, width: 3, height: 3 });
     const live = carveWith(cutter, [room, cutter]);
     const out = suggestArrows(live, [], 0, false);
     const forRoom = out.find((a) => a.targetId === "r")!;
     expect(forRoom.hostId).toBe("c");
+    // Not just hosted on the carver, but actually on the line the two
+    // now share: circulation, built from nothing but this one arrow,
+    // finds a genuine route between them through it.
+    const graph = buildCirculationGraph(live, 1, out, false);
+    const { segments, broken } = actorRoute(graph, live, ["c", "r"]);
+    expect(broken).toHaveLength(0);
+    expect(segments).toHaveLength(1);
   });
 
   it("walks out across a rotated zone's own turned wall, not just a plain rectangle's", () => {
@@ -1018,5 +1025,52 @@ describe("circulation: a route is the shortest walk of real doors", () => {
       const livingCentre = centerOf(rectOf(byName("Living Room")));
       expect(segments[0].pts.some((p) => p[0] === livingCentre[0] && p[1] === livingCentre[1])).toBe(true);
     });
+  });
+});
+
+describe("arrow liveness: a door stays exactly where it was put, but is flagged once it is not a real one", () => {
+  const a = box({ id: "a", left: 0, top: 0, width: 4, height: 4 });
+  const b = box({ id: "b", left: 4, top: 0, width: 3, height: 4 });
+  // On a's right wall, at its own midpoint -- (4, 2) on the page.
+  const door: Arrow = { id: "d", level: 0, hostId: "a", kind: "interior", side: 1, t: 0.5, dir: 1 };
+
+  it("a plain door on an untouched, uncarved wall is live", () => {
+    expect(liveArrowIds([a, b], 1, [door], false)).toEqual(new Set(["d"]));
+  });
+
+  it("flags a door once a carve removes the exact stretch of wall it sits on", () => {
+    // The cutter eats the middle of a's right wall, right where the
+    // door sits at y = 2 -- without a, b or the door itself moving.
+    const cutter = box({ id: "cutter", left: 3, top: 1, width: 2, height: 2, carvedBy: [] });
+    const carvedA: Box = { ...a, carvedBy: ["cutter"] };
+    expect(liveArrowIds([carvedA, cutter], 1, [door], false).has("d")).toBe(false);
+  });
+
+  it("does not flag a door on a stretch of wall a carve left alone", () => {
+    // This cutter only touches a's bottom-right corner (y 3..4), well
+    // clear of the door's own position at y = 2.
+    const cutter = box({ id: "cutter", left: 3, top: 3, width: 2, height: 2, carvedBy: [] });
+    const carvedA: Box = { ...a, carvedBy: ["cutter"] };
+    expect(liveArrowIds([carvedA, b, cutter], 1, [door], false).has("d")).toBe(true);
+  });
+
+  it("flags an interior door when the neighbour that used to be on its other side moves away, even though the host's own wall never changed", () => {
+    const farB: Box = { ...b, left: 40, top: 0 };
+    expect(liveArrowIds([a, farB], 1, [door], false).has("d")).toBe(false);
+  });
+
+  it("flags an exterior door once a carve removes the stretch of the host's own outline it sits on", () => {
+    const ext: Arrow = { id: "e", level: 0, hostId: "a", kind: "exterior-main", side: 1, t: 0.5, dir: 1 };
+    expect(liveArrowIds([a], 1, [ext], false).has("e")).toBe(true);
+    const cutter = box({ id: "cutter", left: 3, top: 1, width: 2, height: 2, carvedBy: [] });
+    const carvedA: Box = { ...a, carvedBy: ["cutter"] };
+    expect(liveArrowIds([carvedA, cutter], 1, [ext], false).has("e")).toBe(false);
+  });
+
+  it("arrowIsLive is the same check liveArrowIds runs for every arrow, on demand for one", () => {
+    const touchGraph = buildTouchGraph(new Map([["a", polyOfBox(a)], ["b", polyOfBox(b)]]), 0.04);
+    const touches = (touchGraph.get("a") ?? []).map((e) => e.touch);
+    expect(arrowIsLive(door, a, touches, polyOfBox(a))).toBe(true);
+    expect(arrowIsLive(door, a, [], polyOfBox(a))).toBe(false);
   });
 });

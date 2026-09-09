@@ -58,7 +58,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CategoryKey } from "../api/types";
 import { arrowSegment, nearestWallPoint } from "../geometry/arrows";
 import { displayShapes } from "../geometry/carve";
-import { actorRoute, buildCirculationGraph, sharedSegments } from "../geometry/circulation";
+import { actorRoute, buildCirculationGraph, liveArrowIds, sharedSegments } from "../geometry/circulation";
 import { footprintRings, ringsToPath } from "../geometry/footprint";
 import { clampDrawnRect, clampGroup, isOutsidePlot, limitGrowth, limitPointGrowth, plotBottom, plotRight } from "../geometry/plot";
 import { anchorPoint, frameOf, localPolyOf, pageToLocalPoly, polyArea, polyOfBox, resizedFromAnchor, toLocalVector } from "../geometry/poly";
@@ -285,6 +285,11 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
     const here = new Map(live.filter((b) => !isOpenToBelow(b, level)).map((b) => [b.id, b]));
     return arrows.filter((a) => a.level === level && here.has(a.hostId)).map((a) => ({ arrow: a, host: here.get(a.hostId)! }));
   }, [arrows, live, level]);
+  // Which of those arrows still sit on a real wall, this instant: a
+  // carve can shorten, delete or otherwise take a wall out from under a
+  // door without the door itself moving. Neither deleted nor moved, an
+  // arrow that fails this is drawn differently -- flagged, not hidden.
+  const realDoorIds = useMemo(() => liveArrowIds(boxes, storeys, arrows, autoCarve), [boxes, storeys, arrows, autoCarve]);
   // Circulation: derived the same way the door arrows themselves are
   // suggested, from the touching graph, never stored as a shape of its
   // own. Only computed while the overlay is on; an empty cast list costs
@@ -1290,12 +1295,13 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
             const [a, c] = arrowSegment(host, arrow);
             const sel = arrow.id === selectedArrow;
             const kind = arrow.kind ?? "interior";
+            const real = realDoorIds.has(arrow.id);
             const mx = (a[0] + c[0]) / 2;
             const my = (a[1] + c[1]) / 2;
-            const stroke = sel ? "#2f5d7c" : kind === "exterior-side" ? "#b3392b" : kind === "exterior-main" ? "#111111" : "#1a1a1a";
+            const stroke = !real ? "#9c3b2c" : sel ? "#2f5d7c" : kind === "exterior-side" ? "#b3392b" : kind === "exterior-main" ? "#111111" : "#1a1a1a";
             const marker = kind === "exterior-side" ? "door-arrow-side" : kind === "exterior-main" ? "door-arrow-main" : "door-arrow";
             return (
-              <g key={arrow.id} className={`arrow ${kind} ${sel ? "selected" : ""}`} pointerEvents="all" onPointerDown={(e) => startArrowDrag(e, arrow)}>
+              <g key={arrow.id} className={`arrow ${kind} ${sel ? "selected" : ""} ${real ? "" : "stale"}`} pointerEvents="all" onPointerDown={(e) => startArrowDrag(e, arrow)}>
                 {/* a fat invisible stroke so a thin arrow is easy to grab */}
                 <line x1={a[0]} y1={a[1]} x2={c[0]} y2={c[1]} stroke="transparent" strokeWidth={0.5} />
                 <line
@@ -1304,10 +1310,13 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
                   x2={c[0]}
                   y2={c[1]}
                   stroke={stroke}
-                  strokeOpacity={sel || kind !== "interior" ? 1 : 0.55}
+                  strokeOpacity={sel || !real || kind !== "interior" ? 1 : 0.55}
                   strokeWidth={sel ? 0.1 : kind !== "interior" ? 0.09 : 0.07}
+                  strokeDasharray={real ? undefined : "0.06 0.05"}
                   markerEnd={`url(#${marker})`}
-                />
+                >
+                  {!real && <title>Not on a real wall any more -- the plan has changed since this door was placed</title>}
+                </line>
                 {sel && (
                   <>
                     <circle className="handle flip" cx={mx + 0.7} cy={my - 0.7} r={HANDLE / 2} onPointerDown={(e) => onFlipArrow(e, arrow)}>

@@ -22,8 +22,8 @@
  * placed by hand with their own tools and left alone here.
  */
 import { displayShapes } from "./carve";
-import { pageToLocalPoly, localToPagePoly, localPolyOf, frameOf } from "./poly";
-import { rectOf, centerOf } from "./rect";
+import { pageToLocalPoly, localToPagePoly, localPolyOf, frameOf, polyOfBox } from "./poly";
+import { rectOf } from "./rect";
 import { boxesTrulyIntersect } from "./rect";
 import { isOpenToBelow } from "./snap";
 import { DOOR_INSET_M, type Arrow, type Box, type Point, type Poly } from "./types";
@@ -183,12 +183,30 @@ export function suggestArrows(all: Box[], existing: Arrow[], level: number, auto
     out.push({ id: newArrowId(), level, hostId: host.id, targetId: target.id, side, t, dir: 1, kind: "interior" });
   };
 
-  // Carves first: a room cut into another is entered from the carver.
+  // Every zone's actual outline right now -- carved, rotated or
+  // polygon, whatever it is -- read once and used by both the carve
+  // loop below and the walk after it, so a door either one places is
+  // addressed against exactly the line that is actually drawn.
+  const shapes = displayShapes(live, autoCarve);
+  const polyById = new Map(shapes.map((s) => [s.id, s.page]));
+
+  // Carves first: a room cut into another is entered from the carver,
+  // through a door placed on the real cut boundary -- not guessed at
+  // the wall nearest the victim's centre, which need not be anywhere
+  // near where the two actually meet, but the point `touchingEdges`
+  // finds where the victim's carved outline and the carver's own
+  // outline genuinely share an edge. No such edge (a carve too small or
+  // odd-shaped to have left one) means no door is placed, rather than
+  // one guessed into being.
   for (const victim of live) {
     for (const carverId of victim.carvedBy) {
       const carver = live.find((b) => b.id === carverId);
       if (!carver || !boxesTrulyIntersect(carver, victim)) continue;
-      const { side, t } = nearestWallPoint(carver, centerOf(rectOf(victim)));
+      const victimPoly = polyById.get(victim.id);
+      if (!victimPoly) continue;
+      const touches = touchingEdges(victimPoly, polyOfBox(carver), TOUCH_TOL_M);
+      if (!touches.length) continue;
+      const { side, t } = nearestWallPoint(carver, touchMid(touches[0]));
       add(carver, victim, side, t);
     }
   }
@@ -197,12 +215,9 @@ export function suggestArrows(all: Box[], existing: Arrow[], level: number, auto
   // box's own turned edges, a hand-drawn polygon's vertices, and the
   // boundary a carve leaves behind all read the same way -- the same
   // polygon test `buildTouchGraph` uses for circulation, run on each
-  // zone's actual outline right now (`displayShapes`, which already
-  // covers the carve loop above too; a zone reached only through a
+  // zone's actual outline right now. A zone reached only through a
   // carve is picked up here as well, since the loop above marks it
-  // `covered` without adding it to the walk).
-  const shapes = displayShapes(live, autoCarve);
-  const polyById = new Map(shapes.map((s) => [s.id, s.page]));
+  // `covered` without adding it to the walk.
   let start = live.findIndex((b) => b.isEntry);
   if (start === -1) start = live.findIndex((b) => b.roomType === "stair");
   if (start === -1) return out;
