@@ -84,6 +84,7 @@ function AddActorForm() {
 export function Actors() {
   const actors = useStore((s) => s.actors);
   const boxes = useStore((s) => s.boxes);
+  const arrows = useStore((s) => s.arrows);
   const storeys = useStore((s) => s.storeys);
   const level = useStore((s) => s.level);
   const updateActor = useStore((s) => s.updateActor);
@@ -97,7 +98,7 @@ export function Actors() {
   const toggleCirculation = useStore((s) => s.toggleCirculation);
 
   const boxesById = useMemo(() => new Map(boxes.map((b) => [b.id, b])), [boxes]);
-  const graph = useMemo(() => buildCirculationGraph(boxes, storeys), [boxes, storeys]);
+  const graph = useMemo(() => buildCirculationGraph(boxes, storeys, arrows), [boxes, storeys, arrows]);
   const info = useMemo(() => {
     const out = new Map<string, { length: number; crosses: boolean }>();
     for (const a of actors) {

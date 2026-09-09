@@ -3,14 +3,14 @@ import { describe, expect, it } from "vitest";
 import { carveWith, displayShapes, releaseCarve, shapeStillUsable, subtractKeepLargest } from "./carve";
 import { arrowSegment, nearestWallPoint, suggestArrows } from "./arrows";
 import { actorRoute, buildCirculationGraph, outOfBounds, routeLength, sharedSegments } from "./circulation";
-import { touchingEdge } from "./doors";
+import { buildTouchGraph, touchingEdge } from "./doors";
 import { footprintRings } from "./footprint";
 import { clampDrawnRect, clampGroup, isOutsidePlot, limitGrowth, limitPointGrowth, settleInPlot, shiftInside } from "./plot";
 import { anchorPoint, polyArea, polyOfBox, rectPolyOf, resizedFromAnchor } from "./poly";
 import { boxesTrulyIntersect, centerOf, obbOf, obbsSeparated, rectOf } from "./rect";
 import { isOpenToBelow, liveBoxes, nearestNeighborPoint, snapToGrid, snapToNearbyNeighbors, wallSnapAdjust } from "./snap";
 import { touchDelta, touchSelected, polyGap } from "./touch";
-import type { Box, Plot, Point, Poly } from "./types";
+import type { Arrow, Box, Plot, Point, Poly } from "./types";
 import { SAMPLE_STOREYS, sampleBoxes } from "../sample";
 import { zoneOf } from "../rooms";
 
@@ -764,6 +764,13 @@ describe("circulation: a route is the shortest walk of the touching graph", () =
     expect(graph.get("a") ?? []).toHaveLength(0);
   });
 
+  it("buildTouchGraph is the one shared primitive: both directions, one entry per touching pair", () => {
+    const touchGraph = buildTouchGraph([a, b, c, isolated], 0.04);
+    expect(touchGraph.get("a")?.map((e) => e.to)).toEqual(["b"]);
+    expect(touchGraph.get("b")?.map((e) => e.to).sort()).toEqual(["a", "c"]);
+    expect(touchGraph.get("isolated") ?? []).toHaveLength(0);
+  });
+
   it("routes through the shared wall's own midpoint, not straight through the room between", () => {
     const graph = buildCirculationGraph([a, b, c], 1);
     const segments = actorRoute(graph, [a, b, c], ["a", "c"]);
@@ -794,6 +801,31 @@ describe("circulation: a route is the shortest walk of the touching graph", () =
     const graph = buildCirculationGraph([a, turned, c], 1);
     expect(buildCirculationGraph([a, turned], 1).get("a") ?? []).toHaveLength(0);
     expect(actorRoute(graph, [a, turned, c], ["a", "c"])).toHaveLength(0);
+  });
+
+  it("routes through a placed door's real position, not the wall's geometric midpoint", () => {
+    const door: Arrow = { id: "d1", level: 0, hostId: "a", kind: "interior", side: 1, t: 0.75, dir: 1 };
+    const graphNoDoor = buildCirculationGraph([a, b, c], 1);
+    const graphWithDoor = buildCirculationGraph([a, b, c], 1, [door]);
+    const withoutDoor = actorRoute(graphNoDoor, [a, b, c], ["a", "b"]);
+    const withDoor = actorRoute(graphWithDoor, [a, b, c], ["a", "b"]);
+    expect(withoutDoor[0].pts[1]).toEqual([4, 2]); // the wall's own geometric midpoint
+    expect(withDoor[0].pts[1][0]).toBeCloseTo(4, 6);
+    expect(withDoor[0].pts[1][1]).toBeCloseTo(3, 6); // 75% down the wall, where the door actually is
+  });
+
+  it("ignores a door on one of the host's other walls -- it is not this wall's door", () => {
+    const door: Arrow = { id: "d2", level: 0, hostId: "a", kind: "interior", side: 0, t: 0.5, dir: 1 };
+    const graph = buildCirculationGraph([a, b, c], 1, [door]);
+    const seg = actorRoute(graph, [a, b, c], ["a", "b"]);
+    expect(seg[0].pts[1]).toEqual([4, 2]);
+  });
+
+  it("ignores an exterior door -- it leads outside, not into the other zone", () => {
+    const door: Arrow = { id: "d3", level: 0, hostId: "a", kind: "exterior-main", side: 1, t: 0.75, dir: 1 };
+    const graph = buildCirculationGraph([a, b, c], 1, [door]);
+    const seg = actorRoute(graph, [a, b, c], ["a", "b"]);
+    expect(seg[0].pts[1]).toEqual([4, 2]);
   });
 
   it("flags a servant's, a guest's or a majlis guest's route through a private zone, never the household's", () => {

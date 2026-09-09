@@ -73,6 +73,10 @@ class SavedProjectIn(BaseModel):
     # Who walks the plan, when the layout has any. Optional so that
     # layouts saved before circulation existed still load, with none.
     actors: list[dict[str, Any]] = Field(default_factory=list)
+    # The shape of this save, for the frontend's own migrateLayout to read
+    # against. Passed through untouched, same as everything else here --
+    # this process does not decide what an old save means, only keeps it.
+    version: int | None = None
 
 
 class SavedProjectOut(SavedProjectIn):

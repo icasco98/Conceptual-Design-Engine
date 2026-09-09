@@ -3,7 +3,8 @@
  *
  * A route is never drawn by hand and never stored as a shape -- it is the
  * shortest walk of the touching graph between an actor's waypoints, the
- * same graph `suggestArrows` already walks from the entry (arrows.ts).
+ * same graph `suggestArrows` already walks from the entry (arrows.ts),
+ * built by the one shared primitive both use (`buildTouchGraph`, doors.ts).
  * Move a room, and every actor's route recomputes from wherever it is
  * now; there is no second copy of the plan to keep in step.
  *
@@ -11,19 +12,25 @@
  * same limit `suggestArrows` already has, for the same reason: a rotated
  * or round zone has no wall to share, so there is nothing to walk across.
  *
- * A route is threaded through the wall's own midpoint between each pair
- * of rooms, not a straight line between their centres, so it reads as
- * someone going through a doorway rather than cutting through a corner.
- * A zone spanning several storeys (a stair) is the same node on each of
- * them, so it is what lets a route cross from one storey's graph to the
- * next -- there is no separate stair machinery here either.
+ * A route is threaded through a real door when one is placed on that
+ * wall -- the same door a person would actually use, not just the
+ * nearest one geometrically -- and through the wall's own midpoint when
+ * none is, so a plan sketched before any doors exist still gets a
+ * route. A zone spanning several storeys (a stair) is the same node on
+ * each of them, so it is what lets a route cross from one storey's graph
+ * to the next -- there is no separate stair machinery here either.
  */
-import { touchingEdge } from "./doors";
+import { arrowSegment } from "./arrows";
+import { buildTouchGraph, type Touch } from "./doors";
 import { centerOf, rectOf } from "./rect";
 import { liveBoxes } from "./snap";
-import type { ActorRole, Box, Point } from "./types";
+import type { ActorRole, Arrow, Box, Point } from "./types";
 
 const TOUCH_TOL_M = 0.04;
+/** How close a placed door must sit to a wall's own run to count as
+ * being on it -- generous enough for a door dragged anywhere along a
+ * real wall, tight enough not to pick up a door on a different one. */
+const DOOR_ON_WALL_TOL_M = 0.15;
 
 interface CircEdge {
   to: string;
@@ -34,15 +41,35 @@ interface CircEdge {
 
 export type CirculationGraph = Map<string, CircEdge[]>;
 
-function plain(b: Box): boolean {
-  return b.shape === "rect" && !b.rotation;
+/** Where a placed interior door between `a` and `b` actually sits on
+ * this particular wall, checked against the wall's own run rather than
+ * just its midpoint -- a door near one end of a long wall still counts.
+ * A door on any other wall of either host (an exterior door, or one of
+ * the host's other walls) is not this wall's door, and is skipped. */
+function doorOnWall(arrows: Arrow[], a: Box, b: Box, touch: Touch): Point | null {
+  for (const arrow of arrows) {
+    if (arrow.kind && arrow.kind !== "interior") continue;
+    const host = arrow.hostId === a.id ? a : arrow.hostId === b.id ? b : null;
+    if (!host) continue;
+    const [p1, p2] = arrowSegment(host, arrow);
+    const mx = (p1[0] + p2[0]) / 2;
+    const my = (p1[1] + p2[1]) / 2;
+    const along = touch.axis === "x" ? my : mx;
+    const across = touch.axis === "x" ? mx : my;
+    if (Math.abs(across - touch.mid[touch.axis === "x" ? 0 : 1]) > DOOR_ON_WALL_TOL_M) continue;
+    if (along < touch.lo - DOOR_ON_WALL_TOL_M || along > touch.hi + DOOR_ON_WALL_TOL_M) continue;
+    return [mx, my];
+  }
+  return null;
 }
 
 /** Every pair of zones sharing a wall, on any storey, both directions.
  * Built fresh from the current arrangement -- there is nothing here to
- * keep in step by hand. */
-export function buildCirculationGraph(boxes: Box[], storeys: number): CirculationGraph {
+ * keep in step by hand. `arrows` is optional so a caller with none to
+ * hand (a test, mostly) still gets the wall-midpoint fallback. */
+export function buildCirculationGraph(boxes: Box[], storeys: number, arrows: Arrow[] = []): CirculationGraph {
   const graph: CirculationGraph = new Map();
+  const byId = new Map(boxes.map((b) => [b.id, b]));
   const push = (from: Box, to: Box, mid: Point, level: number) => {
     const weight = Math.hypot(
       from.left + from.width / 2 - (to.left + to.width / 2),
@@ -53,13 +80,22 @@ export function buildCirculationGraph(boxes: Box[], storeys: number): Circulatio
     graph.set(from.id, list);
   };
   for (let level = 0; level < storeys; level++) {
-    const live = liveBoxes(boxes, level).filter(plain);
-    for (let i = 0; i < live.length; i++) {
-      for (let j = i + 1; j < live.length; j++) {
-        const touch = touchingEdge(rectOf(live[i]), rectOf(live[j]), TOUCH_TOL_M);
-        if (!touch) continue;
-        push(live[i], live[j], touch.mid, level);
-        push(live[j], live[i], touch.mid, level);
+    const live = liveBoxes(boxes, level);
+    const levelArrows = arrows.filter((a) => a.level === level);
+    const touchGraph = buildTouchGraph(live, TOUCH_TOL_M);
+    const seen = new Set<string>();
+    for (const [fromId, edges] of touchGraph) {
+      const from = byId.get(fromId);
+      if (!from) continue;
+      for (const edge of edges) {
+        const pairKey = [fromId, edge.to].sort().join("|");
+        if (seen.has(pairKey)) continue;
+        seen.add(pairKey);
+        const to = byId.get(edge.to);
+        if (!to) continue;
+        const mid = doorOnWall(levelArrows, from, to, edge.touch) ?? edge.touch.mid;
+        push(from, to, mid, level);
+        push(to, from, mid, level);
       }
     }
   }

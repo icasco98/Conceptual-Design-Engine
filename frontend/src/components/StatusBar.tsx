@@ -27,6 +27,7 @@ export function StatusBar() {
   const autoCarve = useStore((s) => s.autoCarve);
   const plot = useStore((s) => s.plot);
   const actors = useStore((s) => s.actors);
+  const arrows = useStore((s) => s.arrows);
   const showCirculation = useStore((s) => s.showCirculation);
 
   const { spaces, area, flagged, strays, toPlace } = useMemo(() => {
@@ -47,10 +48,10 @@ export function StatusBar() {
     if (!showCirculation) return 0;
     const visible = actors.filter((a) => a.visible);
     if (!visible.length) return 0;
-    const graph = buildCirculationGraph(boxes, storeys);
+    const graph = buildCirculationGraph(boxes, storeys, arrows);
     const routes = visible.map((a) => ({ actorId: a.id, segments: actorRoute(graph, boxes, a.waypoints) }));
     return sharedSegments(routes, level).length;
-  }, [showCirculation, actors, boxes, storeys, level]);
+  }, [showCirculation, actors, boxes, storeys, level, arrows]);
 
   const plotArea = plot.width * plot.depth;
 

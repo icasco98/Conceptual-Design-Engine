@@ -9,6 +9,8 @@ data/
 # frontend
 frontend/node_modules/
 frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
 # TypeScript's incremental-build cache. Rewritten by every build, so
 # tracking it made each machine's build collide with the next pull.
 *.tsbuildinfo

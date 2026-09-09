@@ -9,7 +9,7 @@
 import { create } from "zustand";
 
 import { api } from "../api/client";
-import type { ProjectSummary } from "../api/types";
+import type { ProjectSummary, SavedProject } from "../api/types";
 import { nearestWallPoint, newArrowId, suggestArrows } from "../geometry/arrows";
 import { carveWith, displayShapes, releaseCarve } from "../geometry/carve";
 import { clampDrawnRect, clampGroup, settleInPlot } from "../geometry/plot";
@@ -218,6 +218,29 @@ function normalise(b: Partial<Box> & Box): Box {
  * enough for the tallest zone to be seen on every storey it reaches. */
 function storeysFor(boxes: Box[], atLeast: number): number {
   return Math.max(atLeast, ...boxes.filter((b) => !b.deleted).map((b) => b.levelTo + 1));
+}
+
+/** The saved-layout schema's own version. Bump it, and add a branch
+ * below keyed on `saved.version`, the day a saved field needs real
+ * translation rather than just "default it if missing" -- every change
+ * to the shape so far (the plot, actors) has been the latter, which is
+ * why `migrateLayout` reads the same for every version to date. */
+export const LAYOUT_SCHEMA_VERSION = 1;
+
+/** A saved layout, however old, turned into what the store actually
+ * needs: every box normalised and every field that has not always
+ * existed defaulted once, here, instead of as a scattered `?? default`
+ * at whichever call site happens to read a saved project. */
+export function migrateLayout(saved: SavedProject): { boxes: Box[]; arrows: Arrow[]; storeys: number; plot: Plot; actors: Actor[] } {
+  const boxes = saved.boxes.map(normalise);
+  const arrows = saved.arrows ?? [];
+  // Layouts saved before the plot existed have none; they open on the
+  // sheet's rectangle, switched off, exactly as they behaved then.
+  const plot = saved.plot ?? DEFAULT_PLOT;
+  // Layouts saved before circulation existed have none.
+  const actors = saved.actors ?? [];
+  const storeys = storeysFor(boxes, saved.storeys);
+  return { boxes, arrows, storeys, plot, actors };
 }
 
 export const useStore = create<State>((set, get) => ({
@@ -758,7 +781,7 @@ export const useStore = create<State>((set, get) => ({
 
   async saveProject(name) {
     const { boxes, arrows, storeys, plot, actors, savedId } = get();
-    const body = { name, boxes, arrows, storeys, plot, actors };
+    const body = { name, boxes, arrows, storeys, plot, actors, version: LAYOUT_SCHEMA_VERSION };
     try {
       const saved = savedId ? await api.updateProject(savedId, body) : await api.createProject(body);
       set({ savedId: saved.id, savedName: saved.name });
@@ -773,12 +796,7 @@ export const useStore = create<State>((set, get) => ({
     try {
       const saved = await api.getProject(id);
       get().remember();
-      const boxes = saved.boxes.map(normalise);
-      const arrows = saved.arrows ?? [];
-      const storeys = storeysFor(boxes, saved.storeys);
-      // Layouts saved before the plot existed have none; they open on the
-      // sheet's rectangle, switched off, exactly as they behaved then.
-      const plot = saved.plot ?? DEFAULT_PLOT;
+      const { boxes, arrows, storeys, plot, actors } = migrateLayout(saved);
       set({
         boxes,
         arrows,
@@ -794,8 +812,7 @@ export const useStore = create<State>((set, get) => ({
         placingId: null,
         savedId: saved.id,
         savedName: saved.name,
-        // Layouts saved before circulation existed have none.
-        actors: saved.actors ?? [],
+        actors,
         routingActorId: null,
       });
     } catch (e) {

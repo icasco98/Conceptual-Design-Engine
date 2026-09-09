@@ -153,15 +153,72 @@ else.
 **The editor must never depend on the backend.** `boot()` opens the
 sample before it asks `/api/health`; a missing backend costs only the
 saved-layouts list. Keep it that way so `npm run dev` alone is enough to
-work on the canvas.
+work on the canvas -- it is also why the Playwright suite (`frontend/e2e/`)
+runs against `npm run dev` and never starts `uvicorn`.
 
-**Never commit build caches.** `*.tsbuildinfo` is ignored.
+**`buildTouchGraph` (doors.ts) is the one place that decides which zones
+touch.** Both `suggestArrows` and the circulation graph
+(`circulation.ts`) answer "does a wall exist here" the same way, because
+they ask the same function. If a third feature needs the same question
+answered, it calls this one rather than writing its own pairwise
+`touchingEdge` loop.
+
+**Circulation routes through a real door when one is placed on that
+wall, not just the wall's geometric midpoint.** `circulation.ts`'s
+`doorOnWall` checks a candidate door against the wall's own run (`Touch.lo`/
+`Touch.hi`), not merely how close it is to the midpoint, so a door near
+one end of a long wall still counts and a door on a *different* wall of
+the same host does not. No door placed there yet still routes -- through
+the plain midpoint -- so a plan sketched before any doors exist keeps
+working exactly as before.
+
+**Two infrastructure ideas raised and deliberately not done:** adjacency
+that respects a carved shape rather than a box's raw rectangle was
+judged too easy to get subtly wrong (polygon-subtraction boundary
+checks) for the value it adds right now, and left alone rather than
+rushed. Giving the backend its own per-entity Pydantic schemas was
+considered and reversed on rereading `api/main.py`'s own docstring:
+"the browser owns that shape, and a copy of it here would only be a
+second thing to keep in step" is an explicit decision already recorded
+there, not an oversight -- redeclaring every entity's shape in Python
+would contradict it, not fix it.
+
+**Never commit build caches.** `*.tsbuildinfo` is ignored. The same goes
+for Playwright's own output, `frontend/test-results/` and
+`frontend/playwright-report/`.
 
 ## Open question for the owner
 
 **The magnet's rule.** The button is built and closes gaps under 1 m to
 the nearest neighbour. Whether it should also *align* edges rather than
 only touch them was asked and never answered. Do not guess it.
+
+## Testing strategy
+
+Four tiers, each answering a question the others cannot:
+
+- **Pure functions** (everything under `geometry/`) — `vitest`,
+  `geometry/geometry.test.ts`. No DOM, no store.
+- **Store actions** — `vitest`, `state/store.test.ts`, calling
+  `useStore.getState()` directly. No rendering: this tier exists because
+  a store action can be wrong in ways a geometry test never sees (does
+  deleting a zone clean up its arrows *and* every actor's route, does an
+  actor stay outside the undo history the way it is supposed to).
+- **Real pointer gestures over real SVG geometry** — Playwright,
+  `frontend/e2e/`, run with `npm run test:e2e` against the plain Vite dev
+  server, never the Python backend. This is the one tier `vitest` cannot
+  cover at all: `getScreenCTM()`, pointer capture and real hit-testing
+  don't exist in `vitest`'s `node` environment, and jsdom does not
+  implement them either. If a change touches `Canvas2D.tsx`'s gestures,
+  this is the suite that actually exercises them.
+- **Running app, by hand** — for the one-off, unscripted pass described
+  below, on a change too large or too visual to fully capture as a test.
+
+Convention going forward: a new store action ships with a test in
+`store.test.ts`; a new interactive gesture ships with a spec in `e2e/`.
+Neither is optional because "it's simple" — the store's undo scope has
+already been gotten wrong once by assumption alone (see `store.test.ts`'s
+first describe block).
 
 ## Conventions
 
@@ -170,8 +227,9 @@ only touch them was asked and never answered. Do not guess it.
 - Keep the exported surface small: export what another file actually
   imports, and nothing else. A helper only its own file uses stays
   unexported, so a new feature cannot couple to it by accident.
-- Run `ruff check .`, `pytest`, and in `frontend/`, `npm run typecheck`
-  and `npm test` before committing.
+- Run `ruff check .`, `pytest`, and in `frontend/`, `npm run typecheck`,
+  `npm test` and (for anything touching the plan's gestures or the
+  Actors panel) `npm run test:e2e` before committing.
 - Verify in the running app, not only in tests. The last full pass —
   headless Chromium against the built app — confirmed both storeys
   drawing with the ghost below, both massing modes, drag-to-select,

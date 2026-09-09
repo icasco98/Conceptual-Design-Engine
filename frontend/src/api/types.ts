@@ -27,6 +27,10 @@ export interface LayoutBody {
   /** Who walks the plan. Optional: layouts saved before circulation
    *  existed do not carry any, and open with none. */
   actors?: Actor[];
+  /** The shape of this save, for `migrateLayout` (state/store.ts) to read
+   *  against. Optional: absent means whatever the oldest shape was, since
+   *  no layout carried a number before this field existed either. */
+  version?: number;
 }
 
 export interface SavedProject extends ProjectSummary, LayoutBody {}
