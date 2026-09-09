@@ -463,13 +463,29 @@ export interface ReachabilityProblem {
  * waypoints someone actually assigns an actor. This check asks a
  * different, structural question that applies to everyone: can this room
  * be reached by *some* run of real doors at all, without demanding a walk
- * through somewhere nobody should be walking through. */
+ * through somewhere nobody should be walking through.
+ *
+ * One exception, and it is narrow on purpose: an `auxiliaryOf` room
+ * (rooms.ts -- a bathroom, a closet) reached only through rooms that are
+ * *not* Service (`isServiceOf`) is not reported as `through_room` at all.
+ * That combination -- an ensuite bathroom whose only door is its own
+ * bedroom's -- is not a defect, it is what an attached bathroom or closet
+ * is supposed to look like, and flagging it on every house with one would
+ * drown out the case this check actually exists to catch. The exception
+ * does not extend to a Service blocker: a bathroom reached only through a
+ * garage is still exactly the "walking through the wrong room" problem,
+ * whatever the bathroom's own type says. An auxiliary room with *no* door
+ * to anything at all is still reported as `unreachable` -- this narrows
+ * one specific false alarm, it does not exempt auxiliary rooms from the
+ * check altogether. */
 export function reachabilityProblems(
   boxes: Box[],
   storeys: number,
   arrows: Arrow[],
   autoCarve: boolean,
   passableOf: (roomType: string) => boolean,
+  auxiliaryOf: (roomType: string) => boolean,
+  isServiceOf: (roomType: string) => boolean,
 ): ReachabilityProblem[] {
   const graph = buildCirculationGraph(boxes, storeys, arrows, autoCarve);
   const byId = new Map(boxes.map((b) => [b.id, b]));
@@ -498,6 +514,8 @@ export function reachabilityProblems(
         return !!nb && !roots.has(id) && !passableOf(nb.roomType);
       });
       if (neighborIds.length && blockers.length) {
+        const attachedToItsOwner = auxiliaryOf(b.roomType) && blockers.every((id) => !isServiceOf(byId.get(id)!.roomType));
+        if (attachedToItsOwner) continue;
         problems.push({ roomId: b.id, kind: "through_room", viaIds: blockers.slice(0, 2) });
       } else {
         problems.push({ roomId: b.id, kind: "unreachable", viaIds: [] });

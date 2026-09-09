@@ -83,6 +83,18 @@ export interface Box {
    * different tier than every other dining room, not a change to the
    * type's default. */
   privacyTierOverride?: PrivacyTier;
+  /** The id of the room this one is meant to belong to -- an ensuite
+   * bathroom's own bedroom, a closet's own bedroom. Unset for almost
+   * every zone: `checkAdjacency` (geometry/relationships.ts) falls back
+   * to "does at least one instance of the required type touch" when
+   * nothing declares an owner, exactly as it always has. Set this only
+   * when a room's ownership is otherwise ambiguous -- two ensuite
+   * bathrooms off one primary suite ("his" and "hers"), where "at least
+   * one touches" could silently pass even if the other one doesn't:
+   * declaring `attachedTo` makes that instance's own attachment
+   * independently checked, rather than one satisfied instance quietly
+   * covering for another that isn't. */
+  attachedTo?: string;
 }
 
 /**

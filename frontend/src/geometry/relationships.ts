@@ -8,7 +8,12 @@
  * `checkAdjacency` asks whether the *right* rooms ended up near each
  * other: physical adjacency (a shared wall, via the same touch graph
  * `circulation.ts` builds its door graph from), independent of whether a
- * door was ever placed on it.
+ * door was ever placed on it. Checked at the type level by default ("does
+ * at least one instance of each type touch"), with an opt-in, per-
+ * instance escape hatch (`Box.attachedTo`) for the case type-level
+ * checking cannot see on its own -- two required instances of the same
+ * type (two ensuite bathrooms off one primary suite) where one being
+ * satisfied could otherwise silently cover for the other failing.
  *
  * `tierViolations` asks whether a *door* respects the public-to-private
  * gradient (rooms.ts's `tier`): a door may connect adjacent tiers but
@@ -103,6 +108,10 @@ export interface AdjacencyStatus extends RelationRow {
    * reported as failing. A house with no garage is never penalized for
    * lacking a garage. */
   ok: boolean;
+  /** Instance ids that declared an owner via `attachedTo` and don't
+   * actually touch it -- see `checkAdjacency`'s own doc comment. Empty
+   * whenever nothing declared one, which is most of the time. */
+  failedInstanceIds: string[];
 }
 
 /** Every relationship-table row whose two room types both appear
@@ -112,13 +121,29 @@ export interface AdjacencyStatus extends RelationRow {
  * second, slightly different notion of "touching." Satisfied on any
  * storey where an instance of each type shares a wall (required/desired)
  * or does not (undesired); a required/desired pair only needs one storey
- * to satisfy it, since a plan is one arrangement, not a per-storey score. */
+ * to satisfy it, since a plan is one arrangement, not a per-storey score.
+ *
+ * A required row is checked at the *type* level by default -- "does at
+ * least one instance of each type touch" -- which is right for a type
+ * that normally has one instance (an Entry, a Kitchen) but is not enough
+ * once a type can legitimately appear more than once with each instance
+ * needing its own separate attachment: two ensuite bathrooms off one
+ * primary suite ("his" and "hers"), say. "At least one touches" would
+ * report success even if only one of the two actually does, silently
+ * covering for the other. `Box.attachedTo` is how an instance declares
+ * which one it is required to touch; when it does, that specific claim is
+ * checked on its own and failing it fails the row, regardless of whether
+ * some other, untagged instance happens to satisfy the type-level check.
+ * An instance that never declares an owner is judged exactly as it always
+ * was -- this narrows one real gap, it does not force every ensuite in
+ * the tool to be tagged to get a correct answer. */
 export function checkAdjacency(boxes: Box[], storeys: number, autoCarve: boolean): AdjacencyStatus[] {
   const out: AdjacencyStatus[] = [];
   for (const row of ROOM_RELATIONSHIPS) {
     let present = false;
     let touches = false;
-    for (let level = 0; level < storeys && !touches; level++) {
+    const failedInstanceIds: string[] = [];
+    for (let level = 0; level < storeys; level++) {
       const live = liveBoxes(boxes, level);
       const as_ = live.filter((b) => b.roomType === row.a);
       const bs_ = live.filter((b) => b.roomType === row.b);
@@ -126,14 +151,19 @@ export function checkAdjacency(boxes: Box[], storeys: number, autoCarve: boolean
       present = true;
       const { touchGraph } = levelTouchData(boxes, level, autoCarve);
       for (const a of as_) {
-        if ((touchGraph.get(a.id) ?? []).some((e) => bs_.some((b) => b.id === e.to))) {
-          touches = true;
-          break;
-        }
+        const edges = touchGraph.get(a.id) ?? [];
+        if (edges.some((e) => bs_.some((b) => b.id === e.to))) touches = true;
+        if (row.relation === "required" && a.attachedTo && !edges.some((e) => e.to === a.attachedTo)) failedInstanceIds.push(a.id);
+      }
+      for (const b of bs_) {
+        const edges = touchGraph.get(b.id) ?? [];
+        if (edges.some((e) => as_.some((a) => a.id === e.to))) touches = true;
+        if (row.relation === "required" && b.attachedTo && !edges.some((e) => e.to === b.attachedTo)) failedInstanceIds.push(b.id);
       }
     }
     if (!present) continue;
-    out.push({ ...row, ok: row.relation === "undesired" ? !touches : touches });
+    const ok = (row.relation === "undesired" ? !touches : touches) && failedInstanceIds.length === 0;
+    out.push({ ...row, ok, failedInstanceIds });
   }
   return out;
 }
@@ -217,9 +247,11 @@ export function collectFindings(
   autoCarve: boolean,
   passableOf: (roomType: string) => boolean,
   tierOf: (roomType: string) => PrivacyTier | undefined,
+  auxiliaryOf: (roomType: string) => boolean,
+  isServiceOf: (roomType: string) => boolean,
 ): Findings {
   return {
-    reachability: reachabilityProblems(boxes, storeys, arrows, autoCarve, passableOf),
+    reachability: reachabilityProblems(boxes, storeys, arrows, autoCarve, passableOf, auxiliaryOf, isServiceOf),
     adjacency: checkAdjacency(boxes, storeys, autoCarve),
     tier: tierViolations(boxes, storeys, arrows, autoCarve, tierOf),
   };

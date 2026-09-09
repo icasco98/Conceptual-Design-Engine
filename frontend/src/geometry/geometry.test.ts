@@ -13,7 +13,7 @@ import { isOpenToBelow, liveBoxes, nearestNeighborPoint, snapToGrid, snapToNearb
 import { touchDelta, touchSelected, polyGap } from "./touch";
 import type { Arrow, Box, Plot, Point, Poly } from "./types";
 import { SAMPLE_STOREYS, sampleArrows, sampleBoxes } from "../sample";
-import { passableOf, tierOf, zoneOf } from "../rooms";
+import { auxiliaryOf, isServiceOf, passableOf, tierOf, zoneOf } from "../rooms";
 
 function box(partial: Partial<Box> & { id: string; left: number; top: number; width: number; height: number }): Box {
   return {
@@ -1168,7 +1168,7 @@ describe("reachabilityProblems: every room reached from some exterior door, with
       { id: "d1", level: 0, hostId: "entry", kind: "interior", side: 1, t: 0.5, dir: 1 },
       { id: "d2", level: 0, hostId: "hall", kind: "interior", side: 1, t: 0.5, dir: 1 },
     ];
-    expect(reachabilityProblems([entry, hall, bed], 1, arrows, false, passableOf)).toEqual([]);
+    expect(reachabilityProblems([entry, hall, bed], 1, arrows, false, passableOf, auxiliaryOf, isServiceOf)).toEqual([]);
   });
 
   it("names the non-passable room that stands in the way, when that is the only route", () => {
@@ -1182,7 +1182,7 @@ describe("reachabilityProblems: every room reached from some exterior door, with
       { id: "d1", level: 0, hostId: "entry", kind: "interior", side: 1, t: 0.5, dir: 1 },
       { id: "d2", level: 0, hostId: "garage", kind: "interior", side: 1, t: 0.5, dir: 1 },
     ];
-    const problems = reachabilityProblems([entry, garage, bed], 1, arrows, false, passableOf);
+    const problems = reachabilityProblems([entry, garage, bed], 1, arrows, false, passableOf, auxiliaryOf, isServiceOf);
     // The garage itself is reached (entry can walk into it); only the
     // bedroom beyond it, which nothing else reaches, is a problem.
     expect(problems).toEqual([{ roomId: "bed", kind: "through_room", viaIds: ["garage"] }]);
@@ -1192,7 +1192,7 @@ describe("reachabilityProblems: every room reached from some exterior door, with
     const entry = box({ id: "entry", left: 0, top: 0, width: 4, height: 4, roomType: "entry" });
     const isolated = box({ id: "isolated", left: 20, top: 20, width: 4, height: 4, roomType: "bedroom" });
     const arrows: Arrow[] = [{ id: "ext", level: 0, hostId: "entry", kind: "exterior-main", side: 3, t: 0.5, dir: 1 }];
-    const problems = reachabilityProblems([entry, isolated], 1, arrows, false, passableOf);
+    const problems = reachabilityProblems([entry, isolated], 1, arrows, false, passableOf, auxiliaryOf, isServiceOf);
     expect(problems).toEqual([{ roomId: "isolated", kind: "unreachable", viaIds: [] }]);
   });
 
@@ -1210,11 +1210,40 @@ describe("reachabilityProblems: every room reached from some exterior door, with
       { id: "extSide", level: 0, hostId: "diwaniya", kind: "exterior-side", side: 3, t: 0.5, dir: 1 },
       { id: "d2", level: 0, hostId: "diwaniya", kind: "interior", side: 1, t: 0.5, dir: 1 },
     ];
-    const problems = reachabilityProblems([entry, hall, diwaniya, driver], 1, arrows, false, passableOf);
+    const problems = reachabilityProblems([entry, hall, diwaniya, driver], 1, arrows, false, passableOf, auxiliaryOf, isServiceOf);
     // Nothing is unreachable: the driver room is reached via the
     // diwaniya's own door, and the diwaniya itself is a root, so it is
     // never reported even though it is not passable.
     expect(problems).toEqual([]);
+  });
+
+  it("does not flag an ensuite bathroom reached only through its own bedroom", () => {
+    const entry = box({ id: "entry", left: 0, top: 0, width: 4, height: 4, roomType: "entry" });
+    const bed = box({ id: "bed", left: 4, top: 0, width: 4, height: 4, roomType: "bedroom" });
+    const ensuite = box({ id: "ensuite", left: 8, top: 0, width: 2, height: 2, roomType: "bathroom" });
+    const arrows: Arrow[] = [
+      { id: "ext", level: 0, hostId: "entry", kind: "exterior-main", side: 3, t: 0.5, dir: 1 },
+      { id: "d1", level: 0, hostId: "entry", kind: "interior", side: 1, t: 0.5, dir: 1 },
+      { id: "d2", level: 0, hostId: "bed", kind: "interior", side: 1, t: 0.5, dir: 1 },
+    ];
+    const problems = reachabilityProblems([entry, bed, ensuite], 1, arrows, false, passableOf, auxiliaryOf, isServiceOf);
+    // The bedroom itself is fine (reached from entry); the ensuite, an
+    // auxiliary type gated only by a non-Service room, is not reported
+    // even though nothing continues walking past the bedroom to it.
+    expect(problems).toEqual([]);
+  });
+
+  it("still flags an auxiliary room reached only through a Service room -- the exemption is narrow, not blanket", () => {
+    const entry = box({ id: "entry", left: 0, top: 0, width: 4, height: 4, roomType: "entry" });
+    const garage = box({ id: "garage", left: 4, top: 0, width: 4, height: 4, roomType: "garage_single" });
+    const bath = box({ id: "bath", left: 8, top: 0, width: 2, height: 2, roomType: "bathroom" });
+    const arrows: Arrow[] = [
+      { id: "ext", level: 0, hostId: "entry", kind: "exterior-main", side: 3, t: 0.5, dir: 1 },
+      { id: "d1", level: 0, hostId: "entry", kind: "interior", side: 1, t: 0.5, dir: 1 },
+      { id: "d2", level: 0, hostId: "garage", kind: "interior", side: 1, t: 0.5, dir: 1 },
+    ];
+    const problems = reachabilityProblems([entry, garage, bath], 1, arrows, false, passableOf, auxiliaryOf, isServiceOf);
+    expect(problems).toEqual([{ roomId: "bath", kind: "through_room", viaIds: ["garage"] }]);
   });
 });
 
@@ -1250,6 +1279,43 @@ describe("checkAdjacency: the required/desired/undesired table, checked against 
     const garageFar = box({ id: "g2", left: 30, top: 30, width: 4, height: 4, roomType: "garage_single" });
     const farRow = checkAdjacency([bedroom, garageFar], 1, false).find((r) => r.a === "bedroom" && r.b === "garage_single");
     expect(farRow?.ok).toBe(true);
+  });
+
+  it("an untagged extra instance of the same type does not break the old at-least-one check -- no regression", () => {
+    // A master ensuite (touching) plus a completely unrelated hall
+    // bathroom (not touching, not tagged): the type-level check still
+    // passes, exactly as it always has, because neither instance
+    // declares an owner for this test to hold accountable.
+    const master = box({ id: "master", left: 0, top: 0, width: 6, height: 6, roomType: "master_bedroom" });
+    const ensuite = box({ id: "ensuite", left: 6, top: 0, width: 2, height: 2, roomType: "bathroom" });
+    const hallBath = box({ id: "hallBath", left: 30, top: 30, width: 2, height: 2, roomType: "bathroom" });
+    const row = checkAdjacency([master, ensuite, hallBath], 1, false).find((r) => r.a === "master_bedroom" && r.b === "bathroom");
+    expect(row?.ok).toBe(true);
+    expect(row?.failedInstanceIds).toEqual([]);
+  });
+
+  it("catches a declared attachment that does not actually touch its claimed owner -- the his-and-hers case", () => {
+    const master = box({ id: "master", left: 0, top: 0, width: 6, height: 6, roomType: "master_bedroom" });
+    // His bathroom really does touch the master bedroom's right wall.
+    const hisBath = box({ id: "hisBath", left: 6, top: 0, width: 2, height: 2, roomType: "bathroom", attachedTo: "master" });
+    // Her bathroom claims the master bedroom too, but sits nowhere near
+    // it -- the placement mistake this check exists to catch.
+    const herBath = box({ id: "herBath", left: 30, top: 30, width: 2, height: 2, roomType: "bathroom", attachedTo: "master" });
+    const row = checkAdjacency([master, hisBath, herBath], 1, false).find((r) => r.a === "master_bedroom" && r.b === "bathroom");
+    // Type-level "at least one touches" would have said true here (his
+    // bathroom alone satisfies it) -- the declared, unmet claim is what
+    // correctly fails the row instead.
+    expect(row?.ok).toBe(false);
+    expect(row?.failedInstanceIds).toEqual(["herBath"]);
+  });
+
+  it("passes when both declared attachments actually touch their claimed owner", () => {
+    const master = box({ id: "master", left: 0, top: 0, width: 6, height: 6, roomType: "master_bedroom" });
+    const hisBath = box({ id: "hisBath", left: 6, top: 0, width: 2, height: 2, roomType: "bathroom", attachedTo: "master" });
+    const herBath = box({ id: "herBath", left: 0, top: 6, width: 6, height: 2, roomType: "bathroom", attachedTo: "master" });
+    const row = checkAdjacency([master, hisBath, herBath], 1, false).find((r) => r.a === "master_bedroom" && r.b === "bathroom");
+    expect(row?.ok).toBe(true);
+    expect(row?.failedInstanceIds).toEqual([]);
   });
 });
 
@@ -1303,7 +1369,7 @@ describe("collectFindings: the one call that ties all three checks together", ()
     const bed = box({ id: "bed", left: 4, top: 0, width: 4, height: 4, roomType: "bedroom" });
     const ext: Arrow = { id: "ext", level: 0, hostId: "entry", kind: "exterior-main", side: 3, t: 0.5, dir: 1 };
     const door: Arrow = { id: "d", level: 0, hostId: "entry", kind: "interior", side: 1, t: 0.5, dir: 1 };
-    const findings = collectFindings([entry, bed], 1, [ext, door], false, passableOf, tierOf);
+    const findings = collectFindings([entry, bed], 1, [ext, door], false, passableOf, tierOf, auxiliaryOf, isServiceOf);
     // Same door, evaluated three different ways: it does connect the
     // household to the entry (no reachability problem), it is not a
     // room-type pair the adjacency table has an opinion on, and it does

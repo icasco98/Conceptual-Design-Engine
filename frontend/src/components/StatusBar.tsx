@@ -18,7 +18,7 @@ import { outsidePlot } from "../geometry/plot";
 import { polyArea } from "../geometry/poly";
 import { collectFindings, TIER_ORDER, type AdjacencyStatus, type TierViolation } from "../geometry/relationships";
 import { liveBoxes } from "../geometry/snap";
-import { passableOf, roomTypeInfo, tierOf } from "../rooms";
+import { auxiliaryOf, isServiceOf, passableOf, roomTypeInfo, tierOf } from "../rooms";
 import type { Box } from "../geometry/types";
 import { IconFootprints, IconTick, IconWarn } from "./icons";
 import { useStore } from "../state/store";
@@ -98,7 +98,7 @@ export function StatusBar() {
   // otherwise notice.
   const privacySentences = useMemo(() => {
     const boxesById = new Map(boxes.map((b) => [b.id, b]));
-    const findings = collectFindings(boxes, storeys, arrows, autoCarve, passableOf, tierOf);
+    const findings = collectFindings(boxes, storeys, arrows, autoCarve, passableOf, tierOf, auxiliaryOf, isServiceOf);
     return [
       ...tierSentences(findings.tier, boxesById),
       ...reachabilitySentences(findings.reachability, boxesById),

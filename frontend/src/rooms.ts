@@ -47,6 +47,17 @@ interface RoomTypeInfo {
    * as `zone`. `undefined` means exempt: the check never flags a door
    * touching this room type either way. */
   tier?: PrivacyTier;
+  /** Always entered through exactly one owning room, never an
+   * independent stop in circulation -- a bathroom, a closet. Used only
+   * by `reachabilityProblems`: an auxiliary room reached solely through
+   * one other room is not a "through_room" problem *provided* that other
+   * room isn't itself a Service room (`isServiceOf`) -- a bathroom off a
+   * bedroom is a normal suite; a bathroom off a garage is still worth
+   * flagging. Unset (false) for everything else, including a bedroom or
+   * a kitchen: those are real destinations, and being reachable only
+   * through one specific other room is exactly the problem this check
+   * exists to catch for them. */
+  auxiliary?: boolean;
 }
 
 /** category_a = private, category_b = shared, category_c = service,
@@ -76,13 +87,13 @@ export const ROOM_TYPES: Record<string, RoomTypeInfo> = {
   bedroom: { label: "Bedroom", minWidth: 2.7, minHeight: 3.0, typicalWidth: 3.3, typicalHeight: 3.6, zone: "category_a", passable: false, tier: "private" },
   // Bathrooms are exempt from the gradient check on purpose -- see the
   // file doc comment above.
-  bathroom: { label: "Bathroom", minWidth: 1.5, minHeight: 1.75, typicalWidth: 1.8, typicalHeight: 2.4, zone: "category_a", passable: false },
-  half_bath: { label: "Half Bath / Powder Room", minWidth: 0.9, minHeight: 1.5, typicalWidth: 1.1, typicalHeight: 1.6, zone: "category_c", passable: false },
+  bathroom: { label: "Bathroom", minWidth: 1.5, minHeight: 1.75, typicalWidth: 1.8, typicalHeight: 2.4, zone: "category_a", passable: false, auxiliary: true },
+  half_bath: { label: "Half Bath / Powder Room", minWidth: 0.9, minHeight: 1.5, typicalWidth: 1.1, typicalHeight: 1.6, zone: "category_c", passable: false, auxiliary: true },
   office: { label: "Office / Study", minWidth: 2.4, minHeight: 2.7, typicalWidth: 3.0, typicalHeight: 3.3, zone: "category_a", passable: false, tier: "private" },
   laundry: { label: "Laundry", minWidth: 1.5, minHeight: 1.8, typicalWidth: 1.8, typicalHeight: 2.4, zone: "category_c", passable: false },
   garage_single: { label: "Single Garage", minWidth: 3.0, minHeight: 6.0, typicalWidth: 3.6, typicalHeight: 6.5, zone: "category_c", passable: false },
   garage_double: { label: "Double Garage", minWidth: 5.5, minHeight: 6.0, typicalWidth: 6.0, typicalHeight: 6.5, zone: "category_c", passable: false },
-  closet: { label: "Closet", minWidth: 0.9, minHeight: 0.6, typicalWidth: 1.5, typicalHeight: 0.6, zone: "category_a", passable: false, tier: "private" },
+  closet: { label: "Closet", minWidth: 0.9, minHeight: 0.6, typicalWidth: 1.5, typicalHeight: 0.6, zone: "category_a", passable: false, tier: "private", auxiliary: true },
   storage: { label: "Storage", minWidth: 1.5, minHeight: 1.5, typicalWidth: 2.0, typicalHeight: 2.0, zone: "category_c", passable: false },
   mudroom: { label: "Mudroom", minWidth: 1.5, minHeight: 1.8, typicalWidth: 1.8, typicalHeight: 2.1, zone: "category_c", passable: true, tier: "semi-public" },
   // A straight flight with a landing, sized in plan. Height is the run
@@ -94,9 +105,9 @@ export const ROOM_TYPES: Record<string, RoomTypeInfo> = {
   // wing. A live-in maid is modeled as Nanny Room; there is no separate
   // maid type.
   driver_room: { label: "Driver Room", minWidth: 2.7, minHeight: 3.0, typicalWidth: 3.3, typicalHeight: 3.6, zone: "category_c", passable: false, tier: "private" },
-  driver_bathroom: { label: "Driver Bathroom", minWidth: 1.5, minHeight: 1.75, typicalWidth: 1.8, typicalHeight: 2.4, zone: "category_c", passable: false },
+  driver_bathroom: { label: "Driver Bathroom", minWidth: 1.5, minHeight: 1.75, typicalWidth: 1.8, typicalHeight: 2.4, zone: "category_c", passable: false, auxiliary: true },
   nanny_room: { label: "Nanny Room", minWidth: 2.7, minHeight: 3.0, typicalWidth: 3.3, typicalHeight: 3.6, zone: "category_c", passable: false, tier: "private" },
-  nanny_bathroom: { label: "Nanny Bathroom", minWidth: 1.5, minHeight: 1.75, typicalWidth: 1.8, typicalHeight: 2.4, zone: "category_c", passable: false },
+  nanny_bathroom: { label: "Nanny Bathroom", minWidth: 1.5, minHeight: 1.75, typicalWidth: 1.8, typicalHeight: 2.4, zone: "category_c", passable: false, auxiliary: true },
   // No bathroom requirement -- it does not need to be ensuite.
   prayer_room: { label: "Prayer Room", minWidth: 2.0, minHeight: 2.5, typicalWidth: 2.5, typicalHeight: 3.0, zone: "category_a", passable: false, tier: "private" },
   other: { label: "Room", minWidth: 2.0, minHeight: 2.0, typicalWidth: 3.0, typicalHeight: 3.0, zone: "category_b", passable: false },
@@ -123,4 +134,16 @@ export function passableOf(roomType: string): boolean {
 
 export function tierOf(roomType: string): PrivacyTier | undefined {
   return roomTypeInfo(roomType).tier;
+}
+
+export function auxiliaryOf(roomType: string): boolean {
+  return !!roomTypeInfo(roomType).auxiliary;
+}
+
+/** Service-category, for `reachabilityProblems`'s own purpose: whether a
+ * room legitimately "owns" an auxiliary room it gates, or is just a
+ * utility space that happens to be in the way. Reuses `zone` rather than
+ * adding a third column that would just restate it. */
+export function isServiceOf(roomType: string): boolean {
+  return zoneOf(roomType) === "category_c";
 }
