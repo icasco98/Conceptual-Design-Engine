@@ -8,7 +8,7 @@ import { footprintRings } from "./footprint";
 import { clampDrawnRect, clampGroup, isOutsidePlot, limitGrowth, limitPointGrowth, settleInPlot, shiftInside } from "./plot";
 import { anchorPoint, polyArea, polyOfBox, rectPolyOf, resizedFromAnchor } from "./poly";
 import { boxesTrulyIntersect, centerOf, obbOf, obbsSeparated, rectOf } from "./rect";
-import { checkAdjacency, collectFindings, stairConnectionProblems, tierViolations } from "./relationships";
+import { checkAdjacency, collectFindings, compareScores, scoreCandidate, stairConnectionProblems, tierViolations } from "./relationships";
 import { isOpenToBelow, liveBoxes, nearestNeighborPoint, snapToGrid, snapToNearbyNeighbors, wallSnapAdjust } from "./snap";
 import { touchDelta, touchSelected, polyGap } from "./touch";
 import type { Arrow, Box, Plot, Point, Poly } from "./types";
@@ -1520,5 +1520,65 @@ describe("stairConnectionProblems: a stair should open onto circulation, not a s
     const door: Arrow = { id: "d", level: 0, hostId: "stair", kind: "interior", side: 1, t: 0.5, dir: 1 };
     const problems = stairConnectionProblems([stair, bed], 1, [door], false, circulationOf);
     expect(problems).toEqual([{ stairId: "stair", otherRoomId: "bed", otherRoomType: "bedroom", level: 0 }]);
+  });
+});
+
+describe("scoreCandidate and compareScores: hard problems always decide first", () => {
+  const score = (boxes: Box[], arrows: Arrow[] = []) =>
+    scoreCandidate(boxes, 1, arrows, false, passableOf, tierOf, auxiliaryOf, isServiceOf, circulationOf);
+
+  it("scores a genuinely clean candidate 0 and 0", () => {
+    const entry = box({ id: "entry", left: 0, top: 0, width: 4, height: 4, roomType: "entry" });
+    const ext: Arrow = { id: "ext", level: 0, hostId: "entry", kind: "exterior-main", side: 3, t: 0.5, dir: 1 };
+    const s = score([entry], [ext]);
+    expect(s.hardProblems).toBe(0);
+    expect(s.softRecommendations).toBe(0);
+  });
+
+  it("counts a reachability problem as hard, not soft", () => {
+    // Entry has its own exterior door; Living Room touches it but has no
+    // door of its own, so it's unreached -- one hard problem, and no
+    // adjacency row involves Living Room at all, so nothing soft.
+    const entry = box({ id: "entry", left: 0, top: 0, width: 4, height: 4, roomType: "entry" });
+    const living = box({ id: "living", left: 4, top: 0, width: 4, height: 4, roomType: "living_room" });
+    const ext: Arrow = { id: "ext", level: 0, hostId: "entry", kind: "exterior-main", side: 3, t: 0.5, dir: 1 };
+    const s = score([entry, living], [ext]);
+    expect(s.hardProblems).toBe(1);
+    expect(s.softRecommendations).toBe(0);
+    expect(s.findings.reachability).toHaveLength(1);
+  });
+
+  it("counts an unmet desired row as soft, separately from the hard problems it also causes", () => {
+    // Kitchen and Laundry, alone, no doors at all: both are unreachable
+    // (two hard problems) *and* the desired kitchen-laundry pair is
+    // unmet (one soft recommendation) -- two different checks, counted
+    // independently, neither one masking the other.
+    const kitchen = box({ id: "kitchen", left: 0, top: 0, width: 4, height: 4, roomType: "kitchen" });
+    const laundry = box({ id: "laundry", left: 20, top: 20, width: 4, height: 4, roomType: "laundry" });
+    const s = score([kitchen, laundry]);
+    expect(s.hardProblems).toBe(2);
+    expect(s.softRecommendations).toBe(1);
+  });
+
+  it("a candidate with zero hard problems always outranks one with any, however many recommendations it's missing", () => {
+    const empty = { reachability: [], adjacency: [], tier: [], stairConnection: [] };
+    const worseHard = { hardProblems: 1, softRecommendations: 0, findings: empty };
+    const worseSoft = { hardProblems: 0, softRecommendations: 5, findings: empty };
+    expect(compareScores(worseSoft, worseHard)).toBeLessThan(0);
+  });
+
+  it("among equal hard problems, fewer recommendations wins", () => {
+    const empty = { reachability: [], adjacency: [], tier: [], stairConnection: [] };
+    const moreSoft = { hardProblems: 2, softRecommendations: 3, findings: empty };
+    const fewerSoft = { hardProblems: 2, softRecommendations: 1, findings: empty };
+    expect(compareScores(fewerSoft, moreSoft)).toBeLessThan(0);
+    expect(compareScores(moreSoft, fewerSoft)).toBeGreaterThan(0);
+  });
+
+  it("is 0 when both counts match", () => {
+    const empty = { reachability: [], adjacency: [], tier: [], stairConnection: [] };
+    const a = { hardProblems: 1, softRecommendations: 1, findings: empty };
+    const b = { hardProblems: 1, softRecommendations: 1, findings: empty };
+    expect(compareScores(a, b)).toBe(0);
   });
 });

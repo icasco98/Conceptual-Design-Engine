@@ -16,48 +16,55 @@ import { displayShapes } from "../geometry/carve";
 import { actorRoute, buildCirculationGraph, sharedSegments, type ReachabilityProblem } from "../geometry/circulation";
 import { outsidePlot } from "../geometry/plot";
 import { polyArea } from "../geometry/poly";
-import { collectFindings, TIER_ORDER, type AdjacencyStatus, type StairConnectionProblem, type TierViolation } from "../geometry/relationships";
+import { adjacencySeverity, collectFindings, TIER_ORDER, type AdjacencyStatus, type StairConnectionProblem, type TierViolation } from "../geometry/relationships";
 import { liveBoxes } from "../geometry/snap";
 import { auxiliaryOf, circulationOf, floorLabel, isServiceOf, passableOf, roomTypeInfo, tierOf } from "../rooms";
 import type { Box } from "../geometry/types";
 import { IconFootprints, IconTick, IconWarn } from "./icons";
 import { useStore } from "../state/store";
 
-/** One plain sentence per finding, naming the actual rooms, the storey
- * and the actual consequence -- never "tier," "gradient" or "category,"
- * so nobody needs to know this tool's own vocabulary to understand
- * what's wrong, and never just "Kitchen and Dining Room" with no floor
- * to go find them on. Lives here, in the component, the same way
- * `Actors.tsx` keeps `ROLE_LABEL`/`OUT_OF_BOUNDS_LABEL` next to where
- * they're shown rather than in `geometry/`, which hands back structured
- * data and stops there on purpose. */
-function tierSentences(violations: TierViolation[], boxesById: Map<string, Box>): string[] {
+/** One finding, a storey and the plain sentence describing it -- kept
+ * apart rather than baked into one string so the list can be sorted by
+ * floor before anything is joined for display. Parsing a floor back out
+ * of a finished sentence would be fragile; carrying it as data is not. */
+interface Finding {
+  level: number;
+  text: string;
+}
+
+/** One plain sentence per finding, naming the actual rooms and the
+ * actual consequence -- never "tier," "gradient" or "category," so
+ * nobody needs to know this tool's own vocabulary to understand what's
+ * wrong. Lives here, in the component, the same way `Actors.tsx` keeps
+ * `ROLE_LABEL`/`OUT_OF_BOUNDS_LABEL` next to where they're shown rather
+ * than in `geometry/`, which hands back structured data and stops there
+ * on purpose. */
+function tierFindings(violations: TierViolation[], boxesById: Map<string, Box>): Finding[] {
   return violations.flatMap((v) => {
     const a = boxesById.get(v.roomAId);
     const b = boxesById.get(v.roomBId);
     if (!a || !b) return [];
     const [outer, inner] = TIER_ORDER[v.tierA] < TIER_ORDER[v.tierB] ? [a, b] : [b, a];
-    return [`Floor ${floorLabel(v.level)}: ${outer.name} opens straight into ${inner.name}`];
+    return [{ level: v.level, text: `${outer.name} opens straight into ${inner.name}` }];
   });
 }
 
-function reachabilitySentences(problems: ReachabilityProblem[], boxesById: Map<string, Box>): string[] {
+function reachabilityFindings(problems: ReachabilityProblem[], boxesById: Map<string, Box>): Finding[] {
   return problems.flatMap((p) => {
     const room = boxesById.get(p.roomId);
     if (!room) return [];
     const via = p.viaIds.map((id) => boxesById.get(id)?.name).filter((n): n is string => !!n);
-    const floor = `Floor ${floorLabel(p.level)}`;
-    if (via.length) return [`${floor}: The only way to ${room.name} is through ${via.join(" or ")}`];
-    return [`${floor}: Nothing connects to ${room.name} yet`];
+    const text = via.length ? `The only way to ${room.name} is through ${via.join(" or ")}` : `Nothing connects to ${room.name} yet`;
+    return [{ level: p.level, text }];
   });
 }
 
-function stairConnectionSentences(problems: StairConnectionProblem[], boxesById: Map<string, Box>): string[] {
+function stairConnectionFindings(problems: StairConnectionProblem[], boxesById: Map<string, Box>): Finding[] {
   return problems.flatMap((s) => {
     const stair = boxesById.get(s.stairId);
     const other = boxesById.get(s.otherRoomId);
     if (!stair || !other) return [];
-    return [`Floor ${floorLabel(s.level)}: ${stair.name} opens straight into ${other.name} instead of a hallway or other circulation space`];
+    return [{ level: s.level, text: `${stair.name} opens straight into ${other.name} instead of a hallway or other circulation space` }];
   });
 }
 
@@ -66,31 +73,52 @@ function stairConnectionSentences(problems: StairConnectionProblem[], boxesById:
  * good idea" recommendation -- kept in its own list, not mixed in with
  * the problems, so a person can tell "this must be fixed" apart from
  * "this would help" at a glance rather than reading every sentence to
- * find out which kind it is. */
-function adjacencyProblemSentences(rows: AdjacencyStatus[]): string[] {
+ * find out which kind it is. `adjacencySeverity` (relationships.ts) is
+ * the one place that split is decided, shared with `scoreCandidate` so
+ * the two never disagree about which category a row falls into. */
+function adjacencyProblemFindings(rows: AdjacencyStatus[]): Finding[] {
   return rows
-    .filter((r) => !r.ok && r.relation !== "desired")
+    .filter((r) => !r.ok && adjacencySeverity(r) === "problem")
     .map((r) => {
       const a = roomTypeInfo(r.a).label;
       const b = roomTypeInfo(r.b).label;
-      const floor = `Floor ${floorLabel(r.level)}`;
-      if (r.relation === "undesired") return `${floor}: ${a} and ${b} share a wall -- that's usually kept separate`;
+      if (r.relation === "undesired") return { level: r.level, text: `${a} and ${b} share a wall -- that's usually kept separate` };
       // Two different reasons a required pair can fail, worth telling
       // apart: a wall with no door in it reads very differently from two
       // rooms that were never placed near each other at all.
-      if (r.touching) return `${floor}: ${a} and ${b} share a wall, but there's no door between them`;
-      return `${floor}: ${a} and ${b} aren't near each other at all, though they need to be`;
+      if (r.touching) return { level: r.level, text: `${a} and ${b} share a wall, but there's no door between them` };
+      return { level: r.level, text: `${a} and ${b} aren't near each other at all, though they need to be` };
     });
 }
 
-function adjacencyRecommendationSentences(rows: AdjacencyStatus[]): string[] {
+function adjacencyRecommendationFindings(rows: AdjacencyStatus[]): Finding[] {
   return rows
-    .filter((r) => !r.ok && r.relation === "desired")
+    .filter((r) => !r.ok && adjacencySeverity(r) === "recommendation")
     .map((r) => {
       const a = roomTypeInfo(r.a).label;
       const b = roomTypeInfo(r.b).label;
-      return `Floor ${floorLabel(r.level)}: ${a} and ${b} are a long way apart -- usually easier when they're close`;
+      return { level: r.level, text: `${a} and ${b} are a long way apart -- usually easier when they're close` };
     });
+}
+
+/** Every finding, floor by floor -- lowest first, a floor's own findings
+ * kept in whichever order they arrived in (stable sort), not scattered
+ * across the list in whatever order the four checks happened to run.
+ * Returns the flat "Floor G: ..." lines a compact preview wants, and the
+ * grouped, floor-headed block a hover tooltip wants, from the one sort. */
+function organizeByFloor(findings: Finding[]): { flat: string[]; grouped: string } {
+  const sorted = [...findings].sort((a, b) => a.level - b.level);
+  const flat = sorted.map((f) => `Floor ${floorLabel(f.level)}: ${f.text}`);
+  const grouped: string[] = [];
+  let currentLevel: number | null = null;
+  for (const f of sorted) {
+    if (f.level !== currentLevel) {
+      currentLevel = f.level;
+      grouped.push(`Floor ${floorLabel(f.level)}:`);
+    }
+    grouped.push(`  ${f.text}`);
+  }
+  return { flat, grouped: grouped.join("\n") };
 }
 
 export function StatusBar() {
@@ -132,17 +160,18 @@ export function StatusBar() {
   // or conflict present -- tier skips, reachability problems and a
   // stair opening onto the wrong room are always this severity) and soft
   // recommendations (a `desired` miss), so the two never read as equally
-  // urgent.
+  // urgent. Each list is organized floor by floor, not left in whatever
+  // order the four checks happened to produce them in.
   const { privacyProblems, privacyRecommendations } = useMemo(() => {
     const boxesById = new Map(boxes.map((b) => [b.id, b]));
     const findings = collectFindings(boxes, storeys, arrows, autoCarve, passableOf, tierOf, auxiliaryOf, isServiceOf, circulationOf);
     const problems = [
-      ...tierSentences(findings.tier, boxesById),
-      ...reachabilitySentences(findings.reachability, boxesById),
-      ...stairConnectionSentences(findings.stairConnection, boxesById),
-      ...adjacencyProblemSentences(findings.adjacency),
+      ...tierFindings(findings.tier, boxesById),
+      ...reachabilityFindings(findings.reachability, boxesById),
+      ...stairConnectionFindings(findings.stairConnection, boxesById),
+      ...adjacencyProblemFindings(findings.adjacency),
     ];
-    return { privacyProblems: problems, privacyRecommendations: adjacencyRecommendationSentences(findings.adjacency) };
+    return { privacyProblems: organizeByFloor(problems), privacyRecommendations: organizeByFloor(adjacencyRecommendationFindings(findings.adjacency)) };
   }, [boxes, storeys, arrows, autoCarve]);
 
   const plotArea = plot.width * plot.depth;
@@ -183,18 +212,18 @@ export function StatusBar() {
             <IconFootprints size={12} /> {sharedCount} shared stretch{sharedCount === 1 ? "" : "es"} of wall on this floor
           </span>
         )}
-        {privacyProblems.length > 0 && (
-          <span className="status-item error" title={privacyProblems.join("\n")}>
-            <IconWarn size={12} /> {privacyProblems.length} privacy {privacyProblems.length === 1 ? "problem" : "problems"}:{" "}
-            {privacyProblems.slice(0, 2).join("; ")}
-            {privacyProblems.length > 2 && ` — and ${privacyProblems.length - 2} more (hover to see all)`}
+        {privacyProblems.flat.length > 0 && (
+          <span className="status-item error" title={privacyProblems.grouped}>
+            <IconWarn size={12} /> {privacyProblems.flat.length} privacy {privacyProblems.flat.length === 1 ? "problem" : "problems"}:{" "}
+            {privacyProblems.flat.slice(0, 2).join("; ")}
+            {privacyProblems.flat.length > 2 && ` — and ${privacyProblems.flat.length - 2} more (hover to see all, by floor)`}
           </span>
         )}
-        {privacyRecommendations.length > 0 && (
-          <span className="status-item muted" title={privacyRecommendations.join("\n")}>
-            {privacyRecommendations.length} {privacyRecommendations.length === 1 ? "recommendation" : "recommendations"}:{" "}
-            {privacyRecommendations.slice(0, 2).join("; ")}
-            {privacyRecommendations.length > 2 && ` — and ${privacyRecommendations.length - 2} more (hover to see all)`}
+        {privacyRecommendations.flat.length > 0 && (
+          <span className="status-item muted" title={privacyRecommendations.grouped}>
+            {privacyRecommendations.flat.length} {privacyRecommendations.flat.length === 1 ? "recommendation" : "recommendations"}:{" "}
+            {privacyRecommendations.flat.slice(0, 2).join("; ")}
+            {privacyRecommendations.flat.length > 2 && ` — and ${privacyRecommendations.flat.length - 2} more (hover to see all, by floor)`}
           </span>
         )}
       </div>

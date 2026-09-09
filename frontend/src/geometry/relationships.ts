@@ -363,6 +363,17 @@ export function stairConnectionProblems(
   return out;
 }
 
+export type Severity = "problem" | "recommendation";
+
+/** `required` and `undesired` are hard problems: a real requirement
+ * unmet, or a real conflict present. `desired` is a softer, "usually a
+ * good idea" recommendation. The one place this split is decided, so a
+ * UI (StatusBar) and a scoring function (`scoreCandidate`) read the same
+ * rule instead of two copies that could drift apart. */
+export function adjacencySeverity(row: AdjacencyStatus): Severity {
+  return row.relation === "desired" ? "recommendation" : "problem";
+}
+
 export interface Findings {
   reachability: ReachabilityProblem[];
   adjacency: AdjacencyStatus[];
@@ -399,4 +410,66 @@ export function collectFindings(
     tier: tierViolations(boxes, storeys, arrows, autoCarve, tierOf),
     stairConnection: stairConnectionProblems(boxes, storeys, arrows, autoCarve, circulationOf),
   };
+}
+
+export interface Score {
+  /** Every tier violation, reachability problem, stair-connection
+   * problem, and unmet `required`/`undesired` adjacency row -- anything
+   * that would show up in the status bar's Problems line. A candidate
+   * with any of these is not acceptable, whatever else it gets right. */
+  hardProblems: number;
+  /** Every unmet `desired` adjacency row -- the status bar's
+   * Recommendations line. Never blocks a candidate from passing; only
+   * ranks it against other candidates that are equally free of hard
+   * problems. */
+  softRecommendations: number;
+  /** The findings the two counts above were taken from, so a caller can
+   * explain *why* a candidate scored the way it did, not just report the
+   * number. */
+  findings: Findings;
+}
+
+/**
+ * The intended entry point for anything that needs to judge a candidate
+ * room arrangement -- a future generator (Task 8/9), or anything else
+ * that wants a pass/fail and a ranking rather than a raw finding list.
+ * Built directly on `collectFindings`; adds no checking logic of its
+ * own, only two counts.
+ *
+ * Deliberately two numbers, not one blended score: collapsing hard
+ * problems and soft recommendations into a single weighted number would
+ * let enough satisfied recommendations outweigh an unmet requirement,
+ * which is exactly backwards. Use `compareScores` to rank two scores
+ * correctly -- hard problems always decide first.
+ */
+export function scoreCandidate(
+  boxes: Box[],
+  storeys: number,
+  arrows: Arrow[],
+  autoCarve: boolean,
+  passableOf: (roomType: string) => boolean,
+  tierOf: (roomType: string) => PrivacyTier | undefined,
+  auxiliaryOf: (roomType: string) => boolean,
+  isServiceOf: (roomType: string) => boolean,
+  circulationOf: (roomType: string) => boolean,
+): Score {
+  const findings = collectFindings(boxes, storeys, arrows, autoCarve, passableOf, tierOf, auxiliaryOf, isServiceOf, circulationOf);
+  const unmetAdjacency = findings.adjacency.filter((r) => !r.ok);
+  const hardProblems =
+    findings.tier.length +
+    findings.reachability.length +
+    findings.stairConnection.length +
+    unmetAdjacency.filter((r) => adjacencySeverity(r) === "problem").length;
+  const softRecommendations = unmetAdjacency.filter((r) => adjacencySeverity(r) === "recommendation").length;
+  return { hardProblems, softRecommendations, findings };
+}
+
+/** Whether `a` outranks `b`: negative when `a` is better, positive when
+ * `b` is better, 0 when they're equal on both counts -- the standard
+ * shape `Array.prototype.sort` expects, so ranking a list of candidates
+ * is `candidates.sort(compareScores)`. Hard problems decide first; soft
+ * recommendations only break a tie between two candidates that are
+ * already equally free of hard problems. */
+export function compareScores(a: Score, b: Score): number {
+  return a.hardProblems - b.hardProblems || a.softRecommendations - b.softRecommendations;
 }
