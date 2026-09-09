@@ -24,14 +24,41 @@ import { useMemo, useState } from "react";
 import { displayShapes } from "../geometry/carve";
 import { polyArea } from "../geometry/poly";
 import { isOpenToBelow, liveBoxes } from "../geometry/snap";
-import type { Box, BoxShape } from "../geometry/types";
+import type { Box, BoxShape, PrivacyTier } from "../geometry/types";
 import { fillFor } from "../palette";
-import { ROOM_TYPES, roomTypeInfo } from "../rooms";
+import { ROOM_TYPES, roomTypeInfo, tierOf } from "../rooms";
 import { useStore } from "../state/store";
 import { IconCircle, IconRect } from "./icons";
 
 function floorLabel(i: number): string {
   return i === 0 ? "G" : String(i);
+}
+
+const PRIVACY_TIER_LABEL: Record<PrivacyTier, string> = { public: "Public", "semi-public": "Semi-public", private: "Private" };
+
+/** The privacy-override picker, next to Type: blank means "use this
+ * room's own type default" (rooms.ts's `tier`) -- almost every row stays
+ * on that. Set only for the rare instance that needs to diverge, such as
+ * a dining room a household also opens to its diwaniya. Shown even for a
+ * type with no default at all (a bathroom, a service room) since an
+ * override can still give one specific instance a tier the type itself
+ * doesn't carry. */
+function PrivacyTierSelect({ box, onSelect, onChange }: { box: Box; onSelect: () => void; onChange: (tier: PrivacyTier | undefined) => void }) {
+  const typeDefault = tierOf(box.roomType);
+  return (
+    <select
+      className="type-select"
+      value={box.privacyTierOverride ?? ""}
+      title={`Privacy level for the public-to-private check. Leave as default to use ${typeDefault ? PRIVACY_TIER_LABEL[typeDefault] : "this type's own (none)"}.`}
+      onFocus={onSelect}
+      onChange={(e) => onChange(e.target.value ? (e.target.value as PrivacyTier) : undefined)}
+    >
+      <option value="">{typeDefault ? `Default (${PRIVACY_TIER_LABEL[typeDefault]})` : "Default (none)"}</option>
+      <option value="public">{PRIVACY_TIER_LABEL.public}</option>
+      <option value="semi-public">{PRIVACY_TIER_LABEL["semi-public"]}</option>
+      <option value="private">{PRIVACY_TIER_LABEL.private}</option>
+    </select>
+  );
 }
 
 /** Name, type, size and shape for a zone not yet on the plan. Typical
@@ -175,6 +202,7 @@ export function Schedule() {
           <tr>
             <th>Space</th>
             <th>Type</th>
+            <th title="How private this room is for the public-to-private door check. Default follows the type; override only the rare instance that needs to differ.">Privacy</th>
             <th>Floor</th>
             <th className="r">Width</th>
             <th className="r">Depth</th>
@@ -191,7 +219,7 @@ export function Schedule() {
         {unplaced.length > 0 && (
           <tbody className="unplaced">
             <tr className="section-row">
-              <td colSpan={11}>To place ({unplaced.length})</td>
+              <td colSpan={12}>To place ({unplaced.length})</td>
             </tr>
             {unplaced.map((b) => (
               <tr key={b.id} className={selected.includes(b.id) ? "selected" : ""} onClick={() => select(b.id)}>
@@ -226,6 +254,9 @@ export function Schedule() {
                       </option>
                     ))}
                   </select>
+                </td>
+                <td>
+                  <PrivacyTierSelect box={b} onSelect={() => select(b.id)} onChange={(tier) => updateBox(b.id, { privacyTierOverride: tier })} />
                 </td>
                 <td>
                   <select
@@ -339,6 +370,9 @@ export function Schedule() {
                       </option>
                     ))}
                   </select>
+                </td>
+                <td>
+                  <PrivacyTierSelect box={b} onSelect={() => select(b.id)} onChange={(tier) => updateBox(b.id, { privacyTierOverride: tier })} />
                 </td>
                 <td>
                   {spans ? (
@@ -458,7 +492,8 @@ export function Schedule() {
       </table>
       <p className="schedule-foot muted">
         Width, depth and height in m, area in m², rotation in degrees. A zone taller than 3.0 m reaches the storey above.
-        Priority 1 is the highest; it decides which zone gives way when automatic carving is on.
+        Priority 1 is the highest; it decides which zone gives way when automatic carving is on. Privacy follows the room
+        type by default -- leave it as Default unless this one instance genuinely needs to differ.
       </p>
     </div>
   );
