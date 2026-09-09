@@ -145,10 +145,10 @@ export function StatusBar() {
           </span>
         )}
         {privacySentences.length > 0 && (
-          <span className="status-item warning">
+          <span className="status-item warning" title={privacySentences.join("\n")}>
             <IconWarn size={12} /> {privacySentences.length} privacy {privacySentences.length === 1 ? "issue" : "issues"}:{" "}
             {privacySentences.slice(0, 2).join("; ")}
-            {privacySentences.length > 2 && ` — and ${privacySentences.length - 2} more`}
+            {privacySentences.length > 2 && ` — and ${privacySentences.length - 2} more (hover to see all)`}
           </span>
         )}
       </div>
