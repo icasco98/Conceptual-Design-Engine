@@ -163,14 +163,18 @@ they ask the same function. If a third feature needs the same question
 answered, it calls this one rather than writing its own pairwise
 `touchingEdge` loop.
 
-**Circulation routes through a real door when one is placed on that
-wall, not just the wall's geometric midpoint.** `circulation.ts`'s
-`doorOnWall` checks a candidate door against the wall's own run (`Touch.lo`/
-`Touch.hi`), not merely how close it is to the midpoint, so a door near
-one end of a long wall still counts and a door on a *different* wall of
-the same host does not. No door placed there yet still routes -- through
-the plain midpoint -- so a plan sketched before any doors exist keeps
-working exactly as before.
+**Circulation routes through a real door, and only a real door -- no
+door means no edge, full stop.** `circulation.ts`'s `doorOnWall` checks
+a candidate door against the wall's own run (`Touch.lo`/`Touch.hi`), not
+merely how close it is to the midpoint, so a door near one end of a long
+wall still counts and a door on a *different* wall of the same host does
+not. Two zones sharing a wall with no door on it get no edge in the
+graph at all -- not a fainter line, not a fallback to the wall's
+geometric midpoint. `actorRoute` returns `{segments, broken}`; a leg
+Dijkstra cannot reach lands in `broken` and is named on the actor's card
+("No route: X → Y") rather than silently skipped or drawn anyway. A
+route the tool shows is the tool asserting that route is walkable; it
+must never assert that on a wall nobody has actually put a door in.
 
 **Two infrastructure ideas raised and deliberately not done:** adjacency
 that respects a carved shape rather than a box's raw rectangle was

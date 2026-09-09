@@ -11,7 +11,7 @@ import { boxesTrulyIntersect, centerOf, obbOf, obbsSeparated, rectOf } from "./r
 import { isOpenToBelow, liveBoxes, nearestNeighborPoint, snapToGrid, snapToNearbyNeighbors, wallSnapAdjust } from "./snap";
 import { touchDelta, touchSelected, polyGap } from "./touch";
 import type { Arrow, Box, Plot, Point, Poly } from "./types";
-import { SAMPLE_STOREYS, sampleBoxes } from "../sample";
+import { SAMPLE_STOREYS, sampleArrows, sampleBoxes } from "../sample";
 import { zoneOf } from "../rooms";
 
 function box(partial: Partial<Box> & { id: string; left: number; top: number; width: number; height: number }): Box {
@@ -752,15 +752,22 @@ describe("a polygon's own corners and walls are held inside the plot too", () =>
   });
 });
 
-describe("circulation: a route is the shortest walk of the touching graph", () => {
+describe("circulation: a route is the shortest walk of real doors", () => {
   // A: 0,0 4x4 -- B: 4,0 3x4 -- C: 7,0 4x4, all touching in a straight line.
   const a = box({ id: "a", left: 0, top: 0, width: 4, height: 4 });
   const b = box({ id: "b", left: 4, top: 0, width: 3, height: 4 });
   const c = box({ id: "c", left: 7, top: 0, width: 4, height: 4 });
   const isolated = box({ id: "isolated", left: 20, top: 20, width: 2, height: 2 });
+  // Doors placed at each wall's own midpoint -- so a route through them
+  // lands on the same points the old geometric-midpoint fallback used
+  // to produce. The fallback is gone; a real door placed exactly there
+  // should still look the same.
+  const doorAB: Arrow = { id: "dAB", level: 0, hostId: "a", kind: "interior", side: 1, t: 0.5, dir: 1 };
+  const doorBC: Arrow = { id: "dBC", level: 0, hostId: "b", kind: "interior", side: 1, t: 0.5, dir: 1 };
+  const DOORS = [doorAB, doorBC];
 
   it("finds no edge between zones that do not touch", () => {
-    const graph = buildCirculationGraph([a, isolated], 1);
+    const graph = buildCirculationGraph([a, isolated], 1, []);
     expect(graph.get("a") ?? []).toHaveLength(0);
   });
 
@@ -771,61 +778,69 @@ describe("circulation: a route is the shortest walk of the touching graph", () =
     expect(touchGraph.get("isolated") ?? []).toHaveLength(0);
   });
 
-  it("routes through the shared wall's own midpoint, not straight through the room between", () => {
-    const graph = buildCirculationGraph([a, b, c], 1);
-    const segments = actorRoute(graph, [a, b, c], ["a", "c"]);
+  it("a wall two zones share is not, on its own, a route -- no door placed on it means no edge at all", () => {
+    const graph = buildCirculationGraph([a, b, c], 1, []);
+    expect(graph.get("a") ?? []).toHaveLength(0);
+    const { segments, broken } = actorRoute(graph, [a, b, c], ["a", "c"]);
+    expect(segments).toHaveLength(0);
+    expect(broken).toEqual([{ fromId: "a", toId: "c" }]);
+  });
+
+  it("routes through a placed door, not straight through the room between", () => {
+    const graph = buildCirculationGraph([a, b, c], 1, DOORS);
+    const { segments, broken } = actorRoute(graph, [a, b, c], ["a", "c"]);
+    expect(broken).toHaveLength(0);
     expect(segments).toHaveLength(1);
     const pts = segments[0].pts;
-    // centre a, wall a|b, centre b, wall b|c, centre c.
+    // centre a, door a|b, centre b, door b|c, centre c.
     expect(pts).toHaveLength(5);
     expect(pts[0]).toEqual(centerOf(rectOf(a)));
     expect(pts[1]).toEqual([4, 2]);
     expect(pts[2]).toEqual(centerOf(rectOf(b)));
     expect(pts[3]).toEqual([7, 2]);
     expect(pts[4]).toEqual(centerOf(rectOf(c)));
-    // Centre a to the a|b wall (2m), on to b's centre (1.5m), on to the
-    // b|c wall (1.5m), on to c's centre (2m): the mid points sit exactly
-    // on the straight line between centres here, so this also equals the
+    // Centre a to the a|b door (2m), on to b's centre (1.5m), on to the
+    // b|c door (1.5m), on to c's centre (2m): the doors sit exactly on
+    // the straight line between centres here, so this also equals the
     // distance straight from centre to centre.
     expect(routeLength(segments)).toBeCloseTo(7, 6);
   });
 
   it("skips a waypoint that no longer exists, rather than losing the rest of the route", () => {
-    const graph = buildCirculationGraph([a, b, c], 1);
-    const segments = actorRoute(graph, [a, b, c], ["a", "gone", "c"]);
+    const graph = buildCirculationGraph([a, b, c], 1, DOORS);
+    const { segments } = actorRoute(graph, [a, b, c], ["a", "gone", "c"]);
     expect(routeLength(segments)).toBeCloseTo(7, 6);
   });
 
   it("excludes a rotated zone: it has no wall to share", () => {
     const turned = box({ id: "turned", left: 4, top: 0, width: 3, height: 4, rotation: 20 });
-    const graph = buildCirculationGraph([a, turned, c], 1);
-    expect(buildCirculationGraph([a, turned], 1).get("a") ?? []).toHaveLength(0);
-    expect(actorRoute(graph, [a, turned, c], ["a", "c"])).toHaveLength(0);
+    const graph = buildCirculationGraph([a, turned, c], 1, DOORS);
+    expect(buildCirculationGraph([a, turned], 1, DOORS).get("a") ?? []).toHaveLength(0);
+    expect(actorRoute(graph, [a, turned, c], ["a", "c"]).segments).toHaveLength(0);
   });
 
   it("routes through a placed door's real position, not the wall's geometric midpoint", () => {
     const door: Arrow = { id: "d1", level: 0, hostId: "a", kind: "interior", side: 1, t: 0.75, dir: 1 };
-    const graphNoDoor = buildCirculationGraph([a, b, c], 1);
-    const graphWithDoor = buildCirculationGraph([a, b, c], 1, [door]);
-    const withoutDoor = actorRoute(graphNoDoor, [a, b, c], ["a", "b"]);
-    const withDoor = actorRoute(graphWithDoor, [a, b, c], ["a", "b"]);
-    expect(withoutDoor[0].pts[1]).toEqual([4, 2]); // the wall's own geometric midpoint
-    expect(withDoor[0].pts[1][0]).toBeCloseTo(4, 6);
-    expect(withDoor[0].pts[1][1]).toBeCloseTo(3, 6); // 75% down the wall, where the door actually is
+    const graph = buildCirculationGraph([a, b, c], 1, [door]);
+    const { segments } = actorRoute(graph, [a, b, c], ["a", "b"]);
+    expect(segments[0].pts[1][0]).toBeCloseTo(4, 6);
+    expect(segments[0].pts[1][1]).toBeCloseTo(3, 6); // 75% down the wall, where the door actually is
   });
 
-  it("ignores a door on one of the host's other walls -- it is not this wall's door", () => {
+  it("ignores a door on one of the host's other walls -- it is not this wall's door, so there is still no route", () => {
     const door: Arrow = { id: "d2", level: 0, hostId: "a", kind: "interior", side: 0, t: 0.5, dir: 1 };
     const graph = buildCirculationGraph([a, b, c], 1, [door]);
-    const seg = actorRoute(graph, [a, b, c], ["a", "b"]);
-    expect(seg[0].pts[1]).toEqual([4, 2]);
+    const { segments, broken } = actorRoute(graph, [a, b, c], ["a", "b"]);
+    expect(segments).toHaveLength(0);
+    expect(broken).toEqual([{ fromId: "a", toId: "b" }]);
   });
 
-  it("ignores an exterior door -- it leads outside, not into the other zone", () => {
+  it("ignores an exterior door -- it leads outside, not into the other zone, so there is still no route", () => {
     const door: Arrow = { id: "d3", level: 0, hostId: "a", kind: "exterior-main", side: 1, t: 0.75, dir: 1 };
     const graph = buildCirculationGraph([a, b, c], 1, [door]);
-    const seg = actorRoute(graph, [a, b, c], ["a", "b"]);
-    expect(seg[0].pts[1]).toEqual([4, 2]);
+    const { segments, broken } = actorRoute(graph, [a, b, c], ["a", "b"]);
+    expect(segments).toHaveLength(0);
+    expect(broken).toEqual([{ fromId: "a", toId: "b" }]);
   });
 
   it("flags a servant's, a guest's or a majlis guest's route through a private zone, never the household's", () => {
@@ -859,12 +874,12 @@ describe("circulation: a route is the shortest walk of the touching graph", () =
   });
 
   it("finds the wall two actors' routes both cross, on the storey it happens on", () => {
-    const graph = buildCirculationGraph([a, b, c], 1);
-    const owner = { actorId: "owner", segments: actorRoute(graph, [a, b, c], ["a", "c"]) };
-    const staff = { actorId: "staff", segments: actorRoute(graph, [a, b, c], ["c", "a"]) };
+    const graph = buildCirculationGraph([a, b, c], 1, DOORS);
+    const owner = { actorId: "owner", segments: actorRoute(graph, [a, b, c], ["a", "c"]).segments };
+    const staff = { actorId: "staff", segments: actorRoute(graph, [a, b, c], ["c", "a"]).segments };
     const shared = sharedSegments([owner, staff], 0);
     // Both walk the whole a-b-c corridor, in opposite directions: all
-    // four of its stretches -- centre to wall, wall to centre, twice
+    // four of its stretches -- centre to door, door to centre, twice
     // over -- are shared.
     expect(shared).toHaveLength(4);
     expect(shared[0].actorIds.sort()).toEqual(["owner", "staff"]);
@@ -874,20 +889,26 @@ describe("circulation: a route is the shortest walk of the touching graph", () =
 
   it("finds nothing shared between routes that never cross", () => {
     const d = box({ id: "d", left: 0, top: 10, width: 4, height: 4 });
-    const graph = buildCirculationGraph([a, b, c, d], 1);
-    const alone = { actorId: "alone", segments: actorRoute(graph, [a, b, c, d], ["a", "d"]) };
+    const graph = buildCirculationGraph([a, b, c, d], 1, DOORS);
+    const alone = { actorId: "alone", segments: actorRoute(graph, [a, b, c, d], ["a", "c"]).segments };
     expect(sharedSegments([alone], 0)).toHaveLength(0);
   });
 
   describe("against the real sample house", () => {
     const boxes = sampleBoxes();
-    const graph = buildCirculationGraph(boxes, SAMPLE_STOREYS);
+    // The same door set the app itself starts a new project with:
+    // the sample's own placed doors, plus whatever Suggest adds on
+    // each storey -- mirroring state/store.ts's newProject().
+    let arrows: Arrow[] = sampleArrows(boxes);
+    for (let lv = 0; lv < SAMPLE_STOREYS; lv++) arrows = [...arrows, ...suggestArrows(liveBoxes(boxes, lv), arrows, lv)];
+    const graph = buildCirculationGraph(boxes, SAMPLE_STOREYS, arrows);
     const byName = (name: string) => boxes.find((bx) => bx.name === name)!;
 
     it("crosses from the ground floor to storey 1 through the stair, not around it", () => {
       const primary = byName("Primary Bedroom");
       const dining = byName("Dining Room");
-      const segments = actorRoute(graph, boxes, [primary.id, dining.id]);
+      const { segments, broken } = actorRoute(graph, boxes, [primary.id, dining.id]);
+      expect(broken).toHaveLength(0);
       const levels = new Set(segments.map((s) => s.level));
       expect(levels.has(1)).toBe(true);
       expect(levels.has(0)).toBe(true);
@@ -895,16 +916,32 @@ describe("circulation: a route is the shortest walk of the touching graph", () =
       expect(segments[segments.length - 1].pts.at(-1)).toEqual(centerOf(rectOf(dining)));
     });
 
-    it("finds the back-of-house route from the garage to the dining room shorter than through the living room", () => {
-      const segments = actorRoute(graph, boxes, [byName("Garage").id, byName("Dining Room").id]);
+    it("routes from the garage to the dining room through the entry and living room -- the only doored way there", () => {
+      // The Kitchen and the Utility room both touch a shorter path to
+      // the Dining Room geometrically, but none of the sample's default
+      // doors actually connect either of them to it -- so the honest
+      // route is the longer one through the Front Entry and Living Room.
+      const { segments, broken } = actorRoute(graph, boxes, [byName("Garage").id, byName("Dining Room").id]);
+      expect(broken).toHaveLength(0);
       expect(segments).toHaveLength(1);
       expect(segments[0].level).toBe(0);
-      // Utility -> Kitchen -> Dining is the shorter of the two ways round
-      // (about 12.2 m against about 12.8 m through the Entry and Living
-      // Room), so Dijkstra should never touch the Living Room's centre.
       const livingCentre = centerOf(rectOf(byName("Living Room")));
-      expect(segments[0].pts.some((p) => p[0] === livingCentre[0] && p[1] === livingCentre[1])).toBe(false);
-      expect(routeLength(segments)).toBeLessThan(12.5);
+      const entryCentre = centerOf(rectOf(byName("Front Entry")));
+      expect(segments[0].pts.some((p) => p[0] === livingCentre[0] && p[1] === livingCentre[1])).toBe(true);
+      expect(segments[0].pts.some((p) => p[0] === entryCentre[0] && p[1] === entryCentre[1])).toBe(true);
+    });
+
+    it("finds no direct route between the kitchen and the dining room -- they touch, but no door was placed on that wall", () => {
+      const kitchen = byName("Kitchen");
+      const dining = byName("Dining Room");
+      expect((graph.get(kitchen.id) ?? []).some((e) => e.to === dining.id)).toBe(false);
+      // The honest long way still exists, through the doors that are
+      // actually there -- this is not a broken leg, just a longer one.
+      const { segments, broken } = actorRoute(graph, boxes, [kitchen.id, dining.id]);
+      expect(broken).toHaveLength(0);
+      expect(segments).toHaveLength(1);
+      const livingCentre = centerOf(rectOf(byName("Living Room")));
+      expect(segments[0].pts.some((p) => p[0] === livingCentre[0] && p[1] === livingCentre[1])).toBe(true);
     });
   });
 });

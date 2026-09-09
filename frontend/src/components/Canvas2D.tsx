@@ -294,11 +294,11 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
     if (!showCirculation) return [];
     return actors
       .filter((a) => a.visible)
-      .map((a) => ({ actor: a, segments: actorRoute(circGraph, boxes, a.waypoints).filter((s) => s.level === level) }));
+      .map((a) => ({ actor: a, segments: actorRoute(circGraph, boxes, a.waypoints).segments.filter((s) => s.level === level) }));
   }, [showCirculation, actors, circGraph, boxes, level]);
   const circShared = useMemo(() => {
     if (!showCirculation) return [];
-    const routes = actors.filter((a) => a.visible).map((a) => ({ actorId: a.id, segments: actorRoute(circGraph, boxes, a.waypoints) }));
+    const routes = actors.filter((a) => a.visible).map((a) => ({ actorId: a.id, segments: actorRoute(circGraph, boxes, a.waypoints).segments }));
     return sharedSegments(routes, level);
   }, [showCirculation, actors, circGraph, boxes, level]);
 

@@ -3,17 +3,19 @@
  *
  * An actor is a name, a role and an ordered list of waypoints -- rooms it
  * visits, in order. The route between them is never edited directly: it
- * is the shortest walk of the touching graph (geometry/circulation.ts),
- * recomputed from wherever the zones are right now, the same way a door
- * arrow's suggestion is. "Record route" arms the plan to add a waypoint
- * on every zone you click next, in the order you click them; "Done" (or
- * Esc) disarms it. Nothing here is undo-covered -- an actor is an
- * analysis laid over the drawing, not a change to it.
+ * is the shortest walk of real doors (geometry/circulation.ts), recomputed
+ * from wherever the zones and arrows are right now. "Record route" arms
+ * the plan to add a waypoint on every zone you click next, in the order
+ * you click them; "Done" (or Esc) disarms it. Nothing here is
+ * undo-covered -- an actor is an analysis laid over the drawing, not a
+ * change to it.
  *
- * Two things are computed and shown, never stored: the round-trip
- * distance of each visible route, and the stretches of wall more than one
+ * Three things are computed and shown, never stored: the round-trip
+ * distance of each visible route; the stretches of wall more than one
  * actor's route crosses on the storey you are looking at -- a corridor
- * pinch point or a kitchen two routes both cut through.
+ * pinch point or a kitchen two routes both cut through; and, plainly
+ * named rather than just a shorter-looking line, any leg of a route that
+ * no sequence of placed doors actually connects.
  */
 import { useMemo, useState } from "react";
 
@@ -100,15 +102,15 @@ export function Actors() {
   const boxesById = useMemo(() => new Map(boxes.map((b) => [b.id, b])), [boxes]);
   const graph = useMemo(() => buildCirculationGraph(boxes, storeys, arrows), [boxes, storeys, arrows]);
   const info = useMemo(() => {
-    const out = new Map<string, { length: number; crosses: boolean }>();
+    const out = new Map<string, { length: number; crosses: boolean; broken: { fromId: string; toId: string }[] }>();
     for (const a of actors) {
-      const segments = actorRoute(graph, boxes, a.waypoints);
-      out.set(a.id, { length: routeLength(segments), crosses: outOfBounds(a.role, a.waypoints, boxesById, zoneOf) });
+      const { segments, broken } = actorRoute(graph, boxes, a.waypoints);
+      out.set(a.id, { length: routeLength(segments), crosses: outOfBounds(a.role, a.waypoints, boxesById, zoneOf), broken });
     }
     return out;
   }, [actors, graph, boxes, boxesById]);
   const shared = useMemo(() => {
-    const routes = actors.filter((a) => a.visible).map((a) => ({ actorId: a.id, segments: actorRoute(graph, boxes, a.waypoints) }));
+    const routes = actors.filter((a) => a.visible).map((a) => ({ actorId: a.id, segments: actorRoute(graph, boxes, a.waypoints).segments }));
     return sharedSegments(routes, level);
   }, [actors, graph, boxes, level]);
   const sharedNames = useMemo(() => {
@@ -143,7 +145,7 @@ export function Actors() {
       {actors.length === 0 && <p className="muted actors-empty">No actors yet. Add one above, then Record route and click zones on the plan in the order they'd walk them.</p>}
       <div className="actor-list">
         {actors.map((a) => {
-          const stats = info.get(a.id) ?? { length: 0, crosses: false };
+          const stats = info.get(a.id) ?? { length: 0, crosses: false, broken: [] };
           const recording = routingActorId === a.id;
           return (
             <div key={a.id} className={`actor-row ${recording ? "recording" : ""}`}>
@@ -197,6 +199,15 @@ export function Actors() {
                   ))
                 )}
               </div>
+              {stats.broken.length > 0 && (
+                <div className="actor-broken">
+                  {stats.broken.map((leg, i) => (
+                    <div key={i} className="actor-flag" title="No sequence of real doors connects these two stops">
+                      <IconWarn size={12} /> No route: {boxesById.get(leg.fromId)?.name ?? "?"} &rarr; {boxesById.get(leg.toId)?.name ?? "?"}
+                    </div>
+                  ))}
+                </div>
+              )}
               <div className="actor-foot">
                 <button
                   type="button"

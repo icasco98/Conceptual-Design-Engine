@@ -2,23 +2,31 @@
  * Circulation: who walks where.
  *
  * A route is never drawn by hand and never stored as a shape -- it is the
- * shortest walk of the touching graph between an actor's waypoints, the
- * same graph `suggestArrows` already walks from the entry (arrows.ts),
- * built by the one shared primitive both use (`buildTouchGraph`, doors.ts).
+ * shortest walk of a graph of real doors between an actor's waypoints.
  * Move a room, and every actor's route recomputes from wherever it is
  * now; there is no second copy of the plan to keep in step.
+ *
+ * Two zones sharing a wall are not, on that fact alone, a way through:
+ * an edge exists only where a placed door actually sits on that wall
+ * (`doorOnWall`). No door, no edge -- not a fainter line, not a
+ * softened one, simply nothing there for Dijkstra to find. A plan with
+ * no doors yet has no circulation yet either; `suggestArrows`'s own
+ * Suggest button is the one-click way to give it some. This is a
+ * deliberate reversal of an earlier version, which fell back to a
+ * wall's geometric midpoint when no door existed -- that made every
+ * touching pair walkable regardless of whether a door was ever placed,
+ * which meant a route could be drawn with total confidence through a
+ * wall nobody had opened. A tool that shows a route is a tool asserting
+ * the route is possible; it must never assert something it does not
+ * know to be true.
  *
  * Only axis-aligned, unrotated rectangles take part in the graph -- the
  * same limit `suggestArrows` already has, for the same reason: a rotated
  * or round zone has no wall to share, so there is nothing to walk across.
  *
- * A route is threaded through a real door when one is placed on that
- * wall -- the same door a person would actually use, not just the
- * nearest one geometrically -- and through the wall's own midpoint when
- * none is, so a plan sketched before any doors exist still gets a
- * route. A zone spanning several storeys (a stair) is the same node on
- * each of them, so it is what lets a route cross from one storey's graph
- * to the next -- there is no separate stair machinery here either.
+ * A zone spanning several storeys (a stair) is the same node on each of
+ * them, so it is what lets a route cross from one storey's graph to the
+ * next -- there is no separate stair machinery here either.
  */
 import { arrowSegment } from "./arrows";
 import { buildTouchGraph, type Touch } from "./doors";
@@ -63,11 +71,13 @@ function doorOnWall(arrows: Arrow[], a: Box, b: Box, touch: Touch): Point | null
   return null;
 }
 
-/** Every pair of zones sharing a wall, on any storey, both directions.
- * Built fresh from the current arrangement -- there is nothing here to
- * keep in step by hand. `arrows` is optional so a caller with none to
- * hand (a test, mostly) still gets the wall-midpoint fallback. */
-export function buildCirculationGraph(boxes: Box[], storeys: number, arrows: Arrow[] = []): CirculationGraph {
+/** Every pair of zones with a real door between them, on any storey,
+ * both directions. Built fresh from the current arrangement -- there is
+ * nothing here to keep in step by hand. `buildTouchGraph` still supplies
+ * the candidate pairs (nothing without a shared wall could have a door
+ * on one), but sharing a wall is no longer enough on its own: only a
+ * pair `doorOnWall` actually finds a door for becomes an edge. */
+export function buildCirculationGraph(boxes: Box[], storeys: number, arrows: Arrow[]): CirculationGraph {
   const graph: CirculationGraph = new Map();
   const byId = new Map(boxes.map((b) => [b.id, b]));
   const push = (from: Box, to: Box, mid: Point, level: number) => {
@@ -93,9 +103,10 @@ export function buildCirculationGraph(boxes: Box[], storeys: number, arrows: Arr
         seen.add(pairKey);
         const to = byId.get(edge.to);
         if (!to) continue;
-        const mid = doorOnWall(levelArrows, from, to, edge.touch) ?? edge.touch.mid;
-        push(from, to, mid, level);
-        push(to, from, mid, level);
+        const door = doorOnWall(levelArrows, from, to, edge.touch);
+        if (!door) continue;
+        push(from, to, door, level);
+        push(to, from, door, level);
       }
     }
   }
@@ -159,23 +170,42 @@ function shortestPath(graph: CirculationGraph, fromId: string, toId: string): Pa
 
 export interface RouteSegment {
   level: number;
-  /** Plan-frame meters: room centre, wall midpoint, room centre, ... */
+  /** Plan-frame meters: room centre, door, room centre, ... */
   pts: Point[];
+}
+
+/** One leg of an actor's route -- between two consecutive waypoints --
+ * that no sequence of real doors connects. Named rather than merely
+ * absent: a route that stops short of where it was asked to go should
+ * say why, the same way a flagged carve is named in the status bar
+ * instead of just looking wrong. */
+export interface BrokenLeg {
+  fromId: string;
+  toId: string;
+}
+
+export interface ActorRouteResult {
+  segments: RouteSegment[];
+  broken: BrokenLeg[];
 }
 
 const closeEnough = (a: Point, b: Point) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-6;
 
 /** An actor's route, chained through its waypoints in order and split
  * into one segment per storey it crosses. A waypoint that no longer
- * exists, or that has no path from the one before it (the plan is in two
- * disconnected pieces, say), breaks only that one leg -- the rest of the
- * route still draws, the same way a stray door arrow does not stop the
- * others from being suggested. */
-export function actorRoute(graph: CirculationGraph, boxes: Box[], waypoints: string[]): RouteSegment[] {
+ * exists is skipped outright, the same way a stray reference anywhere
+ * else in the tool is; a waypoint that still exists but that no run of
+ * real doors reaches from the one before it is kept, and that leg is
+ * reported in `broken` instead of being drawn -- there is a real
+ * difference between "this stop is gone" and "this stop exists but you
+ * cannot actually walk to it," and only one of those is this function's
+ * business to hide. */
+export function actorRoute(graph: CirculationGraph, boxes: Box[], waypoints: string[]): ActorRouteResult {
   const boxesById = new Map(boxes.map((b) => [b.id, b]));
   const present = waypoints.filter((id) => boxesById.has(id));
   const centerOfId = (id: string) => centerOf(rectOf(boxesById.get(id)!));
   const segments: RouteSegment[] = [];
+  const broken: BrokenLeg[] = [];
   let cur: RouteSegment | null = null;
   const pushPoint = (level: number, pt: Point) => {
     if (cur && cur.level === level) {
@@ -188,7 +218,10 @@ export function actorRoute(graph: CirculationGraph, boxes: Box[], waypoints: str
   };
   for (let i = 0; i < present.length - 1; i++) {
     const leg = shortestPath(graph, present[i], present[i + 1]);
-    if (!leg) continue;
+    if (!leg) {
+      broken.push({ fromId: present[i], toId: present[i + 1] });
+      continue;
+    }
     const startLevel = leg.edges[0]?.level ?? boxesById.get(leg.nodes[0])!.level;
     pushPoint(startLevel, centerOfId(leg.nodes[0]));
     for (let k = 0; k < leg.edges.length; k++) {
@@ -196,7 +229,7 @@ export function actorRoute(graph: CirculationGraph, boxes: Box[], waypoints: str
       pushPoint(leg.edges[k].level, centerOfId(leg.nodes[k + 1]));
     }
   }
-  return segments.filter((s) => s.pts.length >= 2);
+  return { segments: segments.filter((s) => s.pts.length >= 2), broken };
 }
 
 export function routeLength(segments: RouteSegment[]): number {

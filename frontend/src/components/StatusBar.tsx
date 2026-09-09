@@ -49,7 +49,7 @@ export function StatusBar() {
     const visible = actors.filter((a) => a.visible);
     if (!visible.length) return 0;
     const graph = buildCirculationGraph(boxes, storeys, arrows);
-    const routes = visible.map((a) => ({ actorId: a.id, segments: actorRoute(graph, boxes, a.waypoints) }));
+    const routes = visible.map((a) => ({ actorId: a.id, segments: actorRoute(graph, boxes, a.waypoints).segments }));
     return sharedSegments(routes, level).length;
   }, [showCirculation, actors, boxes, storeys, level, arrows]);
 
