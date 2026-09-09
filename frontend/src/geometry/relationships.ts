@@ -138,7 +138,10 @@ export function checkAdjacency(boxes: Box[], storeys: number, autoCarve: boolean
   return out;
 }
 
-const TIER_ORDER: Record<PrivacyTier, number> = { public: 0, "semi-public": 1, private: 2 };
+/** Public < Semi-public < Private. Exported so a consumer turning a
+ * `TierViolation` into a sentence can say which side is the more public
+ * one, without redefining the ordering a second time. */
+export const TIER_ORDER: Record<PrivacyTier, number> = { public: 0, "semi-public": 1, private: 2 };
 
 export interface TierViolation {
   roomAId: string;

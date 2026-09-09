@@ -13,12 +13,52 @@
 import { useMemo } from "react";
 
 import { displayShapes } from "../geometry/carve";
-import { actorRoute, buildCirculationGraph, sharedSegments } from "../geometry/circulation";
+import { actorRoute, buildCirculationGraph, sharedSegments, type ReachabilityProblem } from "../geometry/circulation";
 import { outsidePlot } from "../geometry/plot";
 import { polyArea } from "../geometry/poly";
+import { collectFindings, TIER_ORDER, type AdjacencyStatus, type TierViolation } from "../geometry/relationships";
 import { liveBoxes } from "../geometry/snap";
+import { passableOf, roomTypeInfo, tierOf } from "../rooms";
+import type { Box } from "../geometry/types";
 import { IconFootprints, IconTick, IconWarn } from "./icons";
 import { useStore } from "../state/store";
+
+/** One plain sentence per finding, naming the actual rooms and the
+ * actual consequence -- never "tier," "gradient" or "category," so
+ * nobody needs to know this tool's own vocabulary to understand what's
+ * wrong. Lives here, in the component, the same way `Actors.tsx` keeps
+ * `ROLE_LABEL`/`OUT_OF_BOUNDS_LABEL` next to where they're shown rather
+ * than in `geometry/`, which hands back structured data and stops there
+ * on purpose. */
+function tierSentences(violations: TierViolation[], boxesById: Map<string, Box>): string[] {
+  return violations.flatMap((v) => {
+    const a = boxesById.get(v.roomAId);
+    const b = boxesById.get(v.roomBId);
+    if (!a || !b) return [];
+    const [outer, inner] = TIER_ORDER[v.tierA] < TIER_ORDER[v.tierB] ? [a, b] : [b, a];
+    return [`${outer.name} opens straight into ${inner.name}`];
+  });
+}
+
+function reachabilitySentences(problems: ReachabilityProblem[], boxesById: Map<string, Box>): string[] {
+  return problems.flatMap((p) => {
+    const room = boxesById.get(p.roomId);
+    if (!room) return [];
+    const via = p.viaIds.map((id) => boxesById.get(id)?.name).filter((n): n is string => !!n);
+    if (via.length) return [`The only way to ${room.name} is through ${via.join(" or ")}`];
+    return [`Nothing connects to ${room.name} yet`];
+  });
+}
+
+function adjacencySentences(rows: AdjacencyStatus[]): string[] {
+  return rows
+    .filter((r) => !r.ok)
+    .map((r) => {
+      const a = roomTypeInfo(r.a).label;
+      const b = roomTypeInfo(r.b).label;
+      return r.relation === "undesired" ? `${a} and ${b} share a wall -- that's usually kept separate` : `${a} and ${b} aren't near each other, though they usually should be`;
+    });
+}
 
 export function StatusBar() {
   const boxes = useStore((s) => s.boxes);
@@ -52,6 +92,19 @@ export function StatusBar() {
     const routes = visible.map((a) => ({ actorId: a.id, segments: actorRoute(graph, boxes, a.waypoints).segments }));
     return sharedSegments(routes, level).length;
   }, [showCirculation, actors, boxes, storeys, level, arrows, autoCarve]);
+
+  // Every storey at once, the same reasoning as `strays` above: a privacy
+  // problem two floors up is exactly the kind of thing a person would not
+  // otherwise notice.
+  const privacySentences = useMemo(() => {
+    const boxesById = new Map(boxes.map((b) => [b.id, b]));
+    const findings = collectFindings(boxes, storeys, arrows, autoCarve, passableOf, tierOf);
+    return [
+      ...tierSentences(findings.tier, boxesById),
+      ...reachabilitySentences(findings.reachability, boxesById),
+      ...adjacencySentences(findings.adjacency),
+    ];
+  }, [boxes, storeys, arrows, autoCarve]);
 
   const plotArea = plot.width * plot.depth;
 
@@ -89,6 +142,13 @@ export function StatusBar() {
         {showCirculation && sharedCount > 0 && (
           <span className="status-item warning">
             <IconFootprints size={12} /> {sharedCount} shared stretch{sharedCount === 1 ? "" : "es"} of wall on this floor
+          </span>
+        )}
+        {privacySentences.length > 0 && (
+          <span className="status-item warning">
+            <IconWarn size={12} /> {privacySentences.length} privacy {privacySentences.length === 1 ? "issue" : "issues"}:{" "}
+            {privacySentences.slice(0, 2).join("; ")}
+            {privacySentences.length > 2 && ` — and ${privacySentences.length - 2} more`}
           </span>
         )}
       </div>
