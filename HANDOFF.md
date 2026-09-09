@@ -201,15 +201,23 @@ different question, deliberately kept separate:
   host's own current outline. Recomputed fresh every time, like a
   route -- nothing here is stored.
 - *Where does a click or drag resolve to?* `liveWallPoint` (arrows.ts),
-  used by `addArrow`/`moveArrow` (store.ts): the nearest point on the
-  box's *current, carved* outline, never a point a carve has already
-  taken away -- hosted on whichever raw shape that point actually
-  belongs to, the box's own or a direct carver's (`ownerOf`, the same
-  rule `suggestArrows`'s walk uses to decide which of a touching pair
-  hosts a carve-boundary door, regardless of which side the walk
-  reached it from first -- a plain wall belongs to both, a cut boundary
-  only to the carver). A carved-away wall position is not filtered
-  after the fact; it is simply never offered.
+  used by `addArrow`/`moveArrow` (store.ts) **and** Canvas2D's own
+  hover preview (the pointer-move handler on the plan `<svg>`, arming
+  `arrowPreview`) -- the same resolver both times, on purpose, after the
+  preview alone once shipped still calling the raw `nearestWallPoint`
+  directly: correct on commit, but the line you watched drag into place
+  first could jump to whichever of the host's four *original* sides was
+  nearest by raw distance, carve or no carve. `liveWallPoint` returns
+  the nearest point on the box's *current, carved* outline, never a
+  point a carve has already taken away -- hosted on whichever raw shape
+  that point actually belongs to, the box's own or a direct carver's
+  (`ownerOf`, the same rule `suggestArrows`'s walk uses to decide which
+  of a touching pair hosts a carve-boundary door, regardless of which
+  side the walk reached it from first -- a plain wall belongs to both, a
+  cut boundary only to the carver). A carved-away wall position is not
+  filtered after the fact; it is simply never offered -- true for the
+  preview you see before clicking and the door you get after, because
+  it is the one function answering both.
 - *Where does a door that has already gone stale draw itself?*
   `Arrow.frozenAt` (types.ts) plus `syncFrozenArrowPoints`
   (circulation.ts): a stale arrow's raw `hostId`/`side`/`t` position can

@@ -56,7 +56,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { CategoryKey } from "../api/types";
-import { arrowSegment, nearestWallPoint } from "../geometry/arrows";
+import { arrowSegment, liveWallPoint } from "../geometry/arrows";
 import { displayShapes } from "../geometry/carve";
 import { actorRoute, buildCirculationGraph, liveArrowIds, sharedSegments } from "../geometry/circulation";
 import { footprintRings, ringsToPath } from "../geometry/footprint";
@@ -267,6 +267,7 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
     return back.length && front.length ? [...back, ...front] : live;
   }, [live, selected]);
   const shapes = useMemo(() => displayShapes(live, autoCarve), [live, autoCarve]);
+  const polyById = useMemo(() => new Map(shapes.map((s) => [s.id, s.page])), [shapes]);
   const footprint = useMemo(() => ringsToPath(footprintRings(shapes.map((s) => s.page))), [shapes]);
   /** The building outline of the storey below, and of the one above, to
    *  line walls up against. Only the outlines: room names and walls from
@@ -999,8 +1000,9 @@ export function Canvas2D({ width: paneWidth }: { width?: number } = {}) {
             const host = hostId ? live.find((b) => b.id === hostId) : undefined;
             if (host && !isOpenToBelow(host, level)) {
               const p = toMeters(e);
-              const { side, t } = nearestWallPoint(host, [p.x, p.y]);
-              setArrowPreview({ hostId: host.id, side, t });
+              const resolved = liveWallPoint(host, live, polyById, [p.x, p.y]);
+              if (resolved) setArrowPreview({ hostId: resolved.host.id, side: resolved.side, t: resolved.t });
+              else setArrowPreview(null);
             } else {
               setArrowPreview(null);
             }
