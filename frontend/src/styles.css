@@ -160,8 +160,8 @@ input { font: inherit; }
   background: var(--panel); border-top: 1px solid var(--rule);
 }
 .status-line {
-  display: flex; align-items: center; gap: 14px;
-  min-height: 38px; padding: 0 20px;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px;
+  min-height: 38px; padding: 8px 20px;
 }
 .status-item { display: flex; align-items: center; gap: 7px; font-size: 12px; }
 .status-item.ok { color: var(--good); }
