@@ -1247,73 +1247,95 @@ describe("reachabilityProblems: every room reached from some exterior door, with
   });
 });
 
-describe("checkAdjacency: the required/desired/undesired table, checked against what actually touches", () => {
-  it("satisfies a required pair when the two types actually share a wall", () => {
+describe("checkAdjacency: required/desired need a real door; undesired only cares about touching", () => {
+  it("does NOT satisfy a required pair by touching alone -- a shared wall with no door is not walkable", () => {
+    // The exact case a real house turned up: two rooms sharing a wall
+    // with nothing cut into it. Adjacency-on-paper is not the same as
+    // being able to actually walk between them.
     const kitchen = box({ id: "kitchen", left: 0, top: 0, width: 4, height: 4, roomType: "kitchen" });
     const dining = box({ id: "dining", left: 4, top: 0, width: 4, height: 4, roomType: "dining_room" });
-    const row = checkAdjacency([kitchen, dining], 1, false).find((r) => r.a === "kitchen" && r.b === "dining_room");
+    const row = checkAdjacency([kitchen, dining], 1, [], false).find((r) => r.a === "kitchen" && r.b === "dining_room");
     expect(row?.relation).toBe("required");
+    expect(row?.ok).toBe(false);
+    // Distinguishable from not being near each other at all -- this is
+    // what lets a message say "there's a wall but no door" rather than
+    // "these aren't even adjacent," which would be simply wrong here.
+    expect(row?.touching).toBe(true);
+  });
+
+  it("satisfies a required pair once an actual door connects them", () => {
+    const kitchen = box({ id: "kitchen", left: 0, top: 0, width: 4, height: 4, roomType: "kitchen" });
+    const dining = box({ id: "dining", left: 4, top: 0, width: 4, height: 4, roomType: "dining_room" });
+    const door: Arrow = { id: "d", level: 0, hostId: "kitchen", kind: "interior", side: 1, t: 0.5, dir: 1 };
+    const row = checkAdjacency([kitchen, dining], 1, [door], false).find((r) => r.a === "kitchen" && r.b === "dining_room");
     expect(row?.ok).toBe(true);
   });
 
-  it("fails a required pair when both types exist but do not touch", () => {
+  it("fails a required pair when both types exist but do not even touch", () => {
     const kitchen = box({ id: "kitchen", left: 0, top: 0, width: 4, height: 4, roomType: "kitchen" });
     const dining = box({ id: "dining", left: 20, top: 20, width: 4, height: 4, roomType: "dining_room" });
-    const row = checkAdjacency([kitchen, dining], 1, false).find((r) => r.a === "kitchen" && r.b === "dining_room");
+    const row = checkAdjacency([kitchen, dining], 1, [], false).find((r) => r.a === "kitchen" && r.b === "dining_room");
     expect(row?.ok).toBe(false);
+    expect(row?.touching).toBe(false);
   });
 
   it("leaves a row out entirely when one of its two room types is absent -- never reported as failing", () => {
     const kitchen = box({ id: "kitchen", left: 0, top: 0, width: 4, height: 4, roomType: "kitchen" });
-    const rows = checkAdjacency([kitchen], 1, false);
+    const rows = checkAdjacency([kitchen], 1, [], false);
     expect(rows.find((r) => r.a === "kitchen" && r.b === "dining_room")).toBeUndefined();
   });
 
-  it("flags an undesired pair that touches, and clears one that does not", () => {
+  it("flags an undesired pair that merely touches -- no door needed for this one to be a problem", () => {
     const bedroom = box({ id: "bedroom", left: 0, top: 0, width: 4, height: 4, roomType: "bedroom" });
     const garageTouching = box({ id: "g1", left: 4, top: 0, width: 4, height: 4, roomType: "garage_single" });
-    const touchingRow = checkAdjacency([bedroom, garageTouching], 1, false).find((r) => r.a === "bedroom" && r.b === "garage_single");
+    const touchingRow = checkAdjacency([bedroom, garageTouching], 1, [], false).find((r) => r.a === "bedroom" && r.b === "garage_single");
     expect(touchingRow?.relation).toBe("undesired");
     expect(touchingRow?.ok).toBe(false);
 
     const garageFar = box({ id: "g2", left: 30, top: 30, width: 4, height: 4, roomType: "garage_single" });
-    const farRow = checkAdjacency([bedroom, garageFar], 1, false).find((r) => r.a === "bedroom" && r.b === "garage_single");
+    const farRow = checkAdjacency([bedroom, garageFar], 1, [], false).find((r) => r.a === "bedroom" && r.b === "garage_single");
     expect(farRow?.ok).toBe(true);
   });
 
   it("an untagged extra instance of the same type does not break the old at-least-one check -- no regression", () => {
-    // A master ensuite (touching) plus a completely unrelated hall
-    // bathroom (not touching, not tagged): the type-level check still
-    // passes, exactly as it always has, because neither instance
+    // A master ensuite (with a real door) plus a completely unrelated
+    // hall bathroom (not touching, not tagged): the type-level check
+    // still passes, exactly as it always has, because neither instance
     // declares an owner for this test to hold accountable.
     const master = box({ id: "master", left: 0, top: 0, width: 6, height: 6, roomType: "master_bedroom" });
     const ensuite = box({ id: "ensuite", left: 6, top: 0, width: 2, height: 2, roomType: "bathroom" });
     const hallBath = box({ id: "hallBath", left: 30, top: 30, width: 2, height: 2, roomType: "bathroom" });
-    const row = checkAdjacency([master, ensuite, hallBath], 1, false).find((r) => r.a === "master_bedroom" && r.b === "bathroom");
+    const door: Arrow = { id: "d", level: 0, hostId: "ensuite", kind: "interior", side: 3, t: 0.5, dir: 1 };
+    const row = checkAdjacency([master, ensuite, hallBath], 1, [door], false).find((r) => r.a === "master_bedroom" && r.b === "bathroom");
     expect(row?.ok).toBe(true);
     expect(row?.failedInstanceIds).toEqual([]);
   });
 
-  it("catches a declared attachment that does not actually touch its claimed owner -- the his-and-hers case", () => {
+  it("catches a declared attachment that does not actually connect to its claimed owner -- the his-and-hers case", () => {
     const master = box({ id: "master", left: 0, top: 0, width: 6, height: 6, roomType: "master_bedroom" });
-    // His bathroom really does touch the master bedroom's right wall.
+    // His bathroom really does have a door into the master bedroom.
     const hisBath = box({ id: "hisBath", left: 6, top: 0, width: 2, height: 2, roomType: "bathroom", attachedTo: "master" });
+    const hisDoor: Arrow = { id: "d1", level: 0, hostId: "hisBath", kind: "interior", side: 3, t: 0.5, dir: 1 };
     // Her bathroom claims the master bedroom too, but sits nowhere near
     // it -- the placement mistake this check exists to catch.
     const herBath = box({ id: "herBath", left: 30, top: 30, width: 2, height: 2, roomType: "bathroom", attachedTo: "master" });
-    const row = checkAdjacency([master, hisBath, herBath], 1, false).find((r) => r.a === "master_bedroom" && r.b === "bathroom");
-    // Type-level "at least one touches" would have said true here (his
+    const row = checkAdjacency([master, hisBath, herBath], 1, [hisDoor], false).find((r) => r.a === "master_bedroom" && r.b === "bathroom");
+    // Type-level "at least one connects" would have said true here (his
     // bathroom alone satisfies it) -- the declared, unmet claim is what
     // correctly fails the row instead.
     expect(row?.ok).toBe(false);
     expect(row?.failedInstanceIds).toEqual(["herBath"]);
   });
 
-  it("passes when both declared attachments actually touch their claimed owner", () => {
+  it("passes when both declared attachments actually have a real door to their claimed owner", () => {
     const master = box({ id: "master", left: 0, top: 0, width: 6, height: 6, roomType: "master_bedroom" });
     const hisBath = box({ id: "hisBath", left: 6, top: 0, width: 2, height: 2, roomType: "bathroom", attachedTo: "master" });
     const herBath = box({ id: "herBath", left: 0, top: 6, width: 6, height: 2, roomType: "bathroom", attachedTo: "master" });
-    const row = checkAdjacency([master, hisBath, herBath], 1, false).find((r) => r.a === "master_bedroom" && r.b === "bathroom");
+    const doors: Arrow[] = [
+      { id: "d1", level: 0, hostId: "hisBath", kind: "interior", side: 3, t: 0.5, dir: 1 },
+      { id: "d2", level: 0, hostId: "herBath", kind: "interior", side: 0, t: 0.5, dir: 1 },
+    ];
+    const row = checkAdjacency([master, hisBath, herBath], 1, doors, false).find((r) => r.a === "master_bedroom" && r.b === "bathroom");
     expect(row?.ok).toBe(true);
     expect(row?.failedInstanceIds).toEqual([]);
   });

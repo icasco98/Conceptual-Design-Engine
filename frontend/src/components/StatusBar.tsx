@@ -56,7 +56,12 @@ function adjacencySentences(rows: AdjacencyStatus[]): string[] {
     .map((r) => {
       const a = roomTypeInfo(r.a).label;
       const b = roomTypeInfo(r.b).label;
-      return r.relation === "undesired" ? `${a} and ${b} share a wall -- that's usually kept separate` : `${a} and ${b} aren't near each other, though they usually should be`;
+      if (r.relation === "undesired") return `${a} and ${b} share a wall -- that's usually kept separate`;
+      // Two different reasons a required/desired pair can fail, worth
+      // telling apart: a wall with no door in it reads very differently
+      // from two rooms that were never placed near each other at all.
+      if (r.touching) return `${a} and ${b} share a wall, but there's no door between them`;
+      return `${a} and ${b} aren't near each other, though they usually should be`;
     });
 }
 
