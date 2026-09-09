@@ -8,7 +8,7 @@ import { footprintRings } from "./footprint";
 import { clampDrawnRect, clampGroup, isOutsidePlot, limitGrowth, limitPointGrowth, settleInPlot, shiftInside } from "./plot";
 import { anchorPoint, polyArea, polyOfBox, rectPolyOf, resizedFromAnchor } from "./poly";
 import { boxesTrulyIntersect, centerOf, obbOf, obbsSeparated, rectOf } from "./rect";
-import { checkAdjacency, tierViolations } from "./relationships";
+import { checkAdjacency, collectFindings, tierViolations } from "./relationships";
 import { isOpenToBelow, liveBoxes, nearestNeighborPoint, snapToGrid, snapToNearbyNeighbors, wallSnapAdjust } from "./snap";
 import { touchDelta, touchSelected, polyGap } from "./touch";
 import type { Arrow, Box, Plot, Point, Poly } from "./types";
@@ -1294,5 +1294,22 @@ describe("tierViolations: a real door may connect adjacent tiers, never skip one
     // Overridden to Public on this one instance, it no longer does.
     const overridden: Box = { ...office, privacyTierOverride: "public" };
     expect(tierViolations([entry, overridden], 1, [door], false, tierOf)).toEqual([]);
+  });
+});
+
+describe("collectFindings: the one call that ties all three checks together", () => {
+  it("returns each check's own result under its own key, computed fresh, nothing cached", () => {
+    const entry = box({ id: "entry", left: 0, top: 0, width: 4, height: 4, roomType: "entry" });
+    const bed = box({ id: "bed", left: 4, top: 0, width: 4, height: 4, roomType: "bedroom" });
+    const ext: Arrow = { id: "ext", level: 0, hostId: "entry", kind: "exterior-main", side: 3, t: 0.5, dir: 1 };
+    const door: Arrow = { id: "d", level: 0, hostId: "entry", kind: "interior", side: 1, t: 0.5, dir: 1 };
+    const findings = collectFindings([entry, bed], 1, [ext, door], false, passableOf, tierOf);
+    // Same door, evaluated three different ways: it does connect the
+    // household to the entry (no reachability problem), it is not a
+    // room-type pair the adjacency table has an opinion on, and it does
+    // skip a privacy tier.
+    expect(findings.reachability).toEqual([]);
+    expect(findings.adjacency).toEqual([]);
+    expect(findings.tier).toHaveLength(1);
   });
 });

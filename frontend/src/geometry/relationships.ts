@@ -16,11 +16,19 @@
  * zones can share a wall with no door at all, which is `circulation.ts`'s
  * question, not this one.
  *
- * Both are read-only diagnostics. Neither ever moves, resizes or
+ * `collectFindings`, at the bottom, ties this file's two checks and
+ * `circulation.ts`'s third (`reachabilityProblems`) into the one call a
+ * consumer needs -- but it hands back raw, structured results only
+ * (room ids, tiers, relation kinds), no wording and no UI. Turning that
+ * into something a person reads (icons, plain-language sentences, a
+ * panel) is deliberately a separate step: this file's job stops at
+ * making the findings computable, not at deciding how they look.
+ *
+ * Both checks are read-only diagnostics. Neither ever moves, resizes or
  * auto-connects anything -- same "flag, never force" rule as the rest of
  * this tool.
  */
-import { buildCirculationGraph, levelTouchData } from "./circulation";
+import { buildCirculationGraph, levelTouchData, reachabilityProblems, type ReachabilityProblem } from "./circulation";
 import { liveBoxes } from "./snap";
 import type { Arrow, Box, PrivacyTier } from "./types";
 
@@ -179,4 +187,37 @@ export function tierViolations(
     }
   }
   return out;
+}
+
+export interface Findings {
+  reachability: ReachabilityProblem[];
+  adjacency: AdjacencyStatus[];
+  tier: TierViolation[];
+}
+
+/**
+ * Every finding, for the plan as it stands right now -- the one call a
+ * consumer (a store selector, a status-bar hook, whatever Task 5 ends up
+ * building) needs to make. Recomputed fresh from the current arrangement
+ * every time, like everything else this tool derives rather than stores:
+ * there is no cached "findings" state anywhere to fall out of step.
+ *
+ * Deliberately not filtered, sorted or de-duplicated for display -- that
+ * is a UI decision (which finding is worth surfacing first, whether an
+ * adjacency success is even worth mentioning), not this function's. It
+ * hands back exactly what each check itself returns.
+ */
+export function collectFindings(
+  boxes: Box[],
+  storeys: number,
+  arrows: Arrow[],
+  autoCarve: boolean,
+  passableOf: (roomType: string) => boolean,
+  tierOf: (roomType: string) => PrivacyTier | undefined,
+): Findings {
+  return {
+    reachability: reachabilityProblems(boxes, storeys, arrows, autoCarve, passableOf),
+    adjacency: checkAdjacency(boxes, storeys, autoCarve),
+    tier: tierViolations(boxes, storeys, arrows, autoCarve, tierOf),
+  };
 }
