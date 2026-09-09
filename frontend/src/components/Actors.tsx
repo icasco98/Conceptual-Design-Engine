@@ -30,19 +30,19 @@ const ROLE_LABEL: Record<ActorRole, string> = {
   guest: "Guest",
   servant: "Staff",
   exterior: "Exterior only",
-  majlis_guest: "Majlis guest",
+  diwaniya_guest: "Diwaniya guest",
 };
 
 /** What to call the flag when `outOfBounds` finds one, in words that say
  * what actually went wrong for that role rather than one flat phrase --
- * a majlis guest in the kitchen is not the same problem as staff in a
+ * a diwaniya guest in the kitchen is not the same problem as staff in a
  * bedroom, even though both trip the same check. */
 const OUT_OF_BOUNDS_LABEL: Record<ActorRole, string> = {
   served: "",
   guest: "enters a private zone",
   servant: "enters a private zone",
   exterior: "enters a private zone",
-  majlis_guest: "leaves the reception room",
+  diwaniya_guest: "leaves the diwaniya",
 };
 
 function AddActorForm() {
@@ -118,15 +118,16 @@ export function Actors() {
     const ids = new Set(shared.flatMap((s) => s.actorIds));
     return actors.filter((a) => ids.has(a.id)).map((a) => a.name);
   }, [shared, actors]);
-  // A majlis guest sharing a stretch with the household or a household
+  // A diwaniya guest sharing a stretch with the household or a household
   // guest is a different order of problem than staff crossing a family
-  // corridor: the whole point of a reception room is that this never
-  // happens, so it reads as critical rather than a routine pinch point.
+  // corridor: the whole point of the diwaniya's own entrance is that this
+  // never happens, so it reads as critical rather than a routine pinch
+  // point.
   const sharedCritical = useMemo(() => {
     const byId = new Map(actors.map((a) => [a.id, a]));
     return shared.some((s) => {
       const roles = s.actorIds.map((id) => byId.get(id)?.role);
-      return roles.includes("majlis_guest") && roles.some((r) => r === "served" || r === "guest");
+      return roles.includes("diwaniya_guest") && roles.some((r) => r === "served" || r === "guest");
     });
   }, [shared, actors]);
 

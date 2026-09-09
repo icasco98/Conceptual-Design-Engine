@@ -121,8 +121,12 @@ function doorOnWall(arrows: Arrow[], a: Box, b: Box, touch: Touch): Point | null
 /** A storey's zones, their current post-carve outlines, and which of
  * them touch -- the one computation `buildCirculationGraph` and
  * `liveArrowIds` both need, so they read the same geometry rather than
- * two slightly different copies of it. */
-function levelTouchData(boxes: Box[], level: number, autoCarve: boolean) {
+ * two slightly different copies of it. Exported for `relationships.ts`,
+ * which needs the same per-storey touch graph for its own, separate
+ * question (do two room types that should be adjacent actually share a
+ * wall) -- reusing this rather than recomputing carve and touch data a
+ * second way. */
+export function levelTouchData(boxes: Box[], level: number, autoCarve: boolean) {
   const live = liveBoxes(boxes, level);
   const shapes = displayShapes(live, autoCarve);
   const polyById = new Map(shapes.map((s) => [s.id, s.page]));
@@ -392,19 +396,25 @@ export function routeLength(segments: RouteSegment[]): number {
   return total;
 }
 
-/** Every category a role has no business being waypointed into. `served`
- * is never checked -- the household goes anywhere in its own house.
- * `guest` and `servant`/`exterior` share the one rule already here:
- * stay out of the private (`category_a`) rooms. `majlis_guest` is
- * stricter again -- a reception guest is received in the one room built
- * for that (`category_d`) and has no business anywhere else the plan
- * sorts rooms into, private or shared or service alike. */
+/** Every category a role has no business being waypointed into. Kept on
+ * category (`zoneOf`), deliberately not on tier: this is a *role*
+ * question (who is this room's category off-limits to) not a *gradient*
+ * one (does a door skip a buffer), and the two axes genuinely disagree in
+ * places -- the kitchen is Private *tier* (no stranger's door should open
+ * straight onto it) but stays Shared *category* (a servant's whole job
+ * can be standing in it). Using tier here would have wrongly barred
+ * household staff from the kitchen. `served` is never checked -- the
+ * household goes anywhere in its own house. `guest` and `servant`/
+ * `exterior` share the one rule already here: stay out of the private
+ * (`category_a`) rooms. `diwaniya_guest` is stricter again -- received in
+ * the one room built for that (`category_d`) and has no business anywhere
+ * else the plan sorts rooms into, private or shared or service alike. */
 const FORBIDDEN: Record<ActorRole, (zone: string) => boolean> = {
   served: () => false,
   guest: (zone) => zone === "category_a",
   servant: (zone) => zone === "category_a",
   exterior: (zone) => zone === "category_a",
-  majlis_guest: (zone) => zone !== "category_d",
+  diwaniya_guest: (zone) => zone !== "category_d",
 };
 
 /** True once any waypoint an actor visits falls in a category its role
@@ -418,6 +428,83 @@ export function outOfBounds(role: ActorRole, waypoints: string[], boxesById: Map
     const b = boxesById.get(id);
     return !!b && forbidden(zoneOf(b.roomType));
   });
+}
+
+export interface ReachabilityProblem {
+  roomId: string;
+  /** "unreachable": no run of real doors gets here from any exterior
+   * door at all. "through_room": a run exists, but every one of them
+   * passes through a room that is not passable -- named in `viaIds`,
+   * nearest first, the same "say what's actually wrong" treatment a
+   * broken route leg already gets. */
+  kind: "unreachable" | "through_room";
+  viaIds: string[];
+}
+
+/** Every room the plan fails to serve properly, walking out from *every*
+ * exterior door at once -- a household's main entry and a diwaniya's own
+ * street door are both legitimate starting points, so this is not single-
+ * entry reachability with one exception carved out for the diwaniya; it
+ * is the general case, and a house with only a main entry is just the
+ * one-root version of it.
+ *
+ * The walk may only continue on from a passable room (rooms.ts's
+ * `passable`) -- a corridor obviously, a bedroom or a bathroom never. A
+ * room reached only through non-passable rooms is reported with what
+ * stands in the way, so the answer names the actual problem ("the only
+ * way to Bedroom 2 is through the Garage") rather than just declaring the
+ * plan wrong. An exterior door's own host is always a valid room to reach
+ * (and to continue walking from), whether or not its room type is itself
+ * passable -- entering the house at all is not blocked by what kind of
+ * room the entry happens to be.
+ *
+ * Nothing here is about privacy tiers -- a diwaniya guest being confined
+ * to Public rooms is `outOfBounds`'s question, asked only of the
+ * waypoints someone actually assigns an actor. This check asks a
+ * different, structural question that applies to everyone: can this room
+ * be reached by *some* run of real doors at all, without demanding a walk
+ * through somewhere nobody should be walking through. */
+export function reachabilityProblems(
+  boxes: Box[],
+  storeys: number,
+  arrows: Arrow[],
+  autoCarve: boolean,
+  passableOf: (roomType: string) => boolean,
+): ReachabilityProblem[] {
+  const graph = buildCirculationGraph(boxes, storeys, arrows, autoCarve);
+  const byId = new Map(boxes.map((b) => [b.id, b]));
+  const roots = new Set(arrows.filter((a) => a.kind === "exterior-main" || a.kind === "exterior-side").map((a) => a.hostId));
+  const reached = new Set(roots);
+  const queue = [...roots];
+  while (queue.length) {
+    const cur = queue.shift()!;
+    const box = byId.get(cur);
+    const canContinue = roots.has(cur) || (!!box && passableOf(box.roomType));
+    if (!canContinue) continue;
+    for (const edge of graph.get(cur) ?? []) {
+      if (reached.has(edge.to)) continue;
+      reached.add(edge.to);
+      queue.push(edge.to);
+    }
+  }
+  const problems: ReachabilityProblem[] = [];
+  for (let level = 0; level < storeys; level++) {
+    for (const b of liveBoxes(boxes, level)) {
+      if (b.level !== level) continue; // count a tall zone once, on its own base storey
+      if (reached.has(b.id)) continue;
+      const neighborIds = (graph.get(b.id) ?? []).map((e) => e.to);
+      const blockers = neighborIds.filter((id) => {
+        const nb = byId.get(id);
+        return !!nb && !roots.has(id) && !passableOf(nb.roomType);
+      });
+      if (neighborIds.length && blockers.length) {
+        problems.push({ roomId: b.id, kind: "through_room", viaIds: blockers.slice(0, 2) });
+      } else {
+        problems.push({ roomId: b.id, kind: "unreachable", viaIds: [] });
+      }
+    }
+  }
+  return problems;
 }
 
 /** Segments, from any number of actors, that share a stretch of wall on

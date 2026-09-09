@@ -2,17 +2,18 @@ import { describe, expect, it } from "vitest";
 
 import { carveWith, displayShapes, releaseCarve, shapeStillUsable, subtractKeepLargest } from "./carve";
 import { arrowSegment, liveWallPoint, nearestWallPoint, suggestArrows } from "./arrows";
-import { actorRoute, arrowIsLive, buildCirculationGraph, liveArrowIds, outOfBounds, routeLength, sharedSegments, syncFrozenArrowPoints } from "./circulation";
+import { actorRoute, arrowIsLive, buildCirculationGraph, liveArrowIds, outOfBounds, reachabilityProblems, routeLength, sharedSegments, syncFrozenArrowPoints } from "./circulation";
 import { buildTouchGraph, touchingEdges } from "./doors";
 import { footprintRings } from "./footprint";
 import { clampDrawnRect, clampGroup, isOutsidePlot, limitGrowth, limitPointGrowth, settleInPlot, shiftInside } from "./plot";
 import { anchorPoint, polyArea, polyOfBox, rectPolyOf, resizedFromAnchor } from "./poly";
 import { boxesTrulyIntersect, centerOf, obbOf, obbsSeparated, rectOf } from "./rect";
+import { checkAdjacency, tierViolations } from "./relationships";
 import { isOpenToBelow, liveBoxes, nearestNeighborPoint, snapToGrid, snapToNearbyNeighbors, wallSnapAdjust } from "./snap";
 import { touchDelta, touchSelected, polyGap } from "./touch";
 import type { Arrow, Box, Plot, Point, Poly } from "./types";
 import { SAMPLE_STOREYS, sampleArrows, sampleBoxes } from "../sample";
-import { zoneOf } from "../rooms";
+import { passableOf, tierOf, zoneOf } from "../rooms";
 
 function box(partial: Partial<Box> & { id: string; left: number; top: number; width: number; height: number }): Box {
   return {
@@ -976,7 +977,7 @@ describe("circulation: a route is the shortest walk of real doors", () => {
     expect(broken).toEqual([{ fromId: "a", toId: "b" }]);
   });
 
-  it("flags a servant's, a guest's or a majlis guest's route through a private zone, never the household's", () => {
+  it("flags a servant's, a guest's or a diwaniya guest's route through a private zone, never the household's", () => {
     const bedroom = box({ id: "bedroom", left: 0, top: 0, width: 4, height: 4, roomType: "bedroom" });
     const kitchen = box({ id: "kitchen", left: 4, top: 0, width: 4, height: 4, roomType: "kitchen" });
     const byId = new Map([
@@ -990,18 +991,18 @@ describe("circulation: a route is the shortest walk of real doors", () => {
     expect(outOfBounds("guest", ["kitchen"], byId, zoneOf)).toBe(false);
   });
 
-  it("holds a majlis guest to the reception room alone -- shared and service zones are out of bounds too", () => {
-    const majlis = box({ id: "majlis", left: 0, top: 0, width: 6, height: 6, roomType: "majlis" });
+  it("holds a diwaniya guest to the diwaniya alone -- shared and service zones are out of bounds too", () => {
+    const diwaniya = box({ id: "diwaniya", left: 0, top: 0, width: 6, height: 6, roomType: "diwaniya" });
     const living = box({ id: "living", left: 6, top: 0, width: 4, height: 4, roomType: "living_room" });
     const garage = box({ id: "garage", left: 0, top: 6, width: 4, height: 4, roomType: "garage_single" });
     const byId = new Map([
-      ["majlis", majlis],
+      ["diwaniya", diwaniya],
       ["living", living],
       ["garage", garage],
     ]);
-    expect(outOfBounds("majlis_guest", ["majlis"], byId, zoneOf)).toBe(false);
-    expect(outOfBounds("majlis_guest", ["majlis", "living"], byId, zoneOf)).toBe(true);
-    expect(outOfBounds("majlis_guest", ["garage"], byId, zoneOf)).toBe(true);
+    expect(outOfBounds("diwaniya_guest", ["diwaniya"], byId, zoneOf)).toBe(false);
+    expect(outOfBounds("diwaniya_guest", ["diwaniya", "living"], byId, zoneOf)).toBe(true);
+    expect(outOfBounds("diwaniya_guest", ["garage"], byId, zoneOf)).toBe(true);
     // The same living room is perfectly fine for a household guest.
     expect(outOfBounds("guest", ["living"], byId, zoneOf)).toBe(false);
   });
@@ -1038,7 +1039,7 @@ describe("circulation: a route is the shortest walk of real doors", () => {
     const byName = (name: string) => boxes.find((bx) => bx.name === name)!;
 
     it("crosses from the ground floor to storey 1 through the stair, not around it", () => {
-      const primary = byName("Primary Bedroom");
+      const primary = byName("Master Bedroom");
       const dining = byName("Dining Room");
       const { segments, broken } = actorRoute(graph, boxes, [primary.id, dining.id]);
       expect(broken).toHaveLength(0);
@@ -1154,5 +1155,144 @@ describe("syncFrozenArrowPoints: a live door's frozenAt tracks it, a stale one's
     const orphan: Arrow = { id: "o", level: 0, hostId: "gone", side: 0, t: 0.5, dir: 1 };
     const [synced] = syncFrozenArrowPoints([a, b], [orphan], false);
     expect(synced).toBe(orphan);
+  });
+});
+
+describe("reachabilityProblems: every room reached from some exterior door, without walking through a non-passable one", () => {
+  it("reports nothing for a plan every room is properly reached in", () => {
+    const entry = box({ id: "entry", left: 0, top: 0, width: 4, height: 4, roomType: "entry" });
+    const hall = box({ id: "hall", left: 4, top: 0, width: 3, height: 4, roomType: "hallway" });
+    const bed = box({ id: "bed", left: 7, top: 0, width: 4, height: 4, roomType: "bedroom" });
+    const arrows: Arrow[] = [
+      { id: "ext", level: 0, hostId: "entry", kind: "exterior-main", side: 3, t: 0.5, dir: 1 },
+      { id: "d1", level: 0, hostId: "entry", kind: "interior", side: 1, t: 0.5, dir: 1 },
+      { id: "d2", level: 0, hostId: "hall", kind: "interior", side: 1, t: 0.5, dir: 1 },
+    ];
+    expect(reachabilityProblems([entry, hall, bed], 1, arrows, false, passableOf)).toEqual([]);
+  });
+
+  it("names the non-passable room that stands in the way, when that is the only route", () => {
+    // entry -> garage -> bedroom, no other connection: the bedroom is
+    // only reachable by walking through a garage, which is not passable.
+    const entry = box({ id: "entry", left: 0, top: 0, width: 4, height: 4, roomType: "entry" });
+    const garage = box({ id: "garage", left: 4, top: 0, width: 4, height: 4, roomType: "garage_single" });
+    const bed = box({ id: "bed", left: 8, top: 0, width: 4, height: 4, roomType: "bedroom" });
+    const arrows: Arrow[] = [
+      { id: "ext", level: 0, hostId: "entry", kind: "exterior-main", side: 3, t: 0.5, dir: 1 },
+      { id: "d1", level: 0, hostId: "entry", kind: "interior", side: 1, t: 0.5, dir: 1 },
+      { id: "d2", level: 0, hostId: "garage", kind: "interior", side: 1, t: 0.5, dir: 1 },
+    ];
+    const problems = reachabilityProblems([entry, garage, bed], 1, arrows, false, passableOf);
+    // The garage itself is reached (entry can walk into it); only the
+    // bedroom beyond it, which nothing else reaches, is a problem.
+    expect(problems).toEqual([{ roomId: "bed", kind: "through_room", viaIds: ["garage"] }]);
+  });
+
+  it("reports a room with no doored connection to anything as unreachable, not through_room", () => {
+    const entry = box({ id: "entry", left: 0, top: 0, width: 4, height: 4, roomType: "entry" });
+    const isolated = box({ id: "isolated", left: 20, top: 20, width: 4, height: 4, roomType: "bedroom" });
+    const arrows: Arrow[] = [{ id: "ext", level: 0, hostId: "entry", kind: "exterior-main", side: 3, t: 0.5, dir: 1 }];
+    const problems = reachabilityProblems([entry, isolated], 1, arrows, false, passableOf);
+    expect(problems).toEqual([{ roomId: "isolated", kind: "unreachable", viaIds: [] }]);
+  });
+
+  it("treats a diwaniya's own street door as a second, independent root -- not only the main entry", () => {
+    // entry and hallway form the household's own circulation, entirely
+    // separate from the diwaniya, which sits elsewhere and reaches a
+    // driver room only through its own exterior door.
+    const entry = box({ id: "entry", left: 0, top: 0, width: 4, height: 4, roomType: "entry" });
+    const hall = box({ id: "hall", left: 4, top: 0, width: 3, height: 4, roomType: "hallway" });
+    const diwaniya = box({ id: "diwaniya", left: 20, top: 0, width: 6, height: 6, roomType: "diwaniya" });
+    const driver = box({ id: "driver", left: 26, top: 0, width: 4, height: 4, roomType: "driver_room" });
+    const arrows: Arrow[] = [
+      { id: "extMain", level: 0, hostId: "entry", kind: "exterior-main", side: 3, t: 0.5, dir: 1 },
+      { id: "d1", level: 0, hostId: "entry", kind: "interior", side: 1, t: 0.5, dir: 1 },
+      { id: "extSide", level: 0, hostId: "diwaniya", kind: "exterior-side", side: 3, t: 0.5, dir: 1 },
+      { id: "d2", level: 0, hostId: "diwaniya", kind: "interior", side: 1, t: 0.5, dir: 1 },
+    ];
+    const problems = reachabilityProblems([entry, hall, diwaniya, driver], 1, arrows, false, passableOf);
+    // Nothing is unreachable: the driver room is reached via the
+    // diwaniya's own door, and the diwaniya itself is a root, so it is
+    // never reported even though it is not passable.
+    expect(problems).toEqual([]);
+  });
+});
+
+describe("checkAdjacency: the required/desired/undesired table, checked against what actually touches", () => {
+  it("satisfies a required pair when the two types actually share a wall", () => {
+    const kitchen = box({ id: "kitchen", left: 0, top: 0, width: 4, height: 4, roomType: "kitchen" });
+    const dining = box({ id: "dining", left: 4, top: 0, width: 4, height: 4, roomType: "dining_room" });
+    const row = checkAdjacency([kitchen, dining], 1, false).find((r) => r.a === "kitchen" && r.b === "dining_room");
+    expect(row?.relation).toBe("required");
+    expect(row?.ok).toBe(true);
+  });
+
+  it("fails a required pair when both types exist but do not touch", () => {
+    const kitchen = box({ id: "kitchen", left: 0, top: 0, width: 4, height: 4, roomType: "kitchen" });
+    const dining = box({ id: "dining", left: 20, top: 20, width: 4, height: 4, roomType: "dining_room" });
+    const row = checkAdjacency([kitchen, dining], 1, false).find((r) => r.a === "kitchen" && r.b === "dining_room");
+    expect(row?.ok).toBe(false);
+  });
+
+  it("leaves a row out entirely when one of its two room types is absent -- never reported as failing", () => {
+    const kitchen = box({ id: "kitchen", left: 0, top: 0, width: 4, height: 4, roomType: "kitchen" });
+    const rows = checkAdjacency([kitchen], 1, false);
+    expect(rows.find((r) => r.a === "kitchen" && r.b === "dining_room")).toBeUndefined();
+  });
+
+  it("flags an undesired pair that touches, and clears one that does not", () => {
+    const bedroom = box({ id: "bedroom", left: 0, top: 0, width: 4, height: 4, roomType: "bedroom" });
+    const garageTouching = box({ id: "g1", left: 4, top: 0, width: 4, height: 4, roomType: "garage_single" });
+    const touchingRow = checkAdjacency([bedroom, garageTouching], 1, false).find((r) => r.a === "bedroom" && r.b === "garage_single");
+    expect(touchingRow?.relation).toBe("undesired");
+    expect(touchingRow?.ok).toBe(false);
+
+    const garageFar = box({ id: "g2", left: 30, top: 30, width: 4, height: 4, roomType: "garage_single" });
+    const farRow = checkAdjacency([bedroom, garageFar], 1, false).find((r) => r.a === "bedroom" && r.b === "garage_single");
+    expect(farRow?.ok).toBe(true);
+  });
+});
+
+describe("tierViolations: a real door may connect adjacent tiers, never skip one", () => {
+  it("flags a door straight from a Public room to a Private one", () => {
+    const entry = box({ id: "entry", left: 0, top: 0, width: 4, height: 4, roomType: "entry" });
+    const bed = box({ id: "bed", left: 4, top: 0, width: 4, height: 4, roomType: "bedroom" });
+    const door: Arrow = { id: "d", level: 0, hostId: "entry", kind: "interior", side: 1, t: 0.5, dir: 1 };
+    const violations = tierViolations([entry, bed], 1, [door], false, tierOf);
+    // One unordered result per doored pair -- which side lands in roomAId
+    // vs roomBId is not part of the contract, so check membership rather
+    // than a fixed order.
+    expect(violations).toHaveLength(1);
+    expect([violations[0].roomAId, violations[0].roomBId].sort()).toEqual(["bed", "entry"]);
+    expect([violations[0].tierA, violations[0].tierB].sort()).toEqual(["private", "public"]);
+  });
+
+  it("clears a Public-to-Private connection once a Semi-public room stands between them", () => {
+    const entry = box({ id: "entry", left: 0, top: 0, width: 4, height: 4, roomType: "entry" });
+    const hall = box({ id: "hall", left: 4, top: 0, width: 3, height: 4, roomType: "hallway" });
+    const bed = box({ id: "bed", left: 7, top: 0, width: 4, height: 4, roomType: "bedroom" });
+    const doors: Arrow[] = [
+      { id: "d1", level: 0, hostId: "entry", kind: "interior", side: 1, t: 0.5, dir: 1 },
+      { id: "d2", level: 0, hostId: "hall", kind: "interior", side: 1, t: 0.5, dir: 1 },
+    ];
+    expect(tierViolations([entry, hall, bed], 1, doors, false, tierOf)).toEqual([]);
+  });
+
+  it("never flags a bathroom either side, since bathrooms are exempt from the gradient", () => {
+    const entry = box({ id: "entry", left: 0, top: 0, width: 4, height: 4, roomType: "entry" });
+    const bath = box({ id: "bath", left: 4, top: 0, width: 2, height: 2, roomType: "bathroom" });
+    const door: Arrow = { id: "d", level: 0, hostId: "entry", kind: "interior", side: 1, t: 0.5, dir: 1 };
+    expect(tierViolations([entry, bath], 1, [door], false, tierOf)).toEqual([]);
+  });
+
+  it("respects a per-instance privacyTierOverride instead of the room type's default", () => {
+    const entry = box({ id: "entry", left: 0, top: 0, width: 4, height: 4, roomType: "entry" });
+    const office = box({ id: "office", left: 4, top: 0, width: 4, height: 4, roomType: "office" });
+    const door: Arrow = { id: "d", level: 0, hostId: "entry", kind: "interior", side: 1, t: 0.5, dir: 1 };
+    // Office defaults to Private -- two tiers from Public, so this flags.
+    expect(tierViolations([entry, office], 1, [door], false, tierOf)).toHaveLength(1);
+    // Overridden to Public on this one instance, it no longer does.
+    const overridden: Box = { ...office, privacyTierOverride: "public" };
+    expect(tierViolations([entry, overridden], 1, [door], false, tierOf)).toEqual([]);
   });
 });

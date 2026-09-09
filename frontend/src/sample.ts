@@ -139,7 +139,7 @@ const PLACED: Placed[] = [
   // rectangular wall.
   {
     name: "Diwaniya",
-    roomType: "majlis",
+    roomType: "diwaniya",
     level: 0,
     rect: [2.4, 9.5, 5.0, 5.6],
     shape: "polygon",
@@ -157,7 +157,7 @@ const PLACED: Placed[] = [
   { name: "Landing", roomType: "hallway", level: 1, rect: [4.0, 0, 2.4, 2.4], kind: "corridor" },
   { name: "Bathroom", roomType: "bathroom", level: 1, rect: [5.2, 2.4, 1.2, 2.0] },
   { name: "Hall Closet", roomType: "closet", level: 1, rect: [5.2, 4.4, 1.2, 1.6] },
-  { name: "Primary Bedroom", roomType: "bedroom_primary", level: 1, rect: [6.4, 0, 4.6, 3.7] },
+  { name: "Master Bedroom", roomType: "master_bedroom", level: 1, rect: [6.4, 0, 4.6, 3.7] },
   { name: "Ensuite", roomType: "bathroom", level: 1, rect: [6.4, 3.7, 2.3, 2.3] },
   { name: "Walk-in Closet", roomType: "closet", level: 1, rect: [8.7, 3.7, 2.3, 2.3] },
   { name: "Bedroom 2", roomType: "bedroom", level: 1, rect: [6.4, 6.0, 4.6, 3.5] },

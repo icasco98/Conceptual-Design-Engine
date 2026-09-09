@@ -76,6 +76,13 @@ export interface Box {
    * it's dragged: a corner or wall resize scales every vertex with it,
    * exactly as it already scales a rectangle. Unused on any other shape. */
   points?: Point[];
+  /** Overrides `roomType`'s default tier (rooms.ts's `tier`) for this one
+   * instance. Unset for almost every zone -- tier just reads off the
+   * type. Set only for the rare dual-use room, such as a dining room a
+   * household also opens to its diwaniya: that one instance needs a
+   * different tier than every other dining room, not a change to the
+   * type's default. */
+  privacyTierOverride?: PrivacyTier;
 }
 
 /**
@@ -144,13 +151,26 @@ export const CIRCLE_SEGMENTS = 48;
  * is `served` wherever they go, a caterer is `servant` even while
  * standing in the kitchen, which is `category_b`.
  *
- * `majlis_guest` is its own role rather than a stricter `guest`: a guest
- * the household has invited into its own life is welcome in the shared
- * rooms (`category_b`), while a majlis or diwaniya guest is received in
- * one room built for exactly that (`category_d`) and nowhere else in the
- * house -- the point of a Gulf household building that room with its own
- * street door in the first place. */
-export type ActorRole = "served" | "guest" | "servant" | "exterior" | "majlis_guest";
+ * `diwaniya_guest` is its own role rather than a stricter `guest`: a guest
+ * the household has invited into its own life is welcome in the private
+ * rooms a `guest` is not (living room, dining room), while a diwaniya
+ * guest is received in the diwaniya itself, or wherever else is Public
+ * tier (rooms.ts's `tier`, geometry/relationships.ts) -- not the private
+ * rooms the household actually lives in, and not because of a bespoke
+ * category built just for the diwaniya. */
+export type ActorRole = "served" | "guest" | "servant" | "exterior" | "diwaniya_guest";
+
+/** How private a room type is, for the public-to-private gradient check
+ * (geometry/relationships.ts's `tierViolations`) -- ordered Public,
+ * Semi-public, Private. A door may connect adjacent tiers
+ * (Public-Semi-public, Semi-public-Private) but never skip one
+ * (Public-Private): a stranger's route should never dead-end straight
+ * into a private room with no buffer between. Not the same axis as a
+ * zone's own category (`CategoryKey`, api/types.ts) -- rooms.ts sets both
+ * independently per room type, and they diverge on purpose (Hallway is
+ * Shared by category but Semi-public by tier; Driver Room is Service by
+ * category but Private by tier). */
+export type PrivacyTier = "public" | "semi-public" | "private";
 
 /** Someone who walks through the building, and the rooms they visit, in
  * order. The walk between each pair of waypoints is never stored -- it is
