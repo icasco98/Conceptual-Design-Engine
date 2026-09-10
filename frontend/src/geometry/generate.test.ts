@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { generateLayout } from "./generate";
+import { DEFAULT_SEARCH_CONFIG, generateLayout, type SearchConfig } from "./generate";
 import { isOutsidePlot } from "./plot";
 import { rectPolyOf } from "./poly";
 import { boxesTrulyIntersect } from "./rect";
@@ -9,6 +9,13 @@ import { liveBoxes } from "./snap";
 import type { Box, Plot } from "./types";
 import { SAMPLE_STOREYS, sampleArrows, sampleBoxes } from "../sample";
 import { ROOM_FACTS } from "../rooms";
+
+/** A config that only ever tries the `snap` move -- isolates it from the
+ * other four move kinds so a test can attribute what happened to snap
+ * alone, not to a lucky translate landing near the same spot. */
+function snapOnlyConfig(): SearchConfig {
+  return { ...DEFAULT_SEARCH_CONFIG, moveWeights: { translate: 0, resize: 0, rotate: 0, swap: 0, snap: 1 } };
+}
 
 function box(partial: Partial<Box> & { id: string; left: number; top: number; width: number; height: number }): Box {
   return {
@@ -144,6 +151,78 @@ describe("generateLayout: searches placement, never room program, never worse th
   it("leaves boxes unchanged when nothing is rooted on the requested level", () => {
     const boxes = sampleBoxes().filter((b) => b.level === 0);
     const result = generateLayout(boxes, 5, 6, [], false, null, ROOM_FACTS);
+    expect(result).toBe(boxes);
+  });
+});
+
+describe("generateLayout: the snap move (geometry/snap.ts's snapToNearbyNeighbors, wired in as a MoveKind)", () => {
+  it("closes a sub-meter gap between two rooms to an exact touch", () => {
+    // Kitchen/dining_room carries a `required` adjacency row
+    // (relationships.ts), unmet while the two sit apart -- so once snap
+    // closes the gap and suggestArrows can put a real door in the shared
+    // wall, the arrangement scores strictly better and the search keeps
+    // it as `best`, not merely as a rejected-or-accepted wobble of
+    // `current`. isEntry on the kitchen only gives suggestArrows
+    // somewhere to start its walk from; it isn't otherwise load-bearing.
+    const a = box({ id: "a", left: 0, top: 0, width: 3.6, height: 4.2, roomType: "kitchen", isEntry: true });
+    const b = box({ id: "b", left: 4.1, top: 0, width: 3.6, height: 4.2, roomType: "dining_room" }); // 0.5 m gap on x
+    const boundary = rectPolyOf({ left: -5, top: -5, width: 30, height: 20 });
+    const result = generateLayout([a, b], 0, 1, [], false, boundary, ROOM_FACTS, undefined, {
+      iterations: 40,
+      seed: 5,
+      config: snapOnlyConfig(),
+    });
+    const ra = result.find((r) => r.id === "a")!;
+    const rb = result.find((r) => r.id === "b")!;
+    // Flush on x, still fully overlapping on y -- an exact touch, not
+    // merely "closer than before".
+    expect(Math.abs(rb.left - (ra.left + ra.width))).toBeLessThan(1e-6);
+    expect(ra.top).toBe(0);
+    expect(rb.top).toBe(0);
+    assertNoOverlapsOnLevel(result, 0);
+  });
+
+  it("is rejected by the cheap filter when it would push a room outside the boundary", () => {
+    // b sits just outside the plot already, 0.5 m from a's edge -- close
+    // enough to qualify as a snap target. Whichever of the two the search
+    // happens to move, the result lands further outside a boundary that
+    // was never violated by leaving the pair alone, so the cheap filter
+    // (`withinBoundary`) must refuse every proposal and the arrangement
+    // never moves at all.
+    const a = box({ id: "a", left: 0, top: 0, width: 3, height: 3 });
+    const b = box({ id: "b", left: -2, top: 0, width: 1.5, height: 3 });
+    const boundary = rectPolyOf({ left: 0, top: 0, width: 10, height: 10 });
+    const boxes = [a, b];
+    const result = generateLayout(boxes, 0, 1, [], false, boundary, ROOM_FACTS, undefined, {
+      iterations: 30,
+      seed: 9,
+      config: snapOnlyConfig(),
+    });
+    // Never even accepted into the stochastic walk, let alone kept as
+    // best: the starting arrangement comes back completely untouched.
+    expect(result).toBe(boxes);
+  });
+
+  it("is rejected by the cheap filter when it would push a room into a third one snap's own gap check never saw", () => {
+    // a and c already touch (0 gap), and so do c and b -- snap.ts's own
+    // per-axis heuristic never looks for anything standing *between* the
+    // room it's moving and the neighbour it picked, only at the direct
+    // gap to that neighbour, so it proposes closing a's 0.5 m gap to b
+    // straight through the room sitting in it. That is exactly the
+    // "blind to the rule set, blind to everything but the one gap it's
+    // closing" limitation the move is supposed to have -- catching this
+    // is the cheap filter's job (`boxesTrulyIntersect` against every live
+    // room, not just the one snap aimed at), not snap's own.
+    const a = box({ id: "a", left: 0, top: 0, width: 2, height: 2 });
+    const c = box({ id: "c", left: 2, top: 0.5, width: 0.5, height: 1 });
+    const b = box({ id: "b", left: 2.5, top: 0, width: 2, height: 2 });
+    const boundary = rectPolyOf({ left: -10, top: -10, width: 30, height: 20 });
+    const boxes = [a, c, b];
+    const result = generateLayout(boxes, 0, 1, [], false, boundary, ROOM_FACTS, undefined, {
+      iterations: 40,
+      seed: 13,
+      config: snapOnlyConfig(),
+    });
     expect(result).toBe(boxes);
   });
 });

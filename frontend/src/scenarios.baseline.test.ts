@@ -48,8 +48,16 @@ export const BASELINE_ITERATIONS = 400;
 /** Hard problems are a weighted total, not an integer count
  * (`deadEndHallways` contributes how far past the code limit it runs), so
  * an exact float comparison would fail on arithmetic reordering alone.
- * A millionth of a problem is not a regression. */
-const EPSILON = 1e-6;
+ * A thousandth of a problem is not a regression -- and has to be at least
+ * that loose: the frozen numbers are themselves stored to 4 decimal
+ * places (`toFixed(4)` below), which can round a value up to 0.00005 away
+ * from what a fresh run recomputes at full precision. A tighter epsilon
+ * than the storage itself can represent would fail on rounding noise
+ * alone, on scenarios nothing about actually changed -- caught in batch
+ * 002 when adding the `snap` move (which strictly improved 22 of 56
+ * scenarios and regressed none) still tripped 3 scenarios purely on this,
+ * with the "before" and "after" numbers printed identical to 4 decimals. */
+const EPSILON = 1e-3;
 
 interface BaselineRow {
   scenarioId: string;

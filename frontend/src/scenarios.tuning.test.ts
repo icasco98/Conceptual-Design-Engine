@@ -182,7 +182,7 @@ describe("search tuning record", () => {
         expect(record.config[key]).toBeGreaterThan(0);
       }
       expect(record.config.stepScaleM).toBeGreaterThanOrEqual(0);
-      for (const key of ["translate", "resize", "rotate", "swap"] as const) {
+      for (const key of ["translate", "resize", "rotate", "swap", "snap"] as const) {
         expect(record.config.moveWeights[key]).toBeGreaterThan(0);
       }
       // Sanity that the record describes THIS tool's config shape and not

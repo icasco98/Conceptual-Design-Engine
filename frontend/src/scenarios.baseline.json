@@ -4,9 +4,9 @@
     "label": "Young couple, minimal on 250 m² (near-square, 17.4x14.4)",
     "startHardProblems": 10,
     "startSoftRecommendations": 6.4331,
-    "hardProblems": 10,
+    "hardProblems": 5,
     "softRecommendations": 0,
-    "coverage": 0.3541
+    "coverage": 0.3615
   },
   {
     "scenarioId": "small_nuclear__plot_250_square",
@@ -14,8 +14,8 @@
     "startHardProblems": 16,
     "startSoftRecommendations": 16.2387,
     "hardProblems": 15,
-    "softRecommendations": 9.4988,
-    "coverage": 0.5167
+    "softRecommendations": 10.5963,
+    "coverage": 0.5449
   },
   {
     "scenarioId": "extended_gulf__plot_250_square",
@@ -23,8 +23,8 @@
     "startHardProblems": 28,
     "startSoftRecommendations": 34.1785,
     "hardProblems": 28,
-    "softRecommendations": 32.9119,
-    "coverage": 1.14
+    "softRecommendations": 31.1495,
+    "coverage": 1.0909
   },
   {
     "scenarioId": "multigenerational__plot_250_square",
@@ -32,17 +32,17 @@
     "startHardProblems": 33,
     "startSoftRecommendations": 39.5529,
     "hardProblems": 33,
-    "softRecommendations": 37.5075,
-    "coverage": 1.3203
+    "softRecommendations": 38.2154,
+    "coverage": 1.3371
   },
   {
     "scenarioId": "minimal__plot_250_narrow",
     "label": "Young couple, minimal on 250 m² (narrow/deep, 10x25)",
     "startHardProblems": 10,
     "startSoftRecommendations": 8.75,
-    "hardProblems": 10,
-    "softRecommendations": 0.9063,
-    "coverage": 0.3405
+    "hardProblems": 6.5685,
+    "softRecommendations": 4.5072,
+    "coverage": 0.3778
   },
   {
     "scenarioId": "small_nuclear__plot_250_narrow",
@@ -50,8 +50,8 @@
     "startHardProblems": 16,
     "startSoftRecommendations": 16.0706,
     "hardProblems": 16,
-    "softRecommendations": 9.7241,
-    "coverage": 0.5257
+    "softRecommendations": 10.301,
+    "coverage": 0.5451
   },
   {
     "scenarioId": "extended_gulf__plot_250_narrow",
@@ -59,8 +59,8 @@
     "startHardProblems": 28,
     "startSoftRecommendations": 36.9742,
     "hardProblems": 28,
-    "softRecommendations": 35.2818,
-    "coverage": 1.1388
+    "softRecommendations": 34.2158,
+    "coverage": 1.1593
   },
   {
     "scenarioId": "multigenerational__plot_250_narrow",
@@ -68,26 +68,26 @@
     "startHardProblems": 33,
     "startSoftRecommendations": 44.2331,
     "hardProblems": 33,
-    "softRecommendations": 43.0741,
-    "coverage": 1.3116
+    "softRecommendations": 41.8237,
+    "coverage": 1.3305
   },
   {
     "scenarioId": "minimal__plot_300_square",
     "label": "Young couple, minimal on 300 m² (near-square, 19x15.8)",
     "startHardProblems": 10,
     "startSoftRecommendations": 6.4331,
-    "hardProblems": 10,
-    "softRecommendations": 0,
-    "coverage": 0.3082
+    "hardProblems": 9,
+    "softRecommendations": 0.4107,
+    "coverage": 0.2611
   },
   {
     "scenarioId": "small_nuclear__plot_300_square",
     "label": "Small nuclear family on 300 m² (near-square, 19x15.8)",
     "startHardProblems": 16,
     "startSoftRecommendations": 16.2387,
-    "hardProblems": 16,
-    "softRecommendations": 8.2663,
-    "coverage": 0.4219
+    "hardProblems": 13.6,
+    "softRecommendations": 11.4536,
+    "coverage": 0.4187
   },
   {
     "scenarioId": "extended_gulf__plot_300_square",
@@ -95,8 +95,8 @@
     "startHardProblems": 28,
     "startSoftRecommendations": 33.8458,
     "hardProblems": 28,
-    "softRecommendations": 32.135,
-    "coverage": 0.916
+    "softRecommendations": 31.2282,
+    "coverage": 0.9341
   },
   {
     "scenarioId": "multigenerational__plot_300_square",
@@ -104,17 +104,17 @@
     "startHardProblems": 33,
     "startSoftRecommendations": 33.4493,
     "hardProblems": 33,
-    "softRecommendations": 30.9009,
-    "coverage": 1.0634
+    "softRecommendations": 30.9427,
+    "coverage": 1.0993
   },
   {
     "scenarioId": "minimal__plot_300_narrow",
     "label": "Young couple, minimal on 300 m² (narrow/deep, 10.9x27.4)",
     "startHardProblems": 10,
     "startSoftRecommendations": 8.75,
-    "hardProblems": 10,
-    "softRecommendations": 0.7052,
-    "coverage": 0.2758
+    "hardProblems": 2.2759,
+    "softRecommendations": 2.0742,
+    "coverage": 0.3134
   },
   {
     "scenarioId": "small_nuclear__plot_300_narrow",
@@ -122,8 +122,8 @@
     "startHardProblems": 16,
     "startSoftRecommendations": 16.0706,
     "hardProblems": 16,
-    "softRecommendations": 8.1235,
-    "coverage": 0.4497
+    "softRecommendations": 8.4208,
+    "coverage": 0.4467
   },
   {
     "scenarioId": "extended_gulf__plot_300_narrow",
@@ -131,8 +131,8 @@
     "startHardProblems": 28,
     "startSoftRecommendations": 37.0784,
     "hardProblems": 28,
-    "softRecommendations": 34.7371,
-    "coverage": 0.9583
+    "softRecommendations": 33.2215,
+    "coverage": 0.9654
   },
   {
     "scenarioId": "multigenerational__plot_300_narrow",
@@ -140,17 +140,17 @@
     "startHardProblems": 33,
     "startSoftRecommendations": 43.0084,
     "hardProblems": 33,
-    "softRecommendations": 38.8319,
-    "coverage": 1.0212
+    "softRecommendations": 40.3121,
+    "coverage": 1.1217
   },
   {
     "scenarioId": "minimal__plot_400_square",
     "label": "Young couple, minimal on 400 m² (near-square, 21.9x18.3)",
     "startHardProblems": 10,
     "startSoftRecommendations": 5.8333,
-    "hardProblems": 9,
-    "softRecommendations": 0.2577,
-    "coverage": 0.1893
+    "hardProblems": 6,
+    "softRecommendations": 1.0986,
+    "coverage": 0.2054
   },
   {
     "scenarioId": "small_nuclear__plot_400_square",
@@ -158,8 +158,8 @@
     "startHardProblems": 16,
     "startSoftRecommendations": 14.75,
     "hardProblems": 16,
-    "softRecommendations": 8.6581,
-    "coverage": 0.3372
+    "softRecommendations": 7.0261,
+    "coverage": 0.3339
   },
   {
     "scenarioId": "extended_gulf__plot_400_square",
@@ -167,8 +167,8 @@
     "startHardProblems": 28,
     "startSoftRecommendations": 30.4589,
     "hardProblems": 28,
-    "softRecommendations": 20.967,
-    "coverage": 0.6814
+    "softRecommendations": 22.8964,
+    "coverage": 0.6822
   },
   {
     "scenarioId": "multigenerational__plot_400_square",
@@ -176,26 +176,26 @@
     "startHardProblems": 33,
     "startSoftRecommendations": 40.9584,
     "hardProblems": 33,
-    "softRecommendations": 32.2589,
-    "coverage": 0.8039
+    "softRecommendations": 26.9525,
+    "coverage": 0.7652
   },
   {
     "scenarioId": "minimal__plot_400_narrow",
     "label": "Young couple, minimal on 400 m² (narrow/deep, 12.7x31.6)",
     "startHardProblems": 10,
     "startSoftRecommendations": 7.6346,
-    "hardProblems": 10,
-    "softRecommendations": 0,
-    "coverage": 0.1974
+    "hardProblems": 4,
+    "softRecommendations": 2.4181,
+    "coverage": 0.2157
   },
   {
     "scenarioId": "small_nuclear__plot_400_narrow",
     "label": "Small nuclear family on 400 m² (narrow/deep, 12.7x31.6)",
     "startHardProblems": 16,
     "startSoftRecommendations": 20.5726,
-    "hardProblems": 16,
-    "softRecommendations": 8.2859,
-    "coverage": 0.3359
+    "hardProblems": 13,
+    "softRecommendations": 13.8878,
+    "coverage": 0.3613
   },
   {
     "scenarioId": "extended_gulf__plot_400_narrow",
@@ -203,8 +203,8 @@
     "startHardProblems": 28,
     "startSoftRecommendations": 32.619,
     "hardProblems": 28,
-    "softRecommendations": 26.6114,
-    "coverage": 0.6952
+    "softRecommendations": 25.8121,
+    "coverage": 0.6869
   },
   {
     "scenarioId": "multigenerational__plot_400_narrow",
@@ -212,8 +212,8 @@
     "startHardProblems": 33,
     "startSoftRecommendations": 40.8743,
     "hardProblems": 33,
-    "softRecommendations": 37.4349,
-    "coverage": 0.8415
+    "softRecommendations": 35.3239,
+    "coverage": 0.8172
   },
   {
     "scenarioId": "minimal__plot_450_square",
@@ -221,26 +221,26 @@
     "startHardProblems": 10,
     "startSoftRecommendations": 5.1042,
     "hardProblems": 10,
-    "softRecommendations": 0.0196,
-    "coverage": 0.179
+    "softRecommendations": 1.0978,
+    "coverage": 0.2027
   },
   {
     "scenarioId": "small_nuclear__plot_450_square",
     "label": "Small nuclear family on 450 m² (near-square, 23.2x19.4)",
     "startHardProblems": 16,
     "startSoftRecommendations": 14.75,
-    "hardProblems": 16,
-    "softRecommendations": 10.5625,
-    "coverage": 0.3203
+    "hardProblems": 15,
+    "softRecommendations": 7.8401,
+    "coverage": 0.3263
   },
   {
     "scenarioId": "extended_gulf__plot_450_square",
     "label": "Extended Gulf household on 450 m² (near-square, 23.2x19.4)",
     "startHardProblems": 28,
     "startSoftRecommendations": 30.4482,
-    "hardProblems": 28,
-    "softRecommendations": 22.5584,
-    "coverage": 0.6321
+    "hardProblems": 25,
+    "softRecommendations": 16.5202,
+    "coverage": 0.6137
   },
   {
     "scenarioId": "multigenerational__plot_450_square",
@@ -248,8 +248,8 @@
     "startHardProblems": 33,
     "startSoftRecommendations": 42.0265,
     "hardProblems": 33,
-    "softRecommendations": 32.9387,
-    "coverage": 0.729
+    "softRecommendations": 30.5314,
+    "coverage": 0.7209
   },
   {
     "scenarioId": "minimal__plot_450_narrow",
@@ -257,8 +257,8 @@
     "startHardProblems": 10,
     "startSoftRecommendations": 5.1042,
     "hardProblems": 10,
-    "softRecommendations": 0.0261,
-    "coverage": 0.1716
+    "softRecommendations": 0.7262,
+    "coverage": 0.1798
   },
   {
     "scenarioId": "small_nuclear__plot_450_narrow",
@@ -266,8 +266,8 @@
     "startHardProblems": 16,
     "startSoftRecommendations": 19.4657,
     "hardProblems": 16,
-    "softRecommendations": 7.8704,
-    "coverage": 0.2881
+    "softRecommendations": 8.1864,
+    "coverage": 0.3082
   },
   {
     "scenarioId": "extended_gulf__plot_450_narrow",
@@ -275,8 +275,8 @@
     "startHardProblems": 28,
     "startSoftRecommendations": 36.4985,
     "hardProblems": 28,
-    "softRecommendations": 22.6957,
-    "coverage": 0.6018
+    "softRecommendations": 20.7462,
+    "coverage": 0.596
   },
   {
     "scenarioId": "multigenerational__plot_450_narrow",
@@ -284,17 +284,17 @@
     "startHardProblems": 33,
     "startSoftRecommendations": 41.1101,
     "hardProblems": 33,
-    "softRecommendations": 30.0819,
-    "coverage": 0.6663
+    "softRecommendations": 31.47,
+    "coverage": 0.679
   },
   {
     "scenarioId": "minimal__plot_500_square",
     "label": "Young couple, minimal on 500 m² (near-square, 24.5x20.4)",
     "startHardProblems": 10,
     "startSoftRecommendations": 4.375,
-    "hardProblems": 10,
-    "softRecommendations": 0.0881,
-    "coverage": 0.1441
+    "hardProblems": 9,
+    "softRecommendations": 3.0249,
+    "coverage": 0.1657
   },
   {
     "scenarioId": "small_nuclear__plot_500_square",
@@ -302,26 +302,26 @@
     "startHardProblems": 16,
     "startSoftRecommendations": 14.75,
     "hardProblems": 16,
-    "softRecommendations": 7.2354,
-    "coverage": 0.283
+    "softRecommendations": 8.0442,
+    "coverage": 0.2813
   },
   {
     "scenarioId": "extended_gulf__plot_500_square",
     "label": "Extended Gulf household on 500 m² (near-square, 24.5x20.4)",
     "startHardProblems": 28,
     "startSoftRecommendations": 28.3958,
-    "hardProblems": 28,
-    "softRecommendations": 21.6469,
-    "coverage": 0.5561
+    "hardProblems": 27,
+    "softRecommendations": 19.5426,
+    "coverage": 0.5644
   },
   {
     "scenarioId": "multigenerational__plot_500_square",
     "label": "Multigenerational household on 500 m² (near-square, 24.5x20.4)",
     "startHardProblems": 33,
     "startSoftRecommendations": 39.0309,
-    "hardProblems": 33,
-    "softRecommendations": 28.3301,
-    "coverage": 0.6167
+    "hardProblems": 32,
+    "softRecommendations": 23.99,
+    "coverage": 0.6327
   },
   {
     "scenarioId": "minimal__plot_500_narrow",
@@ -329,26 +329,26 @@
     "startHardProblems": 10,
     "startSoftRecommendations": 5.1042,
     "hardProblems": 10,
-    "softRecommendations": 0.2479,
-    "coverage": 0.1734
+    "softRecommendations": 1.6484,
+    "coverage": 0.1664
   },
   {
     "scenarioId": "small_nuclear__plot_500_narrow",
     "label": "Small nuclear family on 500 m² (narrow/deep, 14.1x35.4)",
     "startHardProblems": 16,
     "startSoftRecommendations": 19.3615,
-    "hardProblems": 14,
-    "softRecommendations": 7.3957,
-    "coverage": 0.2629
+    "hardProblems": 13,
+    "softRecommendations": 9.7613,
+    "coverage": 0.2848
   },
   {
     "scenarioId": "extended_gulf__plot_500_narrow",
     "label": "Extended Gulf household on 500 m² (narrow/deep, 14.1x35.4)",
     "startHardProblems": 28,
     "startSoftRecommendations": 36.4985,
-    "hardProblems": 28,
-    "softRecommendations": 19.7483,
-    "coverage": 0.5217
+    "hardProblems": 27,
+    "softRecommendations": 21.6345,
+    "coverage": 0.5433
   },
   {
     "scenarioId": "multigenerational__plot_500_narrow",
@@ -356,17 +356,17 @@
     "startHardProblems": 33,
     "startSoftRecommendations": 41.1101,
     "hardProblems": 33,
-    "softRecommendations": 26.5887,
-    "coverage": 0.5845
+    "softRecommendations": 24.8504,
+    "coverage": 0.5991
   },
   {
     "scenarioId": "minimal__plot_600_square",
     "label": "Young couple, minimal on 600 m² (near-square, 26.8x22.4)",
     "startHardProblems": 10,
     "startSoftRecommendations": 4.375,
-    "hardProblems": 10,
-    "softRecommendations": 0,
-    "coverage": 0.1347
+    "hardProblems": 9,
+    "softRecommendations": 0.1341,
+    "coverage": 0.1502
   },
   {
     "scenarioId": "small_nuclear__plot_600_square",
@@ -374,8 +374,8 @@
     "startHardProblems": 16,
     "startSoftRecommendations": 14.75,
     "hardProblems": 16,
-    "softRecommendations": 7.5933,
-    "coverage": 0.2232
+    "softRecommendations": 9.1713,
+    "coverage": 0.229
   },
   {
     "scenarioId": "extended_gulf__plot_600_square",
@@ -383,8 +383,8 @@
     "startHardProblems": 28,
     "startSoftRecommendations": 26.9375,
     "hardProblems": 28,
-    "softRecommendations": 15.4009,
-    "coverage": 0.4355
+    "softRecommendations": 19.4991,
+    "coverage": 0.4496
   },
   {
     "scenarioId": "multigenerational__plot_600_square",
@@ -392,8 +392,8 @@
     "startHardProblems": 33,
     "startSoftRecommendations": 38.9267,
     "hardProblems": 33,
-    "softRecommendations": 24.722,
-    "coverage": 0.5241
+    "softRecommendations": 21.2428,
+    "coverage": 0.5372
   },
   {
     "scenarioId": "minimal__plot_600_narrow",
@@ -401,8 +401,8 @@
     "startHardProblems": 10,
     "startSoftRecommendations": 5.1042,
     "hardProblems": 10,
-    "softRecommendations": 0.0334,
-    "coverage": 0.1449
+    "softRecommendations": 1.579,
+    "coverage": 0.1469
   },
   {
     "scenarioId": "small_nuclear__plot_600_narrow",
@@ -410,35 +410,35 @@
     "startHardProblems": 16,
     "startSoftRecommendations": 19.6791,
     "hardProblems": 16,
-    "softRecommendations": 9.7151,
-    "coverage": 0.2269
+    "softRecommendations": 8.8695,
+    "coverage": 0.2268
   },
   {
     "scenarioId": "extended_gulf__plot_600_narrow",
     "label": "Extended Gulf household on 600 m² (narrow/deep, 15.5x38.7)",
     "startHardProblems": 28,
     "startSoftRecommendations": 34.674,
-    "hardProblems": 28,
-    "softRecommendations": 21.3731,
-    "coverage": 0.4414
+    "hardProblems": 26,
+    "softRecommendations": 18.2867,
+    "coverage": 0.4423
   },
   {
     "scenarioId": "multigenerational__plot_600_narrow",
     "label": "Multigenerational household on 600 m² (narrow/deep, 15.5x38.7)",
     "startHardProblems": 33,
     "startSoftRecommendations": 44.3393,
-    "hardProblems": 31,
-    "softRecommendations": 27.9527,
-    "coverage": 0.5236
+    "hardProblems": 32,
+    "softRecommendations": 28.5163,
+    "coverage": 0.5127
   },
   {
     "scenarioId": "minimal__plot_750_square",
     "label": "Young couple, minimal on 750 m² (near-square, 30x25)",
     "startHardProblems": 10,
     "startSoftRecommendations": 4.375,
-    "hardProblems": 10,
-    "softRecommendations": 0,
-    "coverage": 0.0919
+    "hardProblems": 9,
+    "softRecommendations": 1.3555,
+    "coverage": 0.1215
   },
   {
     "scenarioId": "small_nuclear__plot_750_square",
@@ -446,44 +446,44 @@
     "startHardProblems": 16,
     "startSoftRecommendations": 15.8221,
     "hardProblems": 16,
-    "softRecommendations": 8.4237,
-    "coverage": 0.1828
+    "softRecommendations": 7.2075,
+    "coverage": 0.1816
   },
   {
     "scenarioId": "extended_gulf__plot_750_square",
     "label": "Extended Gulf household on 750 m² (near-square, 30x25)",
     "startHardProblems": 28,
     "startSoftRecommendations": 28.8964,
-    "hardProblems": 28,
-    "softRecommendations": 15.5794,
-    "coverage": 0.3675
+    "hardProblems": 27.0538,
+    "softRecommendations": 22.1672,
+    "coverage": 0.3521
   },
   {
     "scenarioId": "multigenerational__plot_750_square",
     "label": "Multigenerational household on 750 m² (near-square, 30x25)",
     "startHardProblems": 33,
     "startSoftRecommendations": 32.0951,
-    "hardProblems": 33,
-    "softRecommendations": 21.4629,
-    "coverage": 0.4382
+    "hardProblems": 32,
+    "softRecommendations": 20.2957,
+    "coverage": 0.4398
   },
   {
     "scenarioId": "minimal__plot_750_narrow",
     "label": "Young couple, minimal on 750 m² (narrow/deep, 17.3x43.3)",
     "startHardProblems": 10,
     "startSoftRecommendations": 6.4331,
-    "hardProblems": 10,
-    "softRecommendations": 0,
-    "coverage": 0.0979
+    "hardProblems": 9,
+    "softRecommendations": 1.411,
+    "coverage": 0.1119
   },
   {
     "scenarioId": "small_nuclear__plot_750_narrow",
     "label": "Small nuclear family on 750 m² (narrow/deep, 17.3x43.3)",
     "startHardProblems": 16,
     "startSoftRecommendations": 16.2387,
-    "hardProblems": 16,
-    "softRecommendations": 7.5537,
-    "coverage": 0.1835
+    "hardProblems": 14,
+    "softRecommendations": 7.9541,
+    "coverage": 0.1786
   },
   {
     "scenarioId": "extended_gulf__plot_750_narrow",
@@ -491,8 +491,8 @@
     "startHardProblems": 28,
     "startSoftRecommendations": 34.1785,
     "hardProblems": 28,
-    "softRecommendations": 17.7161,
-    "coverage": 0.3552
+    "softRecommendations": 21.6626,
+    "coverage": 0.3735
   },
   {
     "scenarioId": "multigenerational__plot_750_narrow",
@@ -500,7 +500,7 @@
     "startHardProblems": 33,
     "startSoftRecommendations": 39.5529,
     "hardProblems": 33,
-    "softRecommendations": 24.2755,
-    "coverage": 0.4113
+    "softRecommendations": 28.2175,
+    "coverage": 0.4397
   }
 ]

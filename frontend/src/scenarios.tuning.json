@@ -28,7 +28,8 @@
       "translate": 1,
       "resize": 1,
       "rotate": 1,
-      "swap": 1
+      "swap": 1,
+      "snap": 1
     }
   },
   "history": [
