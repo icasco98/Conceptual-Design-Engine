@@ -15,7 +15,7 @@ import { useMemo } from "react";
 import { actorRoute, sharedSegments, type ReachabilityProblem } from "../geometry/circulation";
 import type { CirculationRatioFinding, CorridorWasteFinding, DeadEndFinding, GapFinding, OverhangFinding } from "../geometry/efficiency";
 import { footprintCoverage } from "../geometry/footprint";
-import { MIN_EXTERIOR_WALL_M, type WindowlessFinding } from "../geometry/habitability";
+import { MIN_EXTERIOR_WALL_M, type SingleAspectFinding, type WindowlessFinding } from "../geometry/habitability";
 import { buildCirculationGraphMemo, displayShapesForLevelMemo } from "../geometry/memo";
 import { outsidePlot } from "../geometry/plot";
 import { polyArea } from "../geometry/poly";
@@ -118,6 +118,17 @@ function windowlessFindings(problems: WindowlessFinding[], boxesById: Map<string
     if (!room) return [];
     const how = p.exteriorM < 0.01 ? "no wall facing outside at all" : `only ${p.exteriorM.toFixed(2)} m of wall facing outside`;
     return [{ level: p.level, text: `${room.name} has ${how} -- a room slept in needs at least ${MIN_EXTERIOR_WALL_M.toFixed(1)} m for a window to escape through` }];
+  });
+}
+
+/** Comfort, not code (`habitability.ts`) -- always a recommendation,
+ * never a problem, the same severity a `desired` miss and every
+ * efficiency.ts finding already has: the room works, it is just worse to
+ * be in than it needs to be. */
+function habitabilityRecommendationFindings(aspect: SingleAspectFinding[], boxesById: Map<string, Box>): Finding[] {
+  return aspect.flatMap((p) => {
+    const room = boxesById.get(p.roomId);
+    return room ? [{ level: p.level, text: `${room.name} faces outside on one side only -- no through draught, so it holds its heat` }] : [];
   });
 }
 
@@ -288,6 +299,7 @@ export function StatusBar() {
       ...circulationRatioFindings(findings.circulationRatio),
       ...overhangFindings(findings.overhangs, boxesById),
       ...corridorWasteFindings(findings.corridorWaste, boxesById),
+      ...habitabilityRecommendationFindings(findings.singleAspect, boxesById),
     ];
     return { problems: organizeByFloor(hard), recommendations: organizeByFloor(soft) };
   }, [boxes, storeys, arrows, autoCarve]);

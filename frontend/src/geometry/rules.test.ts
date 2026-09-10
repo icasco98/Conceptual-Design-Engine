@@ -13,10 +13,10 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { exteriorWallLength, windowlessSleepingRooms } from "./habitability";
+import { exteriorWallLength, singleAspectRooms, windowlessSleepingRooms } from "./habitability";
 import { checkAdjacency, sanitaryDoorProblems, scoreCandidate, undersizedDoorways, type RelationRow } from "./relationships";
 import type { Arrow, Box } from "./types";
-import { foodOf, ROOM_FACTS, sanitaryOf, sleepingOf } from "../rooms";
+import { foodOf, habitableOf, ROOM_FACTS, sanitaryOf, sleepingOf } from "../rooms";
 
 function box(partial: Partial<Box> & { id: string; left: number; top: number; width: number; height: number }): Box {
   return {
@@ -277,5 +277,53 @@ describe("windowlessSleepingRooms: a room slept in needs a way out of it", () =>
     expect(withRule.findings.windowless).toHaveLength(1);
     expect(withoutIt.findings.windowless).toHaveLength(0);
     expect(withRule.hardProblems).toBe(withoutIt.hardProblems + 1);
+  });
+});
+
+describe("singleAspectRooms: a room needs two sides facing out to breathe", () => {
+  it("reports a room whose only exterior wall faces one way", () => {
+    // A bedroom in the middle of a terrace: neighbours left, right and
+    // behind, one wall to the street.
+    const core = box({ id: "core", left: 3, top: 3, width: 3, height: 3, roomType: "bedroom" });
+    const left = box({ id: "l", left: 0, top: 3, width: 3, height: 3, roomType: "bedroom" });
+    const right = box({ id: "r", left: 6, top: 3, width: 3, height: 3, roomType: "bedroom" });
+    const back = box({ id: "b", left: 3, top: 0, width: 3, height: 3, roomType: "storage" });
+    const found = singleAspectRooms([core, left, right, back], 1, false, habitableOf);
+    expect(found.map((f) => f.roomId)).toContain("core");
+    expect(found.find((f) => f.roomId === "core")!.exteriorM).toBeCloseTo(3, 6);
+  });
+
+  it("reports nothing for a corner room facing two ways", () => {
+    // The same room with the neighbour behind it removed: it now faces
+    // south and north, which is a through draught.
+    const core = box({ id: "core", left: 3, top: 3, width: 3, height: 3, roomType: "bedroom" });
+    const left = box({ id: "l", left: 0, top: 3, width: 3, height: 3, roomType: "bedroom" });
+    const right = box({ id: "r", left: 6, top: 3, width: 3, height: 3, roomType: "bedroom" });
+    expect(singleAspectRooms([core, left, right], 1, false, habitableOf).map((f) => f.roomId)).not.toContain("core");
+  });
+
+  it("reports nothing for a hall, bathroom or garage in the same position", () => {
+    for (const roomType of ["hallway", "bathroom", "garage_single", "storage"]) {
+      const core = box({ id: "core", left: 3, top: 3, width: 3, height: 3, roomType });
+      const left = box({ id: "l", left: 0, top: 3, width: 3, height: 3, roomType: "storage" });
+      const right = box({ id: "r", left: 6, top: 3, width: 3, height: 3, roomType: "storage" });
+      const back = box({ id: "b", left: 3, top: 0, width: 3, height: 3, roomType: "storage" });
+      expect(singleAspectRooms([core, left, right, back], 1, false, habitableOf).map((f) => f.roomId)).not.toContain("core");
+    }
+  });
+
+  it("is a soft recommendation, never a hard problem", () => {
+    const core = box({ id: "core", left: 3, top: 3, width: 3, height: 3, roomType: "living_room" });
+    const left = box({ id: "l", left: 0, top: 3, width: 3, height: 3, roomType: "storage" });
+    const right = box({ id: "r", left: 6, top: 3, width: 3, height: 3, roomType: "storage" });
+    const back = box({ id: "b", left: 3, top: 0, width: 3, height: 3, roomType: "storage" });
+    const boxed = [core, left, right, back];
+    const opened = boxed.map((b) => (b.id === "b" ? { ...b, top: -9 } : b));
+    const closed = scoreCandidate(boxed, 1, [], false, ROOM_FACTS, []);
+    const open = scoreCandidate(opened, 1, [], false, ROOM_FACTS, []);
+    expect(closed.findings.singleAspect).toHaveLength(1);
+    expect(open.findings.singleAspect).toHaveLength(0);
+    expect(closed.hardProblems).toBe(open.hardProblems);
+    expect(closed.softRecommendations).toBeGreaterThan(open.softRecommendations);
   });
 });

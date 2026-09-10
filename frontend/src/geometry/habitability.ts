@@ -42,7 +42,7 @@
 import { displayShapesForLevelMemo, levelTouchDataMemo } from "./memo";
 import { liveBoxes } from "./snap";
 import { unionLength } from "./efficiency";
-import type { Box, Point } from "./types";
+import type { Box, Point, Poly } from "./types";
 
 /** How much uninterrupted outside-facing wall a sleeping room needs
  * before this stops objecting. An escape opening is roughly 0.9 m across
@@ -69,13 +69,8 @@ export interface WindowlessFinding {
 
 /**
  * How much of one room's outline is not covered by a neighbour, in
- * meters. Walked edge by edge rather than as `perimeter - sum(touches)`,
- * which is the tempting shortcut and is wrong: two neighbours meeting the
- * same stretch of wall (an ordinary occurrence once a carve is involved,
- * and possible in any plan where three rooms meet) would be subtracted
- * twice and report a room as sealed that is not. Each edge's covered
- * intervals are merged before subtracting, which is exactly the problem
- * `unionLength` already exists to solve for `overhangs`.
+ * meters -- `exposedOnEdge` summed over every edge of the outline. See
+ * that helper for why this is not `perimeter - sum(touches)`.
  *
  * Works on the room's real outline -- rotated, hand-drawn or post-carve
  * -- because it walks whatever polygon `displayShapes` produced, never a
@@ -91,28 +86,36 @@ export function exteriorWallLength(boxes: Box[], level: number, autoCarve: boole
 
   let exterior = 0;
   for (let i = 0; i < poly.length; i++) {
-    const a = poly[i];
-    const b = poly[(i + 1) % poly.length];
-    const dx = b[0] - a[0];
-    const dy = b[1] - a[1];
-    const len = Math.hypot(dx, dy);
-    if (len < 1e-9) continue;
-    const ux = dx / len;
-    const uy = dy / len;
-    const along = (p: Point) => (p[0] - a[0]) * ux + (p[1] - a[1]) * uy;
-    const across = (p: Point) => (p[0] - a[0]) * uy - (p[1] - a[1]) * ux;
-    const covered: [number, number][] = [];
-    for (const run of runs) {
-      // Both ends of the run have to sit on this edge's own line, or the
-      // run belongs to a different edge of the same room.
-      if (Math.abs(across(run.p1)) > EDGE_TOL_M || Math.abs(across(run.p2)) > EDGE_TOL_M) continue;
-      const lo = Math.max(0, Math.min(along(run.p1), along(run.p2)));
-      const hi = Math.min(len, Math.max(along(run.p1), along(run.p2)));
-      if (hi - lo > EDGE_TOL_M) covered.push([lo, hi]);
-    }
-    exterior += Math.max(0, len - unionLength(covered));
+    exterior += exposedOnEdge(poly[i], poly[(i + 1) % poly.length], runs);
   }
   return exterior;
+}
+
+/** How much of the single edge `a`-`b` no neighbour covers, in meters.
+ * The covered intervals are merged (`unionLength`) before subtracting,
+ * which is the whole reason this is not simply `len - sum(runs)`: two
+ * neighbours meeting the same stretch of wall -- routine once a carve is
+ * involved, possible anywhere three rooms meet -- would otherwise be
+ * subtracted twice and a room with daylight reported as sealed. */
+function exposedOnEdge(a: Point, b: Point, runs: { p1: Point; p2: Point }[]): number {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-9) return 0;
+  const ux = dx / len;
+  const uy = dy / len;
+  const along = (p: Point) => (p[0] - a[0]) * ux + (p[1] - a[1]) * uy;
+  const across = (p: Point) => (p[0] - a[0]) * uy - (p[1] - a[1]) * ux;
+  const covered: [number, number][] = [];
+  for (const run of runs) {
+    // Both ends of the run have to sit on this edge's own line, or the
+    // run belongs to a different edge of the same room.
+    if (Math.abs(across(run.p1)) > EDGE_TOL_M || Math.abs(across(run.p2)) > EDGE_TOL_M) continue;
+    const lo = Math.max(0, Math.min(along(run.p1), along(run.p2)));
+    const hi = Math.min(len, Math.max(along(run.p1), along(run.p2)));
+    if (hi - lo > EDGE_TOL_M) covered.push([lo, hi]);
+  }
+  return Math.max(0, len - unionLength(covered));
 }
 
 /**
@@ -142,6 +145,119 @@ export function windowlessSleepingRooms(
       if (room.level !== level || !sleepingOf(room.roomType)) continue;
       const exteriorM = exteriorWallLength(boxes, level, autoCarve, room.id);
       if (exteriorM < MIN_EXTERIOR_WALL_M) out.push({ roomId: room.id, exteriorM, level });
+    }
+  }
+  return out;
+}
+
+/** Exterior wall shorter than this on one facade is a return or a
+ * chamfer, not a wall a window goes in -- so it does not count as an
+ * aspect of its own. Half the escape-opening width, deliberately: this
+ * is asking "could there be a window here at all", one step weaker than
+ * `MIN_EXTERIOR_WALL_M` asking "could there be an escape window here". */
+const MIN_ASPECT_WALL_M = 0.5;
+
+/** Outward-facing directions are bucketed this coarsely -- eight sectors
+ * of 45 degrees, the eight compass points. Finer would split one flat
+ * facade in two the moment a room is rotated a few degrees; coarser
+ * would merge a north wall with an east one and call a corner room
+ * single-aspect. */
+const ASPECT_SECTORS = 8;
+
+export interface SingleAspectFinding {
+  roomId: string;
+  /** How much outside-facing wall the room has in total, meters -- it
+   * can be plenty and still all face one way, which is exactly the case
+   * this reports. */
+  exteriorM: number;
+  level: number;
+}
+
+/** Which way each edge of `poly` faces, as a sector index, paired with
+ * how much of that edge is exterior. Winding is read from the polygon's
+ * own signed area rather than assumed: `displayShapes` hands back
+ * polygons from a boolean operation, and nothing guarantees they wind
+ * the same way `rectPolyOf` does. */
+function outwardSector(a: Point, b: Point, counterClockwise: boolean): number {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  // In this plan frame (y down) a positive signed area means the outward
+  // normal of edge a->b is (dy, -dx); the other winding flips it.
+  const nx = counterClockwise ? dy : -dy;
+  const ny = counterClockwise ? -dx : dx;
+  const angle = Math.atan2(ny, nx);
+  const sector = Math.round((angle / (2 * Math.PI)) * ASPECT_SECTORS);
+  return ((sector % ASPECT_SECTORS) + ASPECT_SECTORS) % ASPECT_SECTORS;
+}
+
+function signedArea(poly: Poly): number {
+  let a = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const p = poly[i];
+    const q = poly[(i + 1) % poly.length];
+    a += p[0] * q[1] - q[0] * p[1];
+  }
+  return a / 2;
+}
+
+/**
+ * Every habitable room whose outside-facing wall all points one way --
+ * a single-aspect room. Air only moves through a room when it has
+ * somewhere to come in and somewhere to go out; openings on one facade
+ * give a room daylight and give it nothing else, so it overheats in the
+ * afternoon and stays hot at night. A second facade -- opposite for a
+ * through draught, or round a corner for a weaker but real one -- is what
+ * lets a room purge its own heat, which in a Gulf climate is the
+ * difference between a room that works in summer without mechanical help
+ * and one that does not. Dual aspect is a stated preference in
+ * residential design guidance generally (the London Plan's discouragement
+ * of single-aspect dwellings is the best-known written form of it) and is
+ * older than any of that as vernacular practice in hot climates.
+ *
+ * A soft recommendation, not a hard problem, and the line is the same one
+ * `efficiency.ts` draws: a single-aspect bedroom works. It is more
+ * expensive to keep comfortable and less pleasant to be in. It is not a
+ * room you cannot use, which is what `windowlessSleepingRooms` above
+ * reports.
+ *
+ * A room with no exterior wall at all is not reported here. It has a
+ * worse problem, already named by the check above or (for a room type
+ * that is not slept in) legitimately internal; adding a second finding
+ * for the same wall would just say the same thing twice.
+ */
+export function singleAspectRooms(
+  boxes: Box[],
+  storeys: number,
+  autoCarve: boolean,
+  habitableOf: (roomType: string) => boolean,
+): SingleAspectFinding[] {
+  const out: SingleAspectFinding[] = [];
+  for (let level = 0; level < storeys; level++) {
+    const live = liveBoxes(boxes, level);
+    const shapes = displayShapesForLevelMemo(boxes, level, autoCarve);
+    const { touchGraph } = levelTouchDataMemo(boxes, level, autoCarve);
+    for (let i = 0; i < live.length; i++) {
+      const room = live[i];
+      if (room.level !== level || !habitableOf(room.roomType)) continue;
+      const poly = shapes[i].page;
+      const runs = (touchGraph.get(room.id) ?? []).map((e) => e.touch);
+      const counterClockwise = signedArea(poly) > 0;
+      const bySector = new Map<number, number>();
+      let exteriorM = 0;
+      for (let e = 0; e < poly.length; e++) {
+        const a = poly[e];
+        const b = poly[(e + 1) % poly.length];
+        const exposed = exposedOnEdge(a, b, runs);
+        if (exposed <= 0) continue;
+        exteriorM += exposed;
+        if (exposed < MIN_ASPECT_WALL_M) continue;
+        const sector = outwardSector(a, b, counterClockwise);
+        bySector.set(sector, (bySector.get(sector) ?? 0) + exposed);
+      }
+      // No usable exterior wall at all is a different (worse) finding,
+      // reported elsewhere or legitimately fine -- not one more instance
+      // of this one.
+      if (bySector.size === 1) out.push({ roomId: room.id, exteriorM, level });
     }
   }
   return out;

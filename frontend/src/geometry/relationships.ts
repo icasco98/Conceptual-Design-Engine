@@ -118,7 +118,7 @@ import {
   type GapFinding,
   type OverhangFinding,
 } from "./efficiency";
-import { windowlessSleepingRooms, type WindowlessFinding } from "./habitability";
+import { singleAspectRooms, windowlessSleepingRooms, type SingleAspectFinding, type WindowlessFinding } from "./habitability";
 import { liveBoxes } from "./snap";
 import type { Arrow, Box, Point, PrivacyTier, RoomFacts } from "./types";
 
@@ -628,6 +628,10 @@ export interface Findings {
   /** Code, not cost -- see habitability.ts for why a sleeping room with
    * no wall facing outside is a hard problem and not an expensive room. */
   windowless: WindowlessFinding[];
+  /** Comfort, not code -- soft, like every efficiency.ts finding and for
+   * the same reason: a single-aspect room works, it is just worse to be
+   * in. */
+  singleAspect: SingleAspectFinding[];
   gaps: GapFinding[];
   circulationRatio: CirculationRatioFinding[];
   overhangs: OverhangFinding[];
@@ -677,6 +681,7 @@ export function collectFindings(
     sanitaryDoors: sanitaryDoorProblems(boxes, storeys, arrows, autoCarve, facts.sanitary, facts.food),
     undersizedDoorways: undersizedDoorways(boxes, storeys, arrows, autoCarve),
     windowless: windowlessSleepingRooms(boxes, storeys, autoCarve, facts.sleeping),
+    singleAspect: singleAspectRooms(boxes, storeys, autoCarve, facts.habitable),
     gaps: unnecessaryGaps(boxes, storeys, autoCarve, (a, b) => isUndesiredPair(a, b, rules)),
     circulationRatio: circulationRatio(boxes, storeys, autoCarve, facts.circulation),
     overhangs: overhangs(boxes, storeys, autoCarve),
@@ -698,7 +703,8 @@ export interface Score {
    * it gets right. */
   hardProblems: number;
   /** A weighted total, not a raw count: every unmet `desired` adjacency
-   * row counts as 1, but every unnecessary gap, over-ratio storey,
+   * row and every single-aspect room (`habitability.ts`) counts as 1,
+   * but every unnecessary gap, over-ratio storey,
    * overhang and wasted corridor stub (efficiency.ts) is weighted by its
    * own magnitude -- a gap a hair short of touching counts for much more
    * than one a hair short of the threshold that stops it being a gap at
@@ -803,7 +809,8 @@ export function scoreCandidate(
     sumWeights(findings.gaps, (g) => gapWeight(g.gapM)) +
     sumWeights(findings.circulationRatio, circulationRatioWeight) +
     sumWeights(findings.overhangs, overhangWeight) +
-    sumWeights(findings.corridorWaste, corridorWasteWeight);
+    sumWeights(findings.corridorWaste, corridorWasteWeight) +
+    findings.singleAspect.length;
   return { hardProblems, softRecommendations, findings };
 }
 

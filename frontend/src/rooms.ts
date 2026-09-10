@@ -75,6 +75,14 @@ interface RoomTypeInfo {
    * question this answers is narrow and physical: is there a toilet on
    * the other side of this door. */
   sanitary?: boolean;
+  /** A room people occupy for long stretches -- sleep, sit, eat, cook,
+   * work, receive guests -- which is the set whose comfort and
+   * usability `habitability.ts` judges: whether it can cross-ventilate,
+   * whether its shape can be furnished. Deliberately not the opposite of
+   * `auxiliary` and not "anything with a tier": a hall, a garage, a
+   * store, a laundry and a bathroom are all rooms nobody stays in, and
+   * a corridor being long and narrow is its job rather than a defect. */
+  habitable?: boolean;
   /** Someone sleeps here. The set residential codes require an
    * emergency escape and rescue opening in -- a window or door straight
    * to the outside -- which is what `habitability.ts` checks is even
@@ -106,23 +114,23 @@ export const ROOM_TYPES: Record<string, RoomTypeInfo> = {
   // household's -- the room type only marks the destination. Public tier:
   // a diwaniya is open to visitors with no prior relationship to the
   // household, which is its whole cultural function.
-  diwaniya: { label: "Diwaniya", minWidth: 4.5, minHeight: 5.5, typicalWidth: 6.5, typicalHeight: 8.0, zone: "category_d", passable: false, tier: "public" },
+  diwaniya: { label: "Diwaniya", minWidth: 4.5, minHeight: 5.5, typicalWidth: 6.5, typicalHeight: 8.0, zone: "category_d", passable: false, tier: "public", habitable: true },
   // The general (non-Gulf) equivalent: a room for receiving guests who
   // are female or close family, reached through the main/family entrance
   // rather than a separate door -- unlike the diwaniya, not structurally
   // isolated from the rest of the house.
-  reception: { label: "Reception", minWidth: 3.5, minHeight: 4.0, typicalWidth: 4.5, typicalHeight: 5.5, zone: "category_b", passable: false, tier: "public" },
+  reception: { label: "Reception", minWidth: 3.5, minHeight: 4.0, typicalWidth: 4.5, typicalHeight: 5.5, zone: "category_b", passable: false, tier: "public", habitable: true },
   hallway: { label: "Hallway", minWidth: 1.2, minHeight: 2.0, typicalWidth: 1.2, typicalHeight: 3.0, zone: "category_b", passable: true, tier: "semi-public", circulation: true },
-  living_room: { label: "Living Room", minWidth: 3.5, minHeight: 4.0, typicalWidth: 4.5, typicalHeight: 5.5, zone: "category_b", passable: true, tier: "private" },
-  dining_room: { label: "Dining Room", minWidth: 3.0, minHeight: 3.3, typicalWidth: 3.6, typicalHeight: 4.2, zone: "category_b", passable: true, tier: "semi-public", food: true },
-  kitchen: { label: "Kitchen", minWidth: 2.7, minHeight: 3.0, typicalWidth: 3.6, typicalHeight: 4.2, zone: "category_b", passable: false, tier: "private", food: true },
-  master_bedroom: { label: "Master Bedroom", minWidth: 3.3, minHeight: 3.6, typicalWidth: 4.0, typicalHeight: 4.5, zone: "category_a", passable: false, tier: "private", sleeping: true },
-  bedroom: { label: "Bedroom", minWidth: 2.7, minHeight: 3.0, typicalWidth: 3.3, typicalHeight: 3.6, zone: "category_a", passable: false, tier: "private", sleeping: true },
+  living_room: { label: "Living Room", minWidth: 3.5, minHeight: 4.0, typicalWidth: 4.5, typicalHeight: 5.5, zone: "category_b", passable: true, tier: "private", habitable: true },
+  dining_room: { label: "Dining Room", minWidth: 3.0, minHeight: 3.3, typicalWidth: 3.6, typicalHeight: 4.2, zone: "category_b", passable: true, tier: "semi-public", food: true, habitable: true },
+  kitchen: { label: "Kitchen", minWidth: 2.7, minHeight: 3.0, typicalWidth: 3.6, typicalHeight: 4.2, zone: "category_b", passable: false, tier: "private", food: true, habitable: true },
+  master_bedroom: { label: "Master Bedroom", minWidth: 3.3, minHeight: 3.6, typicalWidth: 4.0, typicalHeight: 4.5, zone: "category_a", passable: false, tier: "private", sleeping: true, habitable: true },
+  bedroom: { label: "Bedroom", minWidth: 2.7, minHeight: 3.0, typicalWidth: 3.3, typicalHeight: 3.6, zone: "category_a", passable: false, tier: "private", sleeping: true, habitable: true },
   // Bathrooms are exempt from the gradient check on purpose -- see the
   // file doc comment above.
   bathroom: { label: "Bathroom", minWidth: 1.5, minHeight: 1.75, typicalWidth: 1.8, typicalHeight: 2.4, zone: "category_a", passable: false, auxiliary: true, sanitary: true },
   half_bath: { label: "Half Bath / Powder Room", minWidth: 0.9, minHeight: 1.5, typicalWidth: 1.1, typicalHeight: 1.6, zone: "category_c", passable: false, auxiliary: true, sanitary: true },
-  office: { label: "Office / Study", minWidth: 2.4, minHeight: 2.7, typicalWidth: 3.0, typicalHeight: 3.3, zone: "category_a", passable: false, tier: "private" },
+  office: { label: "Office / Study", minWidth: 2.4, minHeight: 2.7, typicalWidth: 3.0, typicalHeight: 3.3, zone: "category_a", passable: false, tier: "private", habitable: true },
   laundry: { label: "Laundry", minWidth: 1.5, minHeight: 1.8, typicalWidth: 1.8, typicalHeight: 2.4, zone: "category_c", passable: false },
   garage_single: { label: "Single Garage", minWidth: 3.0, minHeight: 6.0, typicalWidth: 3.6, typicalHeight: 6.5, zone: "category_c", passable: false },
   garage_double: { label: "Double Garage", minWidth: 5.5, minHeight: 6.0, typicalWidth: 6.0, typicalHeight: 6.5, zone: "category_c", passable: false },
@@ -137,12 +145,12 @@ export const ROOM_TYPES: Record<string, RoomTypeInfo> = {
   // as any other bedroom, even though it's not part of the family's own
   // wing. A live-in maid is modeled as Nanny Room; there is no separate
   // maid type.
-  driver_room: { label: "Driver Room", minWidth: 2.7, minHeight: 3.0, typicalWidth: 3.3, typicalHeight: 3.6, zone: "category_c", passable: false, tier: "private", sleeping: true },
+  driver_room: { label: "Driver Room", minWidth: 2.7, minHeight: 3.0, typicalWidth: 3.3, typicalHeight: 3.6, zone: "category_c", passable: false, tier: "private", sleeping: true, habitable: true },
   driver_bathroom: { label: "Driver Bathroom", minWidth: 1.5, minHeight: 1.75, typicalWidth: 1.8, typicalHeight: 2.4, zone: "category_c", passable: false, auxiliary: true, sanitary: true },
-  nanny_room: { label: "Nanny Room", minWidth: 2.7, minHeight: 3.0, typicalWidth: 3.3, typicalHeight: 3.6, zone: "category_c", passable: false, tier: "private", sleeping: true },
+  nanny_room: { label: "Nanny Room", minWidth: 2.7, minHeight: 3.0, typicalWidth: 3.3, typicalHeight: 3.6, zone: "category_c", passable: false, tier: "private", sleeping: true, habitable: true },
   nanny_bathroom: { label: "Nanny Bathroom", minWidth: 1.5, minHeight: 1.75, typicalWidth: 1.8, typicalHeight: 2.4, zone: "category_c", passable: false, auxiliary: true, sanitary: true },
   // No bathroom requirement -- it does not need to be ensuite.
-  prayer_room: { label: "Prayer Room", minWidth: 2.0, minHeight: 2.5, typicalWidth: 2.5, typicalHeight: 3.0, zone: "category_a", passable: false, tier: "private" },
+  prayer_room: { label: "Prayer Room", minWidth: 2.0, minHeight: 2.5, typicalWidth: 2.5, typicalHeight: 3.0, zone: "category_a", passable: false, tier: "private", habitable: true },
   other: { label: "Room", minWidth: 2.0, minHeight: 2.0, typicalWidth: 3.0, typicalHeight: 3.0, zone: "category_b", passable: false },
 };
 
@@ -193,6 +201,10 @@ export function foodOf(roomType: string): boolean {
   return !!roomTypeInfo(roomType).food;
 }
 
+export function habitableOf(roomType: string): boolean {
+  return !!roomTypeInfo(roomType).habitable;
+}
+
 export function sleepingOf(roomType: string): boolean {
   return !!roomTypeInfo(roomType).sleeping;
 }
@@ -210,5 +222,6 @@ export const ROOM_FACTS: RoomFacts = {
   circulation: circulationOf,
   sanitary: sanitaryOf,
   food: foodOf,
+  habitable: habitableOf,
   sleeping: sleepingOf,
 };

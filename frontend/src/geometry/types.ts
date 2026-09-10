@@ -220,6 +220,9 @@ export interface RoomFacts {
   sanitary: (roomType: string) => boolean;
   /** Food is prepared or eaten here. */
   food: (roomType: string) => boolean;
+  /** A room people occupy for long stretches -- the set whose comfort
+   * and usability is worth judging (cross-ventilation, proportion). */
+  habitable: (roomType: string) => boolean;
   /** Someone sleeps here -- the set that needs an emergency escape and
    * rescue opening straight to the outside. */
   sleeping: (roomType: string) => boolean;
