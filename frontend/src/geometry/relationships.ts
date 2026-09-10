@@ -106,6 +106,7 @@ import {
   deadEndHallways,
   overhangs,
   unnecessaryGaps,
+  unstackedWetRooms,
   CIRCULATION_RATIO_THRESHOLD,
   CORRIDOR_STUB_THRESHOLD_M,
   DEAD_END_LIMIT_M,
@@ -117,6 +118,7 @@ import {
   type DeadEndFinding,
   type GapFinding,
   type OverhangFinding,
+  type WetStackFinding,
 } from "./efficiency";
 import {
   awkwardProportions,
@@ -641,6 +643,8 @@ export interface Findings {
    * works, it is just worse to be in. */
   singleAspect: SingleAspectFinding[];
   proportion: ProportionFinding[];
+  /** Cost, like the four efficiency.ts findings above it. */
+  wetStacks: WetStackFinding[];
   gaps: GapFinding[];
   circulationRatio: CirculationRatioFinding[];
   overhangs: OverhangFinding[];
@@ -696,6 +700,7 @@ export function collectFindings(
     circulationRatio: circulationRatio(boxes, storeys, autoCarve, facts.circulation),
     overhangs: overhangs(boxes, storeys, autoCarve),
     corridorWaste: corridorWaste(boxes, storeys, arrows, autoCarve),
+    wetStacks: unstackedWetRooms(boxes, storeys, autoCarve, facts.wet),
     deadEndHallways: deadEndHallways(boxes, storeys, arrows, autoCarve),
   };
 }
@@ -713,8 +718,9 @@ export interface Score {
    * it gets right. */
   hardProblems: number;
   /** A weighted total, not a raw count: every unmet `desired` adjacency
-   * row and every single-aspect room counts as 1, but every over-long
-   * room (`habitability.ts`) and every unnecessary gap, over-ratio storey,
+   * row, every single-aspect room and every unstacked wet room counts as
+   * 1, but every over-long room (`habitability.ts`) and every
+   * unnecessary gap, over-ratio storey,
    * overhang and wasted corridor stub (efficiency.ts) is weighted by its
    * own magnitude -- a gap a hair short of touching counts for much more
    * than one a hair short of the threshold that stops it being a gap at
@@ -828,6 +834,7 @@ export function scoreCandidate(
     sumWeights(findings.overhangs, overhangWeight) +
     sumWeights(findings.corridorWaste, corridorWasteWeight) +
     findings.singleAspect.length +
+    findings.wetStacks.length +
     sumWeights(findings.proportion, proportionWeight);
   return { hardProblems, softRecommendations, findings };
 }

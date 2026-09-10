@@ -44,6 +44,30 @@ export function unionPolys(polys: Poly[]): Poly[][] {
   }
 }
 
+/** Area shared by two polygons, in square metres -- 0 when they do not
+ * overlap at all. Falls back to 0 rather than throwing if the library
+ * cannot handle a degenerate pair, the same defensive shape `unionPolys`
+ * above already takes: a wrong-but-conservative 0 here means a check
+ * reports "these do not overlap", which is what it would have concluded
+ * anyway without an answer. */
+export function polyOverlapArea(a: Poly, b: Poly): number {
+  try {
+    const parts = polygonClipping.intersection(polyToGeom(a), polyToGeom(b));
+    let area = 0;
+    for (const poly of parts) {
+      // [outer, ...holes] -- the holes subtract, same convention as the
+      // rest of this file.
+      poly.forEach((ring, i) => {
+        const ringArea = polyArea(ringToPoly(ring));
+        area += i === 0 ? ringArea : -ringArea;
+      });
+    }
+    return Math.max(0, area);
+  } catch {
+    return 0;
+  }
+}
+
 interface BBox {
   minX: number;
   minY: number;

@@ -13,10 +13,11 @@
  */
 import { describe, expect, it } from "vitest";
 
+import { unstackedWetRooms } from "./efficiency";
 import { awkwardProportions, exteriorWallLength, singleAspectRooms, windowlessSleepingRooms } from "./habitability";
 import { checkAdjacency, sanitaryDoorProblems, scoreCandidate, undersizedDoorways, type RelationRow } from "./relationships";
 import type { Arrow, Box } from "./types";
-import { foodOf, habitableOf, ROOM_FACTS, sanitaryOf, sleepingOf } from "../rooms";
+import { foodOf, habitableOf, ROOM_FACTS, sanitaryOf, sleepingOf, wetOf } from "../rooms";
 
 function box(partial: Partial<Box> & { id: string; left: number; top: number; width: number; height: number }): Box {
   return {
@@ -374,5 +375,54 @@ describe("awkwardProportions: a room stretched too long stops being a room", () 
     const b = scoreCandidate([slot], 1, [], false, ROOM_FACTS, []);
     expect(a.hardProblems).toBe(b.hardProblems);
     expect(b.softRecommendations - a.softRecommendations).toBeCloseTo(8 - 3.2, 6);
+  });
+});
+
+describe("unstackedWetRooms: pipes want to run in one line, not four", () => {
+  const groundBath = box({ id: "gb", left: 0, top: 0, width: 3, height: 3, roomType: "bathroom" });
+  const groundBedroom = box({ id: "gr", left: 10, top: 0, width: 4, height: 4, roomType: "bedroom" });
+
+  it("reports an upstairs bathroom sitting over dry rooms", () => {
+    const upstairs = box({ id: "ub", left: 10, top: 0, width: 3, height: 3, roomType: "bathroom", level: 1, levelTo: 1 });
+    const found = unstackedWetRooms([groundBath, groundBedroom, upstairs], 2, false, wetOf);
+    expect(found).toEqual([{ roomId: "ub", overlapM2: 0, level: 1 }]);
+  });
+
+  it("reports nothing when it sits over the bathroom below", () => {
+    const upstairs = box({ id: "ub", left: 0, top: 0, width: 3, height: 3, roomType: "bathroom", level: 1, levelTo: 1 });
+    expect(unstackedWetRooms([groundBath, groundBedroom, upstairs], 2, false, wetOf)).toEqual([]);
+  });
+
+  it("reports nothing when it sits over a kitchen or laundry, which share the same stack", () => {
+    for (const roomType of ["kitchen", "laundry"]) {
+      const below = { ...groundBath, roomType };
+      const upstairs = box({ id: "ub", left: 0, top: 0, width: 3, height: 3, roomType: "bathroom", level: 1, levelTo: 1 });
+      expect(unstackedWetRooms([below, groundBedroom, upstairs], 2, false, wetOf)).toEqual([]);
+    }
+  });
+
+  it("does not count a corner clipping a corner as stacked", () => {
+    // 0.5 m by 0.5 m of shared plan area: two soil pipes nowhere near
+    // the same line, which is what the threshold exists to reject.
+    const upstairs = box({ id: "ub", left: 2.5, top: 2.5, width: 3, height: 3, roomType: "bathroom", level: 1, levelTo: 1 });
+    const found = unstackedWetRooms([groundBath, groundBedroom, upstairs], 2, false, wetOf);
+    expect(found).toHaveLength(1);
+    expect(found[0].overlapM2).toBeCloseTo(0.25, 6);
+  });
+
+  it("never reports a ground-floor wet room, which has nothing below it", () => {
+    expect(unstackedWetRooms([groundBath, groundBedroom], 1, false, wetOf)).toEqual([]);
+    expect(unstackedWetRooms([groundBath, groundBedroom], 2, false, wetOf)).toEqual([]);
+  });
+
+  it("is a soft recommendation, never a hard problem", () => {
+    const stacked = box({ id: "ub", left: 0, top: 0, width: 3, height: 3, roomType: "bathroom", level: 1, levelTo: 1 });
+    const scattered = { ...stacked, left: 10 };
+    const good = scoreCandidate([groundBath, groundBedroom, stacked], 2, [], false, ROOM_FACTS, []);
+    const bad = scoreCandidate([groundBath, groundBedroom, scattered], 2, [], false, ROOM_FACTS, []);
+    expect(bad.findings.wetStacks).toHaveLength(1);
+    expect(good.findings.wetStacks).toHaveLength(0);
+    expect(bad.hardProblems).toBe(good.hardProblems);
+    expect(bad.softRecommendations).toBeCloseTo(good.softRecommendations + 1, 6);
   });
 });

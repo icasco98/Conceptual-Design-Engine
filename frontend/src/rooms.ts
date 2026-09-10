@@ -68,6 +68,11 @@ interface RoomTypeInfo {
    * a bedroom, kitchen, or any other room that has to serve everyone
    * using the stairs as an involuntary through-route. */
   circulation?: boolean;
+  /** Needs supply, waste and vent pipes -- a bathroom, a kitchen, a
+   * laundry. Used only by `efficiency.ts`'s `unstackedWetRooms`, and
+   * wider than `sanitary`: a kitchen and a laundry have no WC in them
+   * and are still on the same plumbing stack. */
+  wet?: boolean;
   /** Contains a WC. Used only by `relationships.ts`'s
    * `sanitaryDoorProblems`, and deliberately not the same set as
    * `auxiliary` (a closet is auxiliary and has no WC in it) nor as the
@@ -123,15 +128,15 @@ export const ROOM_TYPES: Record<string, RoomTypeInfo> = {
   hallway: { label: "Hallway", minWidth: 1.2, minHeight: 2.0, typicalWidth: 1.2, typicalHeight: 3.0, zone: "category_b", passable: true, tier: "semi-public", circulation: true },
   living_room: { label: "Living Room", minWidth: 3.5, minHeight: 4.0, typicalWidth: 4.5, typicalHeight: 5.5, zone: "category_b", passable: true, tier: "private", habitable: true },
   dining_room: { label: "Dining Room", minWidth: 3.0, minHeight: 3.3, typicalWidth: 3.6, typicalHeight: 4.2, zone: "category_b", passable: true, tier: "semi-public", food: true, habitable: true },
-  kitchen: { label: "Kitchen", minWidth: 2.7, minHeight: 3.0, typicalWidth: 3.6, typicalHeight: 4.2, zone: "category_b", passable: false, tier: "private", food: true, habitable: true },
+  kitchen: { label: "Kitchen", minWidth: 2.7, minHeight: 3.0, typicalWidth: 3.6, typicalHeight: 4.2, zone: "category_b", passable: false, tier: "private", food: true, habitable: true, wet: true },
   master_bedroom: { label: "Master Bedroom", minWidth: 3.3, minHeight: 3.6, typicalWidth: 4.0, typicalHeight: 4.5, zone: "category_a", passable: false, tier: "private", sleeping: true, habitable: true },
   bedroom: { label: "Bedroom", minWidth: 2.7, minHeight: 3.0, typicalWidth: 3.3, typicalHeight: 3.6, zone: "category_a", passable: false, tier: "private", sleeping: true, habitable: true },
   // Bathrooms are exempt from the gradient check on purpose -- see the
   // file doc comment above.
-  bathroom: { label: "Bathroom", minWidth: 1.5, minHeight: 1.75, typicalWidth: 1.8, typicalHeight: 2.4, zone: "category_a", passable: false, auxiliary: true, sanitary: true },
-  half_bath: { label: "Half Bath / Powder Room", minWidth: 0.9, minHeight: 1.5, typicalWidth: 1.1, typicalHeight: 1.6, zone: "category_c", passable: false, auxiliary: true, sanitary: true },
+  bathroom: { label: "Bathroom", minWidth: 1.5, minHeight: 1.75, typicalWidth: 1.8, typicalHeight: 2.4, zone: "category_a", passable: false, auxiliary: true, sanitary: true, wet: true },
+  half_bath: { label: "Half Bath / Powder Room", minWidth: 0.9, minHeight: 1.5, typicalWidth: 1.1, typicalHeight: 1.6, zone: "category_c", passable: false, auxiliary: true, sanitary: true, wet: true },
   office: { label: "Office / Study", minWidth: 2.4, minHeight: 2.7, typicalWidth: 3.0, typicalHeight: 3.3, zone: "category_a", passable: false, tier: "private", habitable: true },
-  laundry: { label: "Laundry", minWidth: 1.5, minHeight: 1.8, typicalWidth: 1.8, typicalHeight: 2.4, zone: "category_c", passable: false },
+  laundry: { label: "Laundry", minWidth: 1.5, minHeight: 1.8, typicalWidth: 1.8, typicalHeight: 2.4, zone: "category_c", passable: false, wet: true },
   garage_single: { label: "Single Garage", minWidth: 3.0, minHeight: 6.0, typicalWidth: 3.6, typicalHeight: 6.5, zone: "category_c", passable: false },
   garage_double: { label: "Double Garage", minWidth: 5.5, minHeight: 6.0, typicalWidth: 6.0, typicalHeight: 6.5, zone: "category_c", passable: false },
   closet: { label: "Closet", minWidth: 0.9, minHeight: 0.6, typicalWidth: 1.5, typicalHeight: 0.6, zone: "category_a", passable: false, tier: "private", auxiliary: true },
@@ -146,9 +151,9 @@ export const ROOM_TYPES: Record<string, RoomTypeInfo> = {
   // wing. A live-in maid is modeled as Nanny Room; there is no separate
   // maid type.
   driver_room: { label: "Driver Room", minWidth: 2.7, minHeight: 3.0, typicalWidth: 3.3, typicalHeight: 3.6, zone: "category_c", passable: false, tier: "private", sleeping: true, habitable: true },
-  driver_bathroom: { label: "Driver Bathroom", minWidth: 1.5, minHeight: 1.75, typicalWidth: 1.8, typicalHeight: 2.4, zone: "category_c", passable: false, auxiliary: true, sanitary: true },
+  driver_bathroom: { label: "Driver Bathroom", minWidth: 1.5, minHeight: 1.75, typicalWidth: 1.8, typicalHeight: 2.4, zone: "category_c", passable: false, auxiliary: true, sanitary: true, wet: true },
   nanny_room: { label: "Nanny Room", minWidth: 2.7, minHeight: 3.0, typicalWidth: 3.3, typicalHeight: 3.6, zone: "category_c", passable: false, tier: "private", sleeping: true, habitable: true },
-  nanny_bathroom: { label: "Nanny Bathroom", minWidth: 1.5, minHeight: 1.75, typicalWidth: 1.8, typicalHeight: 2.4, zone: "category_c", passable: false, auxiliary: true, sanitary: true },
+  nanny_bathroom: { label: "Nanny Bathroom", minWidth: 1.5, minHeight: 1.75, typicalWidth: 1.8, typicalHeight: 2.4, zone: "category_c", passable: false, auxiliary: true, sanitary: true, wet: true },
   // No bathroom requirement -- it does not need to be ensuite.
   prayer_room: { label: "Prayer Room", minWidth: 2.0, minHeight: 2.5, typicalWidth: 2.5, typicalHeight: 3.0, zone: "category_a", passable: false, tier: "private", habitable: true },
   other: { label: "Room", minWidth: 2.0, minHeight: 2.0, typicalWidth: 3.0, typicalHeight: 3.0, zone: "category_b", passable: false },
@@ -201,6 +206,10 @@ export function foodOf(roomType: string): boolean {
   return !!roomTypeInfo(roomType).food;
 }
 
+export function wetOf(roomType: string): boolean {
+  return !!roomTypeInfo(roomType).wet;
+}
+
 export function habitableOf(roomType: string): boolean {
   return !!roomTypeInfo(roomType).habitable;
 }
@@ -222,6 +231,7 @@ export const ROOM_FACTS: RoomFacts = {
   circulation: circulationOf,
   sanitary: sanitaryOf,
   food: foodOf,
+  wet: wetOf,
   habitable: habitableOf,
   sleeping: sleepingOf,
 };

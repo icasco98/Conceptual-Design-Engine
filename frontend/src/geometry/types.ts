@@ -220,6 +220,9 @@ export interface RoomFacts {
   sanitary: (roomType: string) => boolean;
   /** Food is prepared or eaten here. */
   food: (roomType: string) => boolean;
+  /** Needs supply, waste and vent pipes -- a bathroom, a kitchen, a
+   * laundry. Wider than `sanitary`. */
+  wet: (roomType: string) => boolean;
   /** A room people occupy for long stretches -- the set whose comfort
    * and usability is worth judging (cross-ventilation, proportion). */
   habitable: (roomType: string) => boolean;

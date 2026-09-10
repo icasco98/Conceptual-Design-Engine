@@ -13,7 +13,7 @@
 import { useMemo } from "react";
 
 import { actorRoute, sharedSegments, type ReachabilityProblem } from "../geometry/circulation";
-import type { CirculationRatioFinding, CorridorWasteFinding, DeadEndFinding, GapFinding, OverhangFinding } from "../geometry/efficiency";
+import type { CirculationRatioFinding, CorridorWasteFinding, DeadEndFinding, GapFinding, OverhangFinding, WetStackFinding } from "../geometry/efficiency";
 import { footprintCoverage } from "../geometry/footprint";
 import { MIN_EXTERIOR_WALL_M, type ProportionFinding, type SingleAspectFinding, type WindowlessFinding } from "../geometry/habitability";
 import { buildCirculationGraphMemo, displayShapesForLevelMemo } from "../geometry/memo";
@@ -118,6 +118,17 @@ function windowlessFindings(problems: WindowlessFinding[], boxesById: Map<string
     if (!room) return [];
     const how = p.exteriorM < 0.01 ? "no wall facing outside at all" : `only ${p.exteriorM.toFixed(2)} m of wall facing outside`;
     return [{ level: p.level, text: `${room.name} has ${how} -- a room slept in needs at least ${MIN_EXTERIOR_WALL_M.toFixed(1)} m for a window to escape through` }];
+  });
+}
+
+/** A wet room on an upper floor with no wet room under it
+ * (`efficiency.ts`'s `unstackedWetRooms`) -- its own boxed-in stack to
+ * build and to reach later, rather than a share of one. Cost, so a
+ * recommendation. */
+function wetStackFindings(problems: WetStackFinding[], boxesById: Map<string, Box>): Finding[] {
+  return problems.flatMap((p) => {
+    const room = boxesById.get(p.roomId);
+    return room ? [{ level: p.level, text: `${room.name} sits over dry rooms -- its pipes need a stack of their own instead of sharing one below` }] : [];
   });
 }
 
@@ -309,6 +320,7 @@ export function StatusBar() {
       ...circulationRatioFindings(findings.circulationRatio),
       ...overhangFindings(findings.overhangs, boxesById),
       ...corridorWasteFindings(findings.corridorWaste, boxesById),
+      ...wetStackFindings(findings.wetStacks, boxesById),
       ...habitabilityRecommendationFindings(findings.singleAspect, findings.proportion, boxesById),
     ];
     return { problems: organizeByFloor(hard), recommendations: organizeByFloor(soft) };
