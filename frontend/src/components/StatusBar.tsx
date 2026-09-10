@@ -14,7 +14,7 @@ import { useMemo } from "react";
 
 import { displayShapes } from "../geometry/carve";
 import { actorRoute, buildCirculationGraph, sharedSegments, type ReachabilityProblem } from "../geometry/circulation";
-import type { CirculationRatioFinding, GapFinding } from "../geometry/efficiency";
+import type { CirculationRatioFinding, CorridorWasteFinding, DeadEndFinding, GapFinding, OverhangFinding } from "../geometry/efficiency";
 import { outsidePlot } from "../geometry/plot";
 import { polyArea } from "../geometry/poly";
 import { adjacencySeverity, collectFindings, TIER_ORDER, type AdjacencyStatus, type StairConnectionProblem, type TierViolation } from "../geometry/relationships";
@@ -122,6 +122,37 @@ function circulationRatioFindings(findings: CirculationRatioFinding[]): Finding[
   }));
 }
 
+function overhangFindings(findings: OverhangFinding[], boxesById: Map<string, Box>): Finding[] {
+  return findings.flatMap((f) => {
+    const room = boxesById.get(f.roomId);
+    const neighbor = boxesById.get(f.neighborId);
+    if (!room || !neighbor) return [];
+    const m = f.exposedM.toFixed(1);
+    return [{ level: f.level, text: `${room.name}'s wall runs ${m} m past where it meets ${neighbor.name} -- a jog the exterior wall pays for either way` }];
+  });
+}
+
+function corridorWasteFindings(findings: CorridorWasteFinding[], boxesById: Map<string, Box>): Finding[] {
+  return findings.flatMap((f) => {
+    const room = boxesById.get(f.roomId);
+    if (!room) return [];
+    const m = f.wastedM.toFixed(1);
+    return [{ level: f.level, text: `${room.name} runs ${m} m past its own doors -- floor a shorter corridor wouldn't need` }];
+  });
+}
+
+/** The one finding in efficiency.ts that is a hard problem, not a
+ * recommendation -- see `deadEndHallways`'s own doc comment for why. */
+function deadEndFindings(findings: DeadEndFinding[], boxesById: Map<string, Box>): Finding[] {
+  return findings.flatMap((f) => {
+    const hallway = boxesById.get(f.hallwayId);
+    const room = boxesById.get(f.farRoomId);
+    if (!hallway || !room) return [];
+    const m = f.distanceM.toFixed(1);
+    return [{ level: f.level, text: `${hallway.name} is the only way in or out for ${room.name}, ${m} m away -- too far for just one route` }];
+  });
+}
+
 /** Every finding, floor by floor -- lowest first, a floor's own findings
  * kept in whichever order they arrived in (stable sort), not scattered
  * across the list in whatever order the four checks happened to run.
@@ -178,12 +209,14 @@ export function StatusBar() {
   // Every storey at once, the same reasoning as `strays` above: an issue
   // two floors up is exactly the kind of thing a person would not
   // otherwise notice. Split into hard problems (a real requirement unmet
-  // or conflict present -- tier skips, reachability problems and a
-  // stair opening onto the wrong room are always this severity) and soft
-  // recommendations (a `desired` miss, an unnecessary gap, an over-ratio
-  // hallway -- correct but costly), so the two never read as equally
-  // urgent. Each list is organized floor by floor, not left in whatever
-  // order the checks happened to produce them in.
+  // or conflict present -- tier skips, reachability problems, a stair
+  // opening onto the wrong room, and a dead-end corridor past the real
+  // code limit are always this severity) and soft recommendations (a
+  // `desired` miss, an unnecessary gap, an over-ratio hallway, an
+  // overhanging wall, a corridor longer than its own doors need -- all
+  // correct but costly), so the two never read as equally urgent. Each
+  // list is organized floor by floor, not left in whatever order the
+  // checks happened to produce them in.
   const { problems, recommendations } = useMemo(() => {
     const boxesById = new Map(boxes.map((b) => [b.id, b]));
     const findings = collectFindings(boxes, storeys, arrows, autoCarve, passableOf, tierOf, auxiliaryOf, circulationOf);
@@ -192,11 +225,14 @@ export function StatusBar() {
       ...reachabilityFindings(findings.reachability, boxesById),
       ...stairConnectionFindings(findings.stairConnection, boxesById),
       ...adjacencyProblemFindings(findings.adjacency),
+      ...deadEndFindings(findings.deadEndHallways, boxesById),
     ];
     const soft = [
       ...adjacencyRecommendationFindings(findings.adjacency),
       ...gapFindings(findings.gaps, boxesById),
       ...circulationRatioFindings(findings.circulationRatio),
+      ...overhangFindings(findings.overhangs, boxesById),
+      ...corridorWasteFindings(findings.corridorWaste, boxesById),
     ];
     return { problems: organizeByFloor(hard), recommendations: organizeByFloor(soft) };
   }, [boxes, storeys, arrows, autoCarve]);

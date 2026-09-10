@@ -8,7 +8,7 @@ import { footprintRings } from "./footprint";
 import { clampDrawnRect, clampGroup, isOutsidePlot, limitGrowth, limitPointGrowth, settleInPlot, shiftInside } from "./plot";
 import { anchorPoint, polyArea, polyOfBox, rectPolyOf, resizedFromAnchor } from "./poly";
 import { boxesTrulyIntersect, centerOf, obbOf, obbsSeparated, rectOf } from "./rect";
-import { circulationRatio, unnecessaryGaps } from "./efficiency";
+import { circulationRatio, corridorWaste, deadEndHallways, overhangs, unnecessaryGaps } from "./efficiency";
 import { checkAdjacency, collectFindings, compareScores, scoreCandidate, stairConnectionProblems, tierViolations } from "./relationships";
 import { isOpenToBelow, liveBoxes, nearestNeighborPoint, snapToGrid, snapToNearbyNeighbors, wallSnapAdjust } from "./snap";
 import { touchDelta, touchSelected, polyGap } from "./touch";
@@ -1051,17 +1051,20 @@ describe("circulation: a route is the shortest walk of real doors", () => {
       expect(segments[segments.length - 1].pts.at(-1)).toEqual(centerOf(rectOf(dining)));
     });
 
-    it("routes from the garage to the dining room through the household's own chain, not the hallway hub", () => {
-      // Garage and Dining Room don't touch at all in this house; the
-      // only real route between them is the household's own chain --
-      // Garage, Mudroom, Laundry, Kitchen, Dining Room -- rather than a
-      // detour through the Hallway hub, which neither is doored onto.
+    it("routes from the garage to the dining room through the service wing's own hallway, never through the kitchen", () => {
+      // Garage and Dining Room don't touch at all in this house; the real
+      // route between them is Service Hallway, its own corridor for the
+      // service wing -- not a detour through Kitchen, which is exactly
+      // what that corridor exists to avoid (see sample.ts's own doc
+      // comment).
       const { segments, broken } = actorRoute(graph, boxes, [byName("Garage").id, byName("Dining Room").id]);
       expect(broken).toHaveLength(0);
       expect(segments).toHaveLength(1);
       expect(segments[0].level).toBe(0);
+      const serviceHallwayCentre = centerOf(rectOf(byName("Service Hallway")));
+      expect(segments[0].pts.some((p) => p[0] === serviceHallwayCentre[0] && p[1] === serviceHallwayCentre[1])).toBe(true);
       const kitchenCentre = centerOf(rectOf(byName("Kitchen")));
-      expect(segments[0].pts.some((p) => p[0] === kitchenCentre[0] && p[1] === kitchenCentre[1])).toBe(true);
+      expect(segments[0].pts.some((p) => p[0] === kitchenCentre[0] && p[1] === kitchenCentre[1])).toBe(false);
     });
 
     it("finds a direct route between the kitchen and the dining room -- a real, required door", () => {
@@ -1622,6 +1625,124 @@ describe("circulationRatio: how much of a storey its own hallways and landings a
   });
 });
 
+describe("overhangs: a wall left over past every neighbour actually touching it", () => {
+  it("reports nothing for two rooms whose shared wall matches exactly", () => {
+    const kitchen = box({ id: "kitchen", left: 0, top: 0, width: 4, height: 4, roomType: "kitchen" });
+    const dining = box({ id: "dining", left: 4, top: 0, width: 4, height: 4, roomType: "dining_room" });
+    expect(overhangs([kitchen, dining], 1, false)).toEqual([]);
+  });
+
+  it("reports nothing for a side with no neighbour at all -- an ordinary exterior wall, not a jog past one", () => {
+    const bed = box({ id: "bed", left: 0, top: 0, width: 4, height: 4, roomType: "bedroom" });
+    expect(overhangs([bed], 1, false)).toEqual([]);
+  });
+
+  it("blames the larger room, not the smaller one whose own wall is fully covered", () => {
+    // Living Room's right wall (height 10) touches Hallway's left wall
+    // (height 4) along y 0-4 only -- Hallway's own wall is entirely
+    // covered (no finding for it); Living Room's own wall still has 6 m
+    // of it left over below the touch.
+    const living = box({ id: "living", left: 0, top: 0, width: 4, height: 10, roomType: "living_room" });
+    const hallway = box({ id: "hallway", left: 4, top: 0, width: 2, height: 4, roomType: "hallway" });
+    const findings = overhangs([living, hallway], 1, false);
+    expect(findings).toEqual([{ roomId: "living", neighborId: "hallway", side: 1, exposedM: 6, level: 0 }]);
+  });
+
+  it("skips a rotated room -- no single side 0..3 to measure an axis-aligned overhang against", () => {
+    const living = box({ id: "living", left: 0, top: 0, width: 4, height: 10, roomType: "living_room" });
+    const hallway = box({ id: "hallway", left: 4, top: 0, width: 2, height: 4, roomType: "hallway", rotation: 15 });
+    // Only the rotated room's own findings are skipped; the other room's
+    // side is still fully covered by the touch either way, so this
+    // still reports nothing at all.
+    expect(overhangs([living, hallway], 1, false)).toEqual([]);
+  });
+});
+
+describe("corridorWaste: a corridor built longer than any door on it needs", () => {
+  it("reports nothing when a corridor's own length runs exactly between its first and last door", () => {
+    const hall = box({ id: "hall", left: 0, top: 0, width: 8, height: 1.2, roomType: "hallway", kind: "corridor" });
+    const a = box({ id: "a", left: -2, top: 1.2, width: 4, height: 3, roomType: "bedroom" });
+    const b = box({ id: "b", left: 6, top: 1.2, width: 4, height: 3, roomType: "bedroom" });
+    const doorA: Arrow = { id: "da", level: 0, hostId: "a", kind: "interior", side: 0, t: 0.5, dir: 1 };
+    const doorB: Arrow = { id: "db", level: 0, hostId: "b", kind: "interior", side: 0, t: 0.5, dir: 1 };
+    expect(corridorWaste([hall, a, b], 1, [doorA, doorB], false)).toEqual([]);
+  });
+
+  it("flags the stub past the last door actually on it", () => {
+    const hall = box({ id: "hall", left: 0, top: 0, width: 8, height: 1.2, roomType: "hallway", kind: "corridor" });
+    const a = box({ id: "a", left: -2, top: 1.2, width: 4, height: 3, roomType: "bedroom" });
+    // b's own door (its centre, t=0.5) lands at x=5 -- 3 m short of the
+    // corridor's own far end at x=8.
+    const b = box({ id: "b", left: 3, top: 1.2, width: 4, height: 3, roomType: "bedroom" });
+    const doorA: Arrow = { id: "da", level: 0, hostId: "a", kind: "interior", side: 0, t: 0.5, dir: 1 };
+    const doorB: Arrow = { id: "db", level: 0, hostId: "b", kind: "interior", side: 0, t: 0.5, dir: 1 };
+    const findings = corridorWaste([hall, a, b], 1, [doorA, doorB], false);
+    expect(findings).toEqual([{ roomId: "hall", wastedM: 3, level: 0 }]);
+  });
+
+  it("reports nothing for a corridor with no doors at all -- that is reachabilityProblems' own finding", () => {
+    const hall = box({ id: "hall", left: 0, top: 0, width: 8, height: 1.2, roomType: "hallway", kind: "corridor" });
+    expect(corridorWaste([hall], 1, [], false)).toEqual([]);
+  });
+});
+
+describe("deadEndHallways: a corridor that is the only way out, past a real code limit", () => {
+  // Only `kind: "corridor"` rooms are ever reported as the gatekeeper --
+  // never Entry or Stair, even though a search over the raw graph finds
+  // them just as "guilty": a single front door or a single stair is the
+  // ordinary shape of a small house, not a corridor defect. `entry`
+  // below is deliberately the *only* way out in every one of these
+  // fixtures, so a search that did not carve out that exception would
+  // flag it here too.
+  it("flags a corridor that is the sole route to a room more than 6 m past it", () => {
+    const entry = box({ id: "entry", left: 0, top: 0, width: 4, height: 4, roomType: "entry" });
+    const hall = box({ id: "hall", left: 4, top: 0, width: 4, height: 4, roomType: "hallway", kind: "corridor" });
+    // Wide enough that its own centre -- where the door graph's edge
+    // weight is measured from -- sits more than 6 m from the hallway's.
+    const bed = box({ id: "bed", left: 8, top: 0, width: 10, height: 4, roomType: "bedroom" });
+    const ext: Arrow = { id: "ext", level: 0, hostId: "entry", kind: "exterior-main", side: 3, t: 0.5, dir: 1 };
+    const d1: Arrow = { id: "d1", level: 0, hostId: "entry", kind: "interior", side: 1, t: 0.5, dir: 1 };
+    const d2: Arrow = { id: "d2", level: 0, hostId: "hall", kind: "interior", side: 1, t: 0.5, dir: 1 };
+    const findings = deadEndHallways([entry, hall, bed], 1, [ext, d1, d2], false);
+    expect(findings).toEqual([{ hallwayId: "hall", farRoomId: "bed", distanceM: 7, level: 0 }]);
+  });
+
+  it("reports nothing when the stranded branch is within the 6 m limit", () => {
+    const entry = box({ id: "entry", left: 0, top: 0, width: 4, height: 4, roomType: "entry" });
+    const hall = box({ id: "hall", left: 4, top: 0, width: 4, height: 4, roomType: "hallway", kind: "corridor" });
+    const bed = box({ id: "bed", left: 8, top: 0, width: 4, height: 4, roomType: "bedroom" });
+    const ext: Arrow = { id: "ext", level: 0, hostId: "entry", kind: "exterior-main", side: 3, t: 0.5, dir: 1 };
+    const d1: Arrow = { id: "d1", level: 0, hostId: "entry", kind: "interior", side: 1, t: 0.5, dir: 1 };
+    const d2: Arrow = { id: "d2", level: 0, hostId: "hall", kind: "interior", side: 1, t: 0.5, dir: 1 };
+    expect(deadEndHallways([entry, hall, bed], 1, [ext, d1, d2], false)).toEqual([]);
+  });
+
+  it("reports nothing once a second route gives the branch its own way out", () => {
+    const entry = box({ id: "entry", left: 0, top: 0, width: 4, height: 4, roomType: "entry" });
+    const hall = box({ id: "hall", left: 4, top: 0, width: 4, height: 4, roomType: "hallway", kind: "corridor" });
+    const bed = box({ id: "bed", left: 8, top: 0, width: 10, height: 4, roomType: "bedroom" });
+    const ext: Arrow = { id: "ext", level: 0, hostId: "entry", kind: "exterior-main", side: 3, t: 0.5, dir: 1 };
+    const d1: Arrow = { id: "d1", level: 0, hostId: "entry", kind: "interior", side: 1, t: 0.5, dir: 1 };
+    const d2: Arrow = { id: "d2", level: 0, hostId: "hall", kind: "interior", side: 1, t: 0.5, dir: 1 };
+    // Bed's own second exterior door -- its own way out, whatever the
+    // hallway's own distance says.
+    const extBed: Arrow = { id: "extBed", level: 0, hostId: "bed", kind: "exterior-side", side: 1, t: 0.5, dir: 1 };
+    expect(deadEndHallways([entry, hall, bed], 1, [ext, d1, d2, extBed], false)).toEqual([]);
+  });
+
+  it("does not flag a hallway-type room that isn't actually a corridor, even as the sole route past the same distance", () => {
+    const entry = box({ id: "entry", left: 0, top: 0, width: 4, height: 4, roomType: "entry" });
+    // roomType "hallway" but kind "room" (the box() default) -- a
+    // hallway-shaped destination, not this check's idea of a corridor.
+    const hall = box({ id: "hall", left: 4, top: 0, width: 4, height: 4, roomType: "hallway" });
+    const bed = box({ id: "bed", left: 8, top: 0, width: 10, height: 4, roomType: "bedroom" });
+    const ext: Arrow = { id: "ext", level: 0, hostId: "entry", kind: "exterior-main", side: 3, t: 0.5, dir: 1 };
+    const d1: Arrow = { id: "d1", level: 0, hostId: "entry", kind: "interior", side: 1, t: 0.5, dir: 1 };
+    const d2: Arrow = { id: "d2", level: 0, hostId: "hall", kind: "interior", side: 1, t: 0.5, dir: 1 };
+    expect(deadEndHallways([entry, hall, bed], 1, [ext, d1, d2], false)).toEqual([]);
+  });
+});
+
 describe("scoreCandidate and compareScores: hard problems always decide first", () => {
   const score = (boxes: Box[], arrows: Arrow[] = []) =>
     scoreCandidate(boxes, 1, arrows, false, passableOf, tierOf, auxiliaryOf, circulationOf);
@@ -1668,14 +1789,14 @@ describe("scoreCandidate and compareScores: hard problems always decide first", 
   });
 
   it("a candidate with zero hard problems always outranks one with any, however many recommendations it's missing", () => {
-    const empty = { reachability: [], adjacency: [], tier: [], stairConnection: [], gaps: [], circulationRatio: [] };
+    const empty = { reachability: [], adjacency: [], tier: [], stairConnection: [], gaps: [], circulationRatio: [], overhangs: [], corridorWaste: [], deadEndHallways: [] };
     const worseHard = { hardProblems: 1, softRecommendations: 0, findings: empty };
     const worseSoft = { hardProblems: 0, softRecommendations: 5, findings: empty };
     expect(compareScores(worseSoft, worseHard)).toBeLessThan(0);
   });
 
   it("among equal hard problems, fewer recommendations wins", () => {
-    const empty = { reachability: [], adjacency: [], tier: [], stairConnection: [], gaps: [], circulationRatio: [] };
+    const empty = { reachability: [], adjacency: [], tier: [], stairConnection: [], gaps: [], circulationRatio: [], overhangs: [], corridorWaste: [], deadEndHallways: [] };
     const moreSoft = { hardProblems: 2, softRecommendations: 3, findings: empty };
     const fewerSoft = { hardProblems: 2, softRecommendations: 1, findings: empty };
     expect(compareScores(fewerSoft, moreSoft)).toBeLessThan(0);
@@ -1683,7 +1804,7 @@ describe("scoreCandidate and compareScores: hard problems always decide first", 
   });
 
   it("is 0 when both counts match", () => {
-    const empty = { reachability: [], adjacency: [], tier: [], stairConnection: [], gaps: [], circulationRatio: [] };
+    const empty = { reachability: [], adjacency: [], tier: [], stairConnection: [], gaps: [], circulationRatio: [], overhangs: [], corridorWaste: [], deadEndHallways: [] };
     const a = { hardProblems: 1, softRecommendations: 1, findings: empty };
     const b = { hardProblems: 1, softRecommendations: 1, findings: empty };
     expect(compareScores(a, b)).toBe(0);

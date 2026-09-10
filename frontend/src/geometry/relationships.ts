@@ -67,23 +67,41 @@
  * deliberately a separate step: this file's job stops at making the
  * findings computable, not at deciding how they look.
  *
- * `unnecessaryGaps` and `circulationRatio` (efficiency.ts) are a
- * different *kind* of finding from the four above, not just two more of
- * the same: those four ask "does this work" (a real requirement unmet, a
- * real conflict, a door that skips a tier, a stair that serves one room
- * instead of everyone using it); the efficiency pair asks "is this
- * wasting money" (an unclosed gap trading a shared wall for two exterior
- * ones, a hallway eating more of the floor than it needs to). A house
- * with either issue still works -- so both are always soft
- * recommendations, `adjacencySeverity`'s `desired` in spirit, never
- * hard problems, whatever else is true of the plan.
+ * `unnecessaryGaps`, `circulationRatio`, `overhangs` and `corridorWaste`
+ * (efficiency.ts) are a different *kind* of finding from the four above,
+ * not just more of the same: those four ask "does this work" (a real
+ * requirement unmet, a real conflict, a door that skips a tier, a stair
+ * that serves one room instead of everyone using it); these four ask "is
+ * this wasting money" (an unclosed gap trading a shared wall for two
+ * exterior ones, a hallway eating more of the floor than it needs to, a
+ * wall jogging past a neighbour, a corridor built longer than its own
+ * doors need). A house with any of these still works -- so all four are
+ * always soft recommendations, `adjacencySeverity`'s `desired` in
+ * spirit, never hard problems, whatever else is true of the plan.
+ *
+ * `deadEndHallways` (efficiency.ts, also) is the one exception to that:
+ * a corridor that is the *sole* route between part of the plan and every
+ * exterior door, more than a real code limit away, is a life-safety
+ * defect, not a cost -- it joins the hard problems above, not the four
+ * soft findings just above it. See its own doc comment for the reasoning.
  *
  * All of these are read-only diagnostics. None of them ever moves, resizes or
  * auto-connects anything -- same "flag, never force" rule as the rest of
  * this tool.
  */
 import { buildCirculationGraph, levelTouchData, minHopCount, reachabilityProblems, type ReachabilityProblem } from "./circulation";
-import { circulationRatio, unnecessaryGaps, type CirculationRatioFinding, type GapFinding } from "./efficiency";
+import {
+  circulationRatio,
+  corridorWaste,
+  deadEndHallways,
+  overhangs,
+  unnecessaryGaps,
+  type CirculationRatioFinding,
+  type CorridorWasteFinding,
+  type DeadEndFinding,
+  type GapFinding,
+  type OverhangFinding,
+} from "./efficiency";
 import { liveBoxes } from "./snap";
 import type { Arrow, Box, PrivacyTier } from "./types";
 
@@ -394,6 +412,12 @@ export interface Findings {
   stairConnection: StairConnectionProblem[];
   gaps: GapFinding[];
   circulationRatio: CirculationRatioFinding[];
+  overhangs: OverhangFinding[];
+  corridorWaste: CorridorWasteFinding[];
+  /** Life-safety, not cost -- see efficiency.ts's `deadEndHallways` for
+   * why this one, alone among the efficiency.ts findings, counts as a
+   * hard problem in `scoreCandidate` below. */
+  deadEndHallways: DeadEndFinding[];
 }
 
 /** Whether two room types are meant to stay apart -- efficiency.ts's
@@ -434,20 +458,25 @@ export function collectFindings(
     stairConnection: stairConnectionProblems(boxes, storeys, arrows, autoCarve, circulationOf),
     gaps: unnecessaryGaps(boxes, storeys, autoCarve, isUndesiredPair),
     circulationRatio: circulationRatio(boxes, storeys, autoCarve, circulationOf),
+    overhangs: overhangs(boxes, storeys, autoCarve),
+    corridorWaste: corridorWaste(boxes, storeys, arrows, autoCarve),
+    deadEndHallways: deadEndHallways(boxes, storeys, arrows, autoCarve),
   };
 }
 
 export interface Score {
   /** Every tier violation, reachability problem, stair-connection
-   * problem, and unmet `required`/`undesired` adjacency row -- anything
-   * that would show up in the status bar's Problems line. A candidate
-   * with any of these is not acceptable, whatever else it gets right. */
+   * problem, unmet `required`/`undesired` adjacency row, and dead-end
+   * hallway past the code limit (efficiency.ts's `deadEndHallways`) --
+   * anything that would show up in the status bar's Problems line. A
+   * candidate with any of these is not acceptable, whatever else it
+   * gets right. */
   hardProblems: number;
-  /** Every unmet `desired` adjacency row, plus every unnecessary gap and
-   * every over-ratio storey (efficiency.ts) -- the status bar's
-   * Recommendations line. Never blocks a candidate from passing; only
-   * ranks it against other candidates that are equally free of hard
-   * problems. */
+  /** Every unmet `desired` adjacency row, plus every unnecessary gap,
+   * over-ratio storey, overhang and wasted corridor stub (efficiency.ts)
+   * -- the status bar's Recommendations line. Never blocks a candidate
+   * from passing; only ranks it against other candidates that are
+   * equally free of hard problems. */
   softRecommendations: number;
   /** The findings the two counts above were taken from, so a caller can
    * explain *why* a candidate scored the way it did, not just report the
@@ -484,9 +513,14 @@ export function scoreCandidate(
     findings.tier.length +
     findings.reachability.length +
     findings.stairConnection.length +
+    findings.deadEndHallways.length +
     unmetAdjacency.filter((r) => adjacencySeverity(r) === "problem").length;
   const softRecommendations =
-    unmetAdjacency.filter((r) => adjacencySeverity(r) === "recommendation").length + findings.gaps.length + findings.circulationRatio.length;
+    unmetAdjacency.filter((r) => adjacencySeverity(r) === "recommendation").length +
+    findings.gaps.length +
+    findings.circulationRatio.length +
+    findings.overhangs.length +
+    findings.corridorWaste.length;
   return { hardProblems, softRecommendations, findings };
 }
 
