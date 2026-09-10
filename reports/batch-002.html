@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Batch 002 &mdash; rooms that actually touch</title>
+<style>
+:root { color-scheme: light; }
+body { margin:0; padding:0; background:#f2f2ef; color:#1b1b1b;
+       font-family: Georgia, 'Iowan Old Style', 'Times New Roman', serif; line-height:1.6; }
+.wrap { max-width: 860px; margin: 0 auto; padding: 32px 20px 80px; }
+h1 { font-size: 30px; line-height:1.25; margin:0 0 6px; }
+.sub { color:#555; font-size:15px; margin:0 0 28px; }
+h2 { font-size:23px; margin:0 0 4px; padding-top:6px; }
+h4 { font-size:17px; margin:0 0 6px; display:flex; gap:10px; align-items:baseline; flex-wrap:wrap; }
+h5 { font-size:13px; text-transform:uppercase; letter-spacing:.07em; color:#666;
+     margin:0 0 6px; font-family: system-ui, sans-serif; }
+p { margin:0 0 12px; }
+section { background:#fff; border:1px solid #ddd8d0; border-radius:8px;
+          padding:22px 24px; margin:0 0 26px; }
+.lede { color:#555; font-style:italic; margin-bottom:20px; }
+.rule { border-top:1px solid #ece8e2; padding-top:18px; margin-top:18px; }
+.rule:first-of-type { border-top:none; padding-top:0; margin-top:0; }
+.src { font-size:13.5px; color:#5a5a5a; background:#f7f5f1; border-left:3px solid #cfc8bd;
+       padding:7px 12px; margin:0 0 14px; font-family: system-ui, sans-serif; }
+.tag { font-family: system-ui, sans-serif; font-size:11px; font-weight:700; letter-spacing:.08em;
+       padding:3px 8px; border-radius:3px; white-space:nowrap; }
+.tag.acc { background:#dcefe1; color:#1c5c33; }
+.tag.rev { background:#f6e0d8; color:#8a3c1e; }
+.tag.fix { background:#e2e9f6; color:#1f3d7a; }
+.note { font-size:14px; color:#5a5a5a; background:#faf8f4; border:1px dashed #ddd6cb;
+        padding:10px 13px; border-radius:5px; }
+.pair { display:flex; gap:16px; flex-wrap:wrap; margin:16px 0 18px; }
+.pair figure { margin:0; flex:1 1 260px; min-width:0; overflow-x:auto; }
+.trio { display:flex; gap:14px; flex-wrap:wrap; margin:16px 0 18px; }
+.trio figure { margin:0; flex:1 1 220px; min-width:0; overflow-x:auto; }
+figcaption { font-size:12px; color:#666; margin-top:6px; font-family: system-ui, sans-serif; }
+svg { max-width:100%; height:auto; display:block; border:1px solid #e3ded6; border-radius:4px; }
+.status { background:#f7f6f2; border-radius:6px; padding:13px 16px; margin:16px 0 0; }
+.status p { margin:0; font-size:14.5px; }
+.hero { background:#1f2a26; color:#f2f0ea; border-radius:8px; padding:26px 26px 20px; margin:0 0 26px; }
+.hero h1 { color:#fff; }
+.hero p { color:#ccd4cf; }
+.hero strong { color:#fff; }
+.figs { display:flex; gap:18px; flex-wrap:wrap; margin:18px 0 4px; }
+.figs div { flex:1 1 150px; }
+.big { font-size:34px; font-weight:700; line-height:1.1; color:#fff;
+       font-family: system-ui, sans-serif; }
+.cap { font-size:12.5px; text-transform:uppercase; letter-spacing:.07em; color:#9fb0a7;
+       font-family: system-ui, sans-serif; margin-top:2px; }
+table { border-collapse:collapse; width:100%; font-size:14px; margin:6px 0 4px;
+        font-family: system-ui, sans-serif; }
+th, td { text-align:left; padding:7px 10px; border-bottom:1px solid #eae5dd; }
+th { font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:#666; font-weight:600; }
+td.num { text-align:right; font-variant-numeric: tabular-nums; }
+.scroll { overflow-x:auto; }
+ul { margin:0 0 12px; padding-left:22px; }
+li { margin:0 0 7px; }
+code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size:0.92em; background:#f4f2ec; padding:1px 5px; border-radius:3px; }
+@media (max-width:620px) { .pair figure, .trio figure { flex-basis:100%; } h1 { font-size:25px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="hero">
+<h1>Rooms that actually touch, at last</h1>
+<p>Batch 002 &mdash; the one thing batch 001's own report said the next batch had to fix: the search almost never made two rooms meet a wall to within 4&nbsp;cm of each other, so doors almost never existed and nine of ten new rules had nothing to examine. This batch replaces the mechanism, not the rules.</p>
+<div class="figs">
+  <div><div class="big">0% &rarr; 100%</div><div class="cap">scenarios with a real interior door at the start</div></div>
+  <div><div class="big">21.6 &rarr; 16.4</div><div class="cap">mean hard problems, same search budget</div></div>
+  <div><div class="big">&minus;247</div><div class="cap">net hard problems across all 56 scenarios</div></div>
+  <div><div class="big">0%</div><div class="cap">clean rate &mdash; still zero, and this report says so plainly</div></div>
+</div>
+<p style="margin-top:18px"><strong>What this batch did NOT do:</strong> add, remove or change a single architectural rule. Every number below moved because rooms can finally reach each other, not because the tool learned a new opinion about houses.</p>
+</div>
+
+<section>
+<h2>The mechanism batch 001 diagnosed</h2>
+<p>Every stress-test scenario started life shelf-packed: every room at its typical size, in simple rows, with a flat 0.3&nbsp;m gap to its neighbour on every side. <code>generateLayout</code> then improved a plan by nudging one room's position, size or rotation by a continuous random amount each iteration. Two rooms only ever count as touching &mdash; the only way a door can exist between them &mdash; when their walls land within 4&nbsp;cm of each other. A continuous random walk essentially never lands there by chance, so almost nothing in almost any scenario ever touched anything else, doors almost never existed, and nine of the ten rules batch 001 added &mdash; nearly all of them about doors &mdash; found nothing to examine in the entire 56-scenario suite despite being correct and tested.</p>
+<p>Batch 001's report named the fix in one sentence: give the search a move that closes a gap on purpose, and give the starting layout some real structure to begin with, instead of asking a random walk to discover architecture from a blank shelf-packed row. That is this batch's entire scope, in two parts.</p>
+</section>
+
+<section>
+<h2>Task 1 &mdash; a fifth move: <code>snap</code></h2>
+<p class="src">geometry/generate.ts, geometry/snap.ts</p>
+<p><code>snap</code> picks one movable room and replaces it with <code>snapToNearbyNeighbors(room, liveBoxes(...))</code> &mdash; the exact function the editor's own magnet button already uses to close a gap under about a metre to an exact touch. It goes through the same cheap-reject (boundary and overlap) and scoring pipeline every other move already uses, with no special-casing: the mover doesn't know what's "good," the scorer decides afterward, same as <code>translate</code>, <code>resize</code>, <code>rotate</code> and <code>swap</code> always have. It stays deliberately dumb and axis-aligned only this batch &mdash; a rotated room's own turned outline isn't accounted for by the gap-closing math, and that limitation is called out in the code rather than solved here.</p>
+<p>Given real default weight (matching the other four move kinds, so <code>scenarios.student.ts</code> can learn its real frequency), this single addition measurably reshuffles the search's own random walk for every scenario that already existed: re-measured at the regression baseline's own 400 iterations, 22 of 56 scenarios got strictly better, 33 were unchanged, and exactly one landed one hard problem worse purely from the walk taking a different path once a fifth move entered the mix &mdash; net across the suite, hard problems fell by 48.5. The regression baseline was regenerated to match, the same "deliberate, explained mechanism change" precedent batch 001 set with its diwaniya-rule rewrite.</p>
+<p>Unit-tested directly: a fixture where two rooms sit 0.5&nbsp;m apart on one axis closes to an exact touch; a fixture where closing that gap would push a room outside the plot boundary is rejected by the cheap filter and the arrangement comes back completely untouched; and a fixture where the gap-closing target is correct but a third room sits <em>between</em> the mover and its target &mdash; invisible to <code>snap</code>'s own blind, one-neighbour-at-a-time heuristic &mdash; is caught by the cheap filter's full overlap check against every live room, not by <code>snap</code> itself.</p>
+</section>
+
+<section>
+<h2>Tasks 2 &amp; 3 &mdash; topology and dimensioning (new file: geometry/topology.ts)</h2>
+<p class="src">GPLAN (arxiv 2008.01803); the squarified-treemap floor-plan literature; Fruchterman &amp; Reingold (1991) for the force layout itself</p>
+<p>The research grounding behind this batch is specific: real automated floor-plan generators run a <em>topology</em> stage (a bubble diagram, laid out by node attraction and repulsion) followed by a <em>dimensioning</em> stage (turning that into real rectangles) <em>before</em> any refinement search &mdash; never asking the refinement search to discover topology from a random start, which is exactly what this project had been doing. No ML, no trained model anywhere in either stage: both are the same kind of hand-rolled, deterministic, seedless math this project already uses for its simulated-annealing search and its own PRNG.</p>
+
+<div class="rule"><h4><span class="tag acc">TASK 2</span>The bubble diagram &mdash; <code>layoutBubbles</code></h4>
+<p>A small force simulation, adapted from Fruchterman &amp; Reingold: every pair of rooms repels, sized by each room's own "personal space" (a circle of its target area, plus padding) rather than one global constant, so two large rooms keep more distance between their centres than two small ones. Every <code>required</code>/<code>desired</code> row from <code>relationships.ts</code> whose two types both appear becomes an attraction edge, pulling a pair together once they're farther apart than their two radii combined &mdash; never fighting the repulsion once they're already touching circles. A cooling "temperature" caps how far anything can move in one iteration and shrinks toward a floor, which is what makes the simulation settle instead of oscillating forever. Deterministic and seedless throughout: a Fibonacci/sunflower spiral gives every run the same distinct starting positions, so nothing here needs a PRNG at all. <code>undesired</code> rows are deliberately not modelled &mdash; this stage only pulls related rooms together; keeping conflicting pairs apart stays the search's own job, exactly as it already was.</p>
+</div>
+
+<div class="rule"><h4><span class="tag acc">TASK 3</span>The area partition &mdash; <code>dimensionRooms</code></h4>
+<p>The bubble positions become an order (a greedy nearest-neighbour walk through them), and that order feeds a recursive slice-and-dice area partition: cut whichever side of the current rectangle is longer, weight-proportional to each room's target area floored at its own <code>minWidth&nbsp;&times;&nbsp;minHeight</code>, recurse. Because the order comes from the bubble diagram, rooms the topology stage placed near each other tend to land in neighbouring slices rather than opposite corners of the plot &mdash; the entire reason to run a bubble diagram before slicing at all.</p>
+<p class="note">One deliberate simplification, made for safety rather than optimality: this is the plainer slice-and-dice treemap, not the squarified variant the research grounding also mentions. Every recursive split exactly tiles its own rectangle by construction, so non-overlap and boundary containment hold <em>unconditionally</em>, with nothing to verify or correct afterward. A room whose own minimum genuinely doesn't fit the share the partition gives it is left undersized rather than forced &mdash; fixing it up after the fact could only come at a neighbour's expense, which is exactly the overlap this stage exists to never produce, and it is the same "flagged, never forced" rule the interactive editor's own plot boundary already keeps. In practice this self-heals almost immediately: <code>generateLayout</code>'s own <code>resize</code> move floors at <code>minWidth</code>/<code>minHeight</code> unconditionally on its very first successful touch of that room.</p>
+</div>
+
+<div class="status"><h5>Unit tests</h5><p>A required-adjacency pair settles closer together than an unconnected pair, and no two bubble centres ever coincide (task 2's own asks, verified directly on the bubble output before any rectangle exists). The dimensioned rectangles for that same pair share a real touching wall, every rectangle stays inside the boundary with zero overlaps, and every room gets at least its own minimum footprint's worth of area whenever the plot has room to spare (task 3's own asks) &mdash; plus determinism, the empty and single-room edge cases, an undesired-only pair behaving exactly like no relation at all, and that the partition's rectangles sum to precisely the boundary's own area.</p></div>
+</section>
+
+<section>
+<h2>Task 4 &mdash; wiring it in, and a bug it exposed</h2>
+<p><code>buildScenario</code> now runs <code>topologyLayout</code> instead of shelf-packing: every room's target area and minimum size feed the bubble layout and the area partition, and the resulting real, non-overlapping, boundary-tiling rectangles become the scenario's starting boxes. A room's width and height now come straight from the partition rather than always being fixed at <code>rooms.ts</code>'s typical size &mdash; which is also what lets a too-tight program show up as every room shrinking below typical (never below its own minimum) instead of spilling past the plot boundary the way shelf-packing did.</p>
+
+<div class="rule"><h4><span class="tag fix">FOUND &amp; FIXED</span>generateLayout was scoring candidates against stale doors</h4>
+<p>Wiring in a start with real doors from iteration zero exposed a real correctness gap in <code>generate.ts</code> itself, not in the new topology code: the search carried the arrangement's <em>starting</em> auto-suggested doors into every later candidate's score unconditionally, only ever adding new ones on top, never dropping one that a later move had made geometrically untrue. That was harmless under the old shelf-packed start, which had essentially no doors to go stale in the first place. It stopped being harmless the moment the start had real doors everywhere: <code>scenarios.report.test.ts</code>'s own "the search must never end up worse than its own start" check actually failed on one scenario, because the harness's independent, freshly-recomputed final score disagreed with what the search had believed internally while it was still trusting doors that no longer matched the final geometry.</p>
+<p>The fix draws exactly the line <code>Arrow.targetId</code>'s own doc comment already draws, and that <code>store.ts</code>'s <code>addArrow</code>/<code>moveArrow</code> already enforce: an arrow with no <code>targetId</code> is genuinely fixed (an exterior door, or one a person placed or moved by hand) and is kept; everything <code>suggestArrows</code> itself produced is re-derived completely fresh for every single candidate, matching what the file's own doc comment already claimed happens. <code>generateLayout</code> is also the same function behind the interactive editor's own "Generate" button (<code>state/store.ts</code>, untouched) &mdash; this fix improves that path too, since the editor only ever consumes the returned boxes, never the doors the search scored internally.</p>
+</div>
+
+<div class="status"><h5>Retraining</h5><p><code>scenarios.student.ts</code>'s <code>train()</code> re-run against the new starting point (40 generations, 150 iterations per evaluation, a fresh seed, labelled <code>batch-002</code> in the tuning record). The untuned defaults on the new start alone already score 16.85 mean hard problems across the 56 scenarios &mdash; batch 001's own tuned config, re-measured on this new start, actually comes in slightly <em>worse</em> (16.95) than doing nothing, because it was tuned for a shelf-packed start that no longer exists. The freshly trained config (now including a real <code>snap</code> weight) improves to 15.56 and was adopted into <code>scenarios.tuning.json</code> via the same never-regress mechanism batch 001 used. <code>DEFAULT_SEARCH_CONFIG</code> itself is untouched, same as every prior pass &mdash; the tuning record is an input to a future manual adoption decision, not the decision itself.</p></div>
+<div class="status"><h5>Regression baseline</h5><p>Regenerated (<code>UPDATE_SCENARIO_BASELINE=1</code>): the one place a number is allowed to rise, and it does for 6 of 56 scenarios (a handful of hard problems each, from the random walk taking a different path against an entirely different starting geometry), while 49 improve &mdash; several dramatically &mdash; and net hard problems across the whole suite fall by 247. Same shape as batch 001's diwaniya-rule rewrite, at a much larger scale, because this is the change the whole batch exists to make.</p></div>
+</section>
+
+<section>
+<h2>Before and after, on one real scenario</h2>
+<p>Small nuclear family (14 rooms) on a 400&nbsp;m&sup2; near-square plot. Green bars are interior doors; the orange bar is the exterior entrance.</p>
+<div class="trio">
+<figure>
+<svg xmlns="http://www.w3.org/2000/svg" width="362.59999999999997" height="352.2" viewBox="0 0 362.59999999999997 352.2">
+  <rect width="100%" height="100%" fill="#ffffff" />
+  <text x="12" y="18" font-size="14" font-weight="600" font-family="sans-serif" fill="#1a1a1a">Batch 001: shelf-packed start (0.3m gaps)</text>
+  <text x="12" y="34" font-size="12" font-family="sans-serif" fill="#4a4a4a">14 rooms, 0 interior doors, 16 hard problems</text>
+  <rect x="28" y="68" width="306.59999999999997" height="256.2" fill="#f4f6f5" stroke="#8a8f8c" stroke-width="1.5" stroke-dasharray="6 4" />
+  <polygon points="301.00,167.40 326.20,167.40 326.20,192.60 301.00,192.60" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="313.6" y="180.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Entry / Foyer 1</text>
+    <polygon points="133.00,167.40 149.80,167.40 149.80,209.40 133.00,209.40" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="141.4" y="188.4" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Hallway 2</text>
+    <polygon points="86.80,72.20 149.80,72.20 149.80,149.20 86.80,149.20" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="118.3" y="110.7" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Living Room 3</text>
+    <polygon points="214.20,72.20 264.60,72.20 264.60,131.00 214.20,131.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="239.4" y="101.6" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Dining Room 4</text>
+    <polygon points="268.80,72.20 319.20,72.20 319.20,131.00 268.80,131.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="294.0" y="101.6" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Kitchen 5</text>
+    <polygon points="154.00,72.20 210.00,72.20 210.00,135.20 154.00,135.20" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="182.0" y="103.7" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Master Bedroom 6</text>
+    <polygon points="32.20,167.40 78.40,167.40 78.40,217.80 32.20,217.80" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="55.3" y="192.6" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bedroom 7</text>
+    <polygon points="82.60,167.40 128.80,167.40 128.80,217.80 82.60,217.80" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="105.7" y="192.6" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bedroom 8</text>
+    <polygon points="154.00,167.40 179.20,167.40 179.20,201.00 154.00,201.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="166.6" y="184.2" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bathroom 9</text>
+    <polygon points="183.40,167.40 208.60,167.40 208.60,201.00 183.40,201.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="196.0" y="184.2" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bathroom 10</text>
+    <polygon points="212.80,167.40 238.00,167.40 238.00,201.00 212.80,201.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="225.4" y="184.2" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bathroom 11</text>
+    <polygon points="242.20,167.40 267.40,167.40 267.40,201.00 242.20,201.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="254.8" y="184.2" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Laundry 12</text>
+    <polygon points="271.60,167.40 296.80,167.40 296.80,196.80 271.60,196.80" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="284.2" y="182.1" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Mudroom 13</text>
+    <polygon points="32.20,72.20 82.60,72.20 82.60,163.20 32.20,163.20" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="57.4" y="117.7" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Single Garage 14</text>
+  <line x1="305.9" y1="180.0" x2="296.1" y2="180.0" stroke="#b35c00" stroke-width="3" stroke-linecap="round" />
+</svg>
+<figcaption><strong>Batch 001 (before this batch):</strong> shelf-packed, 0.3&nbsp;m gaps everywhere. Zero interior doors &mdash; nothing is close enough to connect.</figcaption>
+</figure>
+<figure>
+<svg xmlns="http://www.w3.org/2000/svg" width="362.59999999999997" height="352.2" viewBox="0 0 362.59999999999997 352.2">
+  <rect width="100%" height="100%" fill="#ffffff" />
+  <text x="12" y="18" font-size="14" font-weight="600" font-family="sans-serif" fill="#1a1a1a">Batch 002: topology + dimensioning start</text>
+  <text x="12" y="34" font-size="12" font-family="sans-serif" fill="#4a4a4a">14 rooms, 13 interior doors, 11.13623301730036 hard problems</text>
+  <rect x="28" y="68" width="306.59999999999997" height="256.2" fill="#f4f6f5" stroke="#8a8f8c" stroke-width="1.5" stroke-dasharray="6 4" />
+  <polygon points="28.00,68.00 64.17,68.00 64.17,115.52 28.00,115.52" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="46.1" y="91.8" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Entry / Foyer 1</text>
+    <polygon points="28.00,115.52 64.17,115.52 64.17,168.33 28.00,168.33" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="46.1" y="141.9" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Hallway 2</text>
+    <polygon points="187.92,234.68 334.60,234.68 334.60,324.20 187.92,324.20" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="261.3" y="279.4" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Living Room 3</text>
+    <polygon points="28.00,245.37 129.77,245.37 129.77,324.20 28.00,324.20" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="78.9" y="284.8" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Dining Room 4</text>
+    <polygon points="83.78,168.33 187.92,168.33 187.92,245.37 83.78,245.37" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="135.9" y="206.8" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Kitchen 5</text>
+    <polygon points="187.92,68.00 265.12,68.00 265.12,191.71 187.92,191.71" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="226.5" y="129.9" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Master Bedroom 6</text>
+    <polygon points="187.92,191.71 334.60,191.71 334.60,234.68 187.92,234.68" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="261.3" y="213.2" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bedroom 7</text>
+    <polygon points="265.12,100.99 334.60,100.99 334.60,191.71 265.12,191.71" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="299.9" y="146.3" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bedroom 8</text>
+    <polygon points="129.77,284.78 187.92,284.78 187.92,324.20 129.77,324.20" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="158.8" y="304.5" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bathroom 9</text>
+    <polygon points="265.12,68.00 334.60,68.00 334.60,100.99 265.12,100.99" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="299.9" y="84.5" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bathroom 10</text>
+    <polygon points="129.77,245.37 187.92,245.37 187.92,284.78 129.77,284.78" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="158.8" y="265.1" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bathroom 11</text>
+    <polygon points="28.00,204.28 83.78,204.28 83.78,245.37 28.00,245.37" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="55.9" y="224.8" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Laundry 12</text>
+    <polygon points="28.00,168.33 83.78,168.33 83.78,204.28 28.00,204.28" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="55.9" y="186.3" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Mudroom 13</text>
+    <polygon points="64.17,68.00 187.92,68.00 187.92,168.33 64.17,168.33" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="126.0" y="118.2" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Single Garage 14</text>
+  <line x1="32.9" y1="91.8" x2="23.1" y2="91.8" stroke="#b35c00" stroke-width="3" stroke-linecap="round" />
+    <line x1="46.1" y1="110.6" x2="46.1" y2="120.4" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="59.3" y1="91.8" x2="69.1" y2="91.8" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="46.1" y1="163.4" x2="46.1" y2="173.2" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="135.9" y1="163.4" x2="135.9" y2="173.2" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="183.0" y1="118.2" x2="192.8" y2="118.2" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="55.9" y1="199.4" x2="55.9" y2="209.2" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="183.0" y1="240.0" x2="192.8" y2="240.0" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="106.8" y1="240.5" x2="106.8" y2="250.3" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="183.0" y1="213.2" x2="192.8" y2="213.2" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="158.8" y1="240.5" x2="158.8" y2="250.3" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="260.2" y1="146.3" x2="270.0" y2="146.3" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="260.2" y1="84.5" x2="270.0" y2="84.5" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="192.8" y1="304.5" x2="183.0" y2="304.5" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+</svg>
+<figcaption><strong>Batch 002, the new start:</strong> topology + dimensioning tiles the plot. 13 interior doors exist before the search has even run a single iteration.</figcaption>
+</figure>
+<figure>
+<svg xmlns="http://www.w3.org/2000/svg" width="362.59999999999997" height="352.2" viewBox="0 0 362.59999999999997 352.2">
+  <rect width="100%" height="100%" fill="#ffffff" />
+  <text x="12" y="18" font-size="14" font-weight="600" font-family="sans-serif" fill="#1a1a1a">Batch 002: after generateLayout</text>
+  <text x="12" y="34" font-size="12" font-family="sans-serif" fill="#4a4a4a">14 rooms, 12 interior doors, 8.075379293149744 hard problems</text>
+  <rect x="28" y="68" width="306.59999999999997" height="256.2" fill="#f4f6f5" stroke="#8a8f8c" stroke-width="1.5" stroke-dasharray="6 4" />
+  <polygon points="29.32,69.93 63.17,69.93 63.17,115.53 29.32,115.53" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="46.2" y="92.7" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Entry / Foyer 1</text>
+    <polygon points="28.00,115.52 64.17,115.52 64.17,168.33 28.00,168.33" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="46.1" y="141.9" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Hallway 2</text>
+    <polygon points="187.92,233.82 334.60,233.82 334.60,323.35 187.92,323.35" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="261.3" y="278.6" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Living Room 3</text>
+    <polygon points="28.49,245.74 129.27,245.74 129.27,323.83 28.49,323.83" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="78.9" y="284.8" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Dining Room 4</text>
+    <polygon points="83.78,168.33 187.92,168.33 187.92,245.37 83.78,245.37" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="135.9" y="206.8" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Kitchen 5</text>
+    <polygon points="191.88,69.24 265.14,71.70 261.15,190.46 187.90,188.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="226.5" y="129.9" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Master Bedroom 6</text>
+    <polygon points="195.60,191.80 329.37,191.84 329.36,233.84 195.59,233.80" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="262.5" y="212.8" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bedroom 7</text>
+    <polygon points="265.12,100.99 334.60,100.99 334.60,191.71 265.12,191.71" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="299.9" y="146.3" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bedroom 8</text>
+    <polygon points="129.79,245.45 187.88,245.42 187.90,284.70 129.81,284.73" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="158.8" y="265.1" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bathroom 9</text>
+    <polygon points="265.45,68.00 334.26,68.00 334.26,100.99 265.45,100.99" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="299.9" y="84.5" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bathroom 10</text>
+    <polygon points="129.77,284.78 187.92,284.78 187.92,324.20 129.77,324.20" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="158.8" y="304.5" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bathroom 11</text>
+    <polygon points="28.00,204.28 83.78,204.28 83.78,245.37 28.00,245.37" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="55.9" y="224.8" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Laundry 12</text>
+    <polygon points="28.00,168.33 83.78,168.33 83.78,204.28 28.00,204.28" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="55.9" y="186.3" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Mudroom 13</text>
+    <polygon points="64.82,68.55 187.27,68.55 187.27,167.78 64.82,167.78" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="126.0" y="118.2" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Single Garage 14</text>
+  <line x1="34.2" y1="92.7" x2="24.4" y2="92.7" stroke="#b35c00" stroke-width="3" stroke-linecap="round" />
+    <line x1="46.2" y1="110.6" x2="46.2" y2="120.4" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="46.1" y1="163.4" x2="46.1" y2="173.2" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="78.9" y1="186.3" x2="88.7" y2="186.3" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="55.9" y1="199.4" x2="55.9" y2="209.2" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="74.3" y1="173.2" x2="74.3" y2="163.4" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="183.0" y1="239.6" x2="192.8" y2="239.6" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="106.5" y1="240.5" x2="106.5" y2="250.3" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="158.8" y1="240.5" x2="158.8" y2="250.3" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="262.5" y1="238.7" x2="262.5" y2="228.9" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="192.8" y1="304.1" x2="183.0" y2="304.1" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="297.2" y1="196.7" x2="297.2" y2="186.9" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="299.9" y1="105.9" x2="299.9" y2="96.1" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+</svg>
+<figcaption><strong>Batch 002, after generateLayout:</strong> 800 iterations later, still 12 real doors, and hard problems fall from 11.1 to 8.1 on this one scenario.</figcaption>
+</figure>
+</div>
+<p class="note">This is one scenario chosen for legibility, not cherry-picked for the number: across the full 56-scenario suite, 0 had any real interior door at the start under the old mechanism (4 still had one after 400 iterations of search) versus all 56 having one immediately under the new mechanism, and all 56 keeping one after the search runs.</p>
+</section>
+
+<section>
+<h2>What the numbers actually say</h2>
+<p>Measured the same way batch 001 measured its own numbers &mdash; <code>DEFAULT_SEARCH_CONFIG</code>, 400 iterations, the regression baseline's own per-scenario seeds &mdash; so the two reports describe the same search effort and can be read side by side.</p>
+<div class="scroll"><table>
+<tr><th>Measure</th><th class="num">Before this batch</th><th class="num">After</th></tr>
+<tr><td>Scenarios with a real interior door at the START, before any search</td><td class="num">0 of 56 (0%)</td><td class="num">56 of 56 (100%)</td></tr>
+<tr><td>Scenarios with a real interior door in the RESULT, after 400 iterations</td><td class="num">4 of 56 (7%)</td><td class="num">56 of 56 (100%)</td></tr>
+<tr><td>Scenarios with zero hard problems (clean rate)</td><td class="num">0 of 56 (0%)</td><td class="num">0 of 56 (0%)</td></tr>
+<tr><td>Mean hard problems per scenario</td><td class="num">21.64</td><td class="num">16.36</td></tr>
+<tr><td>Mean soft recommendations per scenario</td><td class="num">16.02</td><td class="num">20.08</td></tr>
+</table></div>
+<p style="margin-top:12px">Mean soft recommendations went <em>up</em>, and that's an honest, expected side effect rather than a regression: soft recommendations only exist to examine once rooms and doors are real (single-aspect rooms, awkward proportions, unstacked wet rooms, unmet <code>desired</code> adjacency) &mdash; the same reason nine of batch 001's ten rules found nothing at all in a suite where nothing touched. With 56 of 56 scenarios now densely connected, there is simply far more for the soft-recommendation checks to have an opinion about. Hard problems are what the regression baseline actually pins, and those fell by roughly a quarter on average, with the vast majority of the whole suite genuinely improving (49 of 56 scenarios, net &minus;247 hard problems, at the same 400-iteration budget the frozen baseline uses).</p>
+<p>At a larger search budget (800 iterations) the picture is consistent: 14.97 mean hard problems with the untuned defaults, 14.95 with the freshly trained config &mdash; still <strong>0 of 56 clean</strong>. Be clear about what this does and doesn't mean: rooms now genuinely touch and get real doors everywhere, and the search now has something to actually work with, but there remains real distance between "connected" and "clean" &mdash; no scenario in the suite reaches zero hard problems yet, at any iteration budget or config tried.</p>
+<h5 style="margin-top:22px">Validation run for this report</h5>
+<ul>
+<li><code>npm run typecheck</code> &mdash; clean.</li>
+<li><code>npm test</code> (frontend) &mdash; 263 of 263 tests passing, 11 test files, including the new <code>geometry/generate.test.ts</code> snap-move tests and the new <code>geometry/topology.test.ts</code> suite.</li>
+<li><code>scenarios.baseline.test.ts</code> &mdash; passing against the regenerated baseline.</li>
+<li><code>scenarios.tuning.test.ts</code> &mdash; passing; the stored record is genuinely better than the defaults it was measured against.</li>
+<li>No Python was touched this batch, so <code>ruff</code>/<code>pytest</code> were not re-run.</li>
+</ul>
+</section>
+
+<section>
+<h2>Honest limits of this batch</h2>
+<ul>
+<li><strong>The clean rate is still 0%.</strong> The mechanism now works &mdash; rooms touch, doors exist, the rule set has something real to examine &mdash; but "connected" is not "clean." No amount of this batch's own tuning closed that gap, and it isn't meant to: getting the mechanism working was the whole assignment.</li>
+<li><strong>The dimensioning stage is the simpler slice-and-dice treemap, not the squarified variant.</strong> A deliberate, documented tradeoff for unconditional safety (guaranteed non-overlap and boundary containment by construction) over more compact, better-proportioned rectangles. A future batch could revisit this if room proportions in the starting layout turn out to matter more than they currently seem to.</li>
+<li><strong>A rotated room's own <code>snap</code> is a no-op this batch.</strong> <code>snapToNearbyNeighbors</code> reads left/top/width/height directly and doesn't account for a turned outline; a rotated room just sits that iteration out rather than being pushed somewhere wrong.</li>
+<li><strong>The bubble diagram pairs same-type instances by cycling the shorter list, not by any real notion of "whose bathroom is whose."</strong> Reasonable and simple, and it avoids the worse failure mode (every bedroom clustering toward every bathroom at once), but it is a heuristic, not an authored relationship.</li>
+</ul>
+</section>
+
+<section>
+<h2>What the next batch should focus on</h2>
+<p>Two real candidates, and this report's recommendation is the first one:</p>
+<p><strong>Resume rule-authoring, now that the mechanism can actually show a rule's value.</strong> Batch 001's ten rules were correct and tested but starved of anything to examine, because almost nothing touched. That is no longer true: every scenario now has real doors, real shared walls, real adjacency the rules can check against. The next batch of rule-authoring will get real, meaningful signal from all 56 scenarios instead of from hand-built fixtures alone &mdash; which was explicitly the second honest limit batch 001 named as worth fixing (a program with a second storey and a guest-WC block, so the rules proven only by fixture get real scenarios to fire on too).</p>
+<p><strong>The alternative, if the owner would rather chase "clean" directly first:</strong> further tuning of the topology and dimensioning stages themselves &mdash; trying the squarified treemap variant for better room proportions, or richer instance-pairing in the bubble graph &mdash; on the theory that a still-better starting point might close more of the remaining gap to zero hard problems before the rule set gets any bigger. Either is defensible; this report's own judgment is that the rule set is the more valuable next step, because the mechanism this batch built is sound and the honest bottleneck now looks like coverage of what the rules get to see, not the placement search itself.</p>
+<p class="note">Deliberately not part of this batch, and not recommended as the very next one either: the Obsidian-style interactive graph visualization the owner wants eventually. It's a real, worthwhile idea, but it's a viewer for a graph this batch's own bubble diagram already computes internally and throws away after dimensioning &mdash; better tackled once there's a settled, trained placement pipeline whose graph is worth actually looking at.</p>
+</section>
+
+</div>
+</body>
+</html>

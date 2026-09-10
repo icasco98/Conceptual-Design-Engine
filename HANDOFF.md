@@ -482,3 +482,130 @@ guest-WC block would let the suite actually exercise them.
 `.svg` output was a real usability bug: the owner could not open the one
 artifact meant to let them check a claim by eye. Every visual this mode
 produces should go through the HTML wrapper.
+
+## Batch 002 (September 2026): rooms that actually touch
+
+Did exactly what the note above asked, in the order asked, and nothing
+else -- no rule in `relationships.ts`/`rooms.ts`/`efficiency.ts` was
+added, removed or changed this batch. `reports/batch-002.html` is the
+write-up; this is the part a developer needs.
+
+**`snap` is a fifth `MoveKind`** (`geometry/generate.ts`): picks one
+movable room and replaces it with `snapToNearbyNeighbors(room,
+liveBoxes(...))` -- the same function the editor's own magnet button
+already uses -- through the exact same cheap-reject and `scoreCandidate`
+pipeline every other move already goes through, no special-casing.
+Axis-aligned only for now; a rotated room's own turned outline isn't
+accounted for by `snap.ts`'s gap-closing math, so that move is a no-op on
+a rotated room this batch, called out in `generate.ts`'s own comment
+rather than solved. Given a real default weight (1, matching the other
+four), and unit-tested directly in `geometry/generate.test.ts`.
+
+**New file, `geometry/topology.ts`: the topology and dimensioning
+stages.** `layoutBubbles` is a small, hand-rolled force simulation
+(Fruchterman & Reingold, 1991) over the room list and
+`relationships.ts`'s own `required`/`desired` rows -- repulsion between
+every pair sized by each room's own target-area-derived "personal
+space," attraction along adjacency edges, a cooling temperature that
+settles the whole thing deterministically with no PRNG at all (a
+Fibonacci spiral gives every run the same distinct starting positions).
+`dimensionRooms` turns those rough centres into real rectangles via a
+slice-and-dice area partition, ordered by a greedy nearest-neighbour walk
+through the bubble positions so adjacency-related rooms land in
+neighbouring slices rather than opposite corners. Deliberately the
+plainer slice-and-dice treemap, not the squarified variant the research
+grounding (GPLAN, arxiv 2008.01803; the squarified-treemap floor-plan
+literature) also describes: every recursive split exactly tiles its own
+rectangle by construction, so non-overlap and boundary containment hold
+*unconditionally*, nothing to verify afterward. A room whose own minimum
+genuinely doesn't fit the share it's given is left undersized rather than
+corrected -- correcting it could only come at a neighbour's expense,
+which is exactly the overlap this stage exists to never produce, and
+matches the plot boundary's own long-standing "flagged, never forced"
+rule. It self-heals almost immediately in practice: `generateLayout`'s
+own `resize` move floors at `minWidth`/`minHeight` on its first
+successful touch of that room. `topologyLayout(rooms, boundary, rules?)`
+runs both stages back to back; `scenarios.ts`'s `buildScenario` calls it
+in place of the old `shelfPack`, which is deleted.
+
+**A real bug in `generateLayout` itself, found while wiring this in, not
+a `topology.ts` problem.** The search carried the arrangement's
+*starting* auto-suggested doors into every later candidate's score
+unconditionally, only ever adding new ones on top, never dropping one a
+later move had made geometrically untrue. Harmless under the old
+shelf-packed start (nothing to go stale -- there were essentially no
+doors yet); actively wrong the moment the start has real doors
+everywhere, which is exactly what this batch gives it.
+`scenarios.report.test.ts`'s own "never worse than the start" check
+actually failed on one scenario before this was fixed. The fix: split
+`arrows` by whether `Arrow.targetId` is set (unset means genuinely fixed
+-- an exterior door, or one placed or moved by hand, per that field's own
+doc comment and `store.ts`'s `addArrow`/`moveArrow`) and re-derive
+everything `suggestArrows` itself produced completely fresh for every
+candidate, which is what the file's doc comment already claimed
+happened. `generateLayout` also backs the interactive editor's own
+"Generate" button (`state/store.ts`, untouched) -- this fix improves that
+path too, since the editor only ever keeps the returned boxes, never the
+doors scored internally.
+
+**Numbers, `DEFAULT_SEARCH_CONFIG`, 400 iterations, same per-scenario
+seeds as the regression baseline -- directly comparable to batch 001's
+own reported figures:**
+
+| | before | after |
+|---|---|---|
+| scenarios with a real interior door, at the start | 0 of 56 | 56 of 56 |
+| scenarios with a real interior door, after the search | 4 of 56 | 56 of 56 |
+| clean rate (zero hard problems) | 0 of 56 | 0 of 56 |
+| mean hard problems | 21.64 | 16.36 |
+| mean soft recommendations | 16.02 | 20.08 |
+
+Soft recommendations rose because there is finally something for them to
+examine (single-aspect rooms, proportions, unstacked wet rooms) in a
+suite that used to have almost no real adjacency at all -- not a
+regression. **The clean rate is still 0%,** at every iteration budget and
+every config tried (800 iterations: 14.97 mean hard problems untuned,
+14.95 with the freshly retrained config). Say this plainly to the owner:
+rooms now genuinely connect, but connected is not the same as clean.
+
+**Regression baseline regenerated** (`UPDATE_SCENARIO_BASELINE=1`): 6 of
+56 scenarios went up (a few hard problems each, the search's random walk
+taking a different path against completely different starting geometry),
+49 improved, several sharply, net hard problems across the suite fell by
+247. Same shape as batch 001's diwaniya-rule rewrite -- a deliberate,
+explained mechanism change, not tuning until a red run goes green -- at a
+much larger scale, because this is the change the whole batch exists to
+make.
+
+**`scenarios.baseline.test.ts`'s own `EPSILON` was too tight for its own
+storage precision** and got fixed along the way (1e-6 -> 1e-3): the
+frozen baseline rounds every value to 4 decimal places
+(`toFixed(4)`), which can be up to 0.00005 away from a freshly
+recomputed value that changed nothing at all, and three scenarios
+tripped exactly that during this batch's own baseline regeneration,
+printed as "regressions" from a number to the identical number at 4
+decimals. Comment on the constant explains why.
+
+**Retrained `scenarios.student.ts`'s `SearchConfig`** against the new
+starting point (`RUN_TUNING=1`, 40 generations, 150 iterations/eval,
+labelled `batch-002` in `scenarios.tuning.json`). Worth knowing: batch
+001's own tuned config, re-measured on the new start, actually scores
+*worse* (16.95) than the untrained defaults (16.85) -- it was tuned for a
+shelf-packed start that no longer exists, and doesn't transfer.
+`DEFAULT_SEARCH_CONFIG` itself is untouched, same as every prior pass;
+the tuning record is an input to a future manual adoption decision, not
+the decision.
+
+**The next batch should resume rule-authoring, not chase the search
+further.** The mechanism this batch built is sound: rooms touch, doors
+exist, all 56 scenarios have real adjacency to examine now, not hand-
+built fixtures alone. That was the second honest limit batch 001 named
+(six of its ten rules proven only by fixture) and it is now fixable for
+real. The alternative -- tuning `topology.ts` further, e.g. the
+squarified treemap variant for better room proportions -- is defensible
+but this report's own judgment is that rule coverage is the more
+valuable next step. The Obsidian-style interactive graph visualization
+the owner wants eventually is still explicitly not next: it would be a
+viewer for the bubble graph this batch already computes internally and
+discards after dimensioning, better built once the placement pipeline
+itself is more settled.
