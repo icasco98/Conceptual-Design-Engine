@@ -4,12 +4,22 @@ import { carveWith, displayShapes, releaseCarve, shapeStillUsable, subtractKeepL
 import { arrowSegment, liveWallPoint, nearestWallPoint, suggestArrows } from "./arrows";
 import { actorRoute, arrowIsLive, buildCirculationGraph, levelTouchData, liveArrowIds, minHopCount, outOfBounds, reachabilityProblems, routeLength, sharedSegments, syncFrozenArrowPoints } from "./circulation";
 import { buildTouchGraph, touchingEdges } from "./doors";
-import { footprintRings } from "./footprint";
+import { footprintCoverage, footprintRings } from "./footprint";
 import { clampDrawnRect, clampGroup, isOutsidePlot, limitGrowth, limitPointGrowth, settleInPlot, shiftInside } from "./plot";
 import { anchorPoint, polyArea, polyOfBox, rectPolyOf, resizedFromAnchor } from "./poly";
 import { boxesTrulyIntersect, centerOf, obbOf, obbsSeparated, rectOf } from "./rect";
 import { circulationRatio, corridorWaste, deadEndHallways, overhangs, unnecessaryGaps } from "./efficiency";
-import { checkAdjacency, collectFindings, compareScores, scoreCandidate, stairConnectionProblems, tierViolations } from "./relationships";
+import {
+  checkAdjacency,
+  collectFindings,
+  compareScores,
+  scoreCandidate,
+  stairConnectionProblems,
+  tierViolations,
+  BASE_ROOM_RELATIONSHIPS,
+  CULTURAL_ROOM_RELATIONSHIPS,
+  ROOM_RELATIONSHIPS,
+} from "./relationships";
 import { isOpenToBelow, liveBoxes, nearestNeighborPoint, snapToGrid, snapToNearbyNeighbors, wallSnapAdjust } from "./snap";
 import { touchDelta, touchSelected, polyGap } from "./touch";
 import type { Arrow, Box, Plot, Point, Poly } from "./types";
@@ -262,6 +272,19 @@ describe("doors and footprint", () => {
     const rings = footprintRings(displayShapes([a, b]).map((s) => s.page));
     expect(rings).toHaveLength(1);
     expect(polyArea(rings[0])).toBeCloseTo(28);
+  });
+
+  it("footprintCoverage is the storey's own room area over the plot's", () => {
+    const a = box({ id: "a", left: 0, top: 0, width: 4, height: 4 });
+    const b = box({ id: "b", left: 4, top: 0, width: 4, height: 4 });
+    const plot: Plot = { on: true, left: 0, top: 0, width: 16, depth: 8 }; // 128 m^2
+    expect(footprintCoverage([a, b], 0, false, plot)).toBeCloseTo(32 / 128, 5);
+  });
+
+  it("footprintCoverage is 0 when the plot has no area, not a division error", () => {
+    const a = box({ id: "a", left: 0, top: 0, width: 4, height: 4 });
+    const plot: Plot = { on: false, left: 0, top: 0, width: 0, depth: 0 };
+    expect(footprintCoverage([a], 0, false, plot)).toBe(0);
   });
 });
 
@@ -1326,6 +1349,28 @@ describe("reachabilityProblems: every room reached from some exterior door, with
   });
 });
 
+describe("BASE_ROOM_RELATIONSHIPS / CULTURAL_ROOM_RELATIONSHIPS: split, not dropped, and still today's default", () => {
+  it("keeps every row -- the split is a partition, nothing lost or duplicated", () => {
+    expect(BASE_ROOM_RELATIONSHIPS.length + CULTURAL_ROOM_RELATIONSHIPS.length).toBe(ROOM_RELATIONSHIPS.length);
+    expect(ROOM_RELATIONSHIPS).toEqual([...BASE_ROOM_RELATIONSHIPS, ...CULTURAL_ROOM_RELATIONSHIPS]);
+  });
+
+  it("checkAdjacency called with no explicit rules list matches the sample house exactly, base+cultural combined", () => {
+    const boxes = sampleBoxes();
+    const arrows = sampleArrows(boxes);
+    const withDefault = checkAdjacency(boxes, SAMPLE_STOREYS, arrows, false);
+    const withExplicitCombined = checkAdjacency(boxes, SAMPLE_STOREYS, arrows, false, [...BASE_ROOM_RELATIONSHIPS, ...CULTURAL_ROOM_RELATIONSHIPS]);
+    expect(withDefault).toEqual(withExplicitCombined);
+  });
+
+  it("scoreCandidate called with no explicit rules list still scores the sample house with zero hard problems", () => {
+    const boxes = sampleBoxes();
+    const arrows = sampleArrows(boxes);
+    const score = scoreCandidate(boxes, SAMPLE_STOREYS, arrows, false, passableOf, tierOf, auxiliaryOf, circulationOf);
+    expect(score.hardProblems).toBe(0);
+  });
+});
+
 describe("checkAdjacency: required/desired need a real door; undesired only cares about touching", () => {
   it("does NOT satisfy a required pair by touching alone -- a shared wall with no door is not walkable", () => {
     // The exact case a real house turned up: two rooms sharing a wall
@@ -1808,5 +1853,35 @@ describe("scoreCandidate and compareScores: hard problems always decide first", 
     const a = { hardProblems: 1, softRecommendations: 1, findings: empty };
     const b = { hardProblems: 1, softRecommendations: 1, findings: empty };
     expect(compareScores(a, b)).toBe(0);
+  });
+
+  it("weights a gap by how close it is to touching, not just whether one exists", () => {
+    // Same two room types (never mentioned in ROOM_RELATIONSHIPS, so no
+    // adjacency row's ok/failed status differs between the two
+    // candidates), same sizes, same room count -- the only thing that
+    // differs is the gap distance, so hardProblems (driven by
+    // reachability here, identical in both since neither has an exterior
+    // door) is equal and any softRecommendations difference is the gap
+    // weight actually doing something.
+    const near = [
+      box({ id: "a", left: 0, top: 0, width: 3, height: 3, roomType: "storage" }),
+      box({ id: "b", left: 3.1, top: 0, width: 3, height: 3, roomType: "storage" }), // gapM ~= 0.1
+    ];
+    const far = [
+      box({ id: "a", left: 0, top: 0, width: 3, height: 3, roomType: "storage" }),
+      box({ id: "b", left: 3.9, top: 0, width: 3, height: 3, roomType: "storage" }), // gapM ~= 0.9
+    ];
+    const nearScore = score(near);
+    const farScore = score(far);
+    expect(nearScore.findings.gaps).toHaveLength(1);
+    expect(farScore.findings.gaps).toHaveLength(1);
+    expect(nearScore.findings.gaps[0].gapM).toBeCloseTo(0.1, 5);
+    expect(farScore.findings.gaps[0].gapM).toBeCloseTo(0.9, 5);
+    expect(nearScore.hardProblems).toBe(farScore.hardProblems);
+    // Closer to touching costs more to leave unclosed -- the gap nearest
+    // the threshold barely registers, the one nearest touching costs the
+    // most.
+    expect(nearScore.softRecommendations).toBeGreaterThan(farScore.softRecommendations);
+    expect(compareScores(farScore, nearScore)).toBeLessThan(0);
   });
 });

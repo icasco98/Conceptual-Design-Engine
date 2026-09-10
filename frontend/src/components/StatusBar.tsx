@@ -12,9 +12,10 @@
  */
 import { useMemo } from "react";
 
-import { displayShapes } from "../geometry/carve";
-import { actorRoute, buildCirculationGraph, sharedSegments, type ReachabilityProblem } from "../geometry/circulation";
+import { actorRoute, sharedSegments, type ReachabilityProblem } from "../geometry/circulation";
 import type { CirculationRatioFinding, CorridorWasteFinding, DeadEndFinding, GapFinding, OverhangFinding } from "../geometry/efficiency";
+import { footprintCoverage } from "../geometry/footprint";
+import { buildCirculationGraphMemo, displayShapesForLevelMemo } from "../geometry/memo";
 import { outsidePlot } from "../geometry/plot";
 import { polyArea } from "../geometry/poly";
 import { adjacencySeverity, collectFindings, TIER_ORDER, type AdjacencyStatus, type StairConnectionProblem, type TierViolation } from "../geometry/relationships";
@@ -185,7 +186,7 @@ export function StatusBar() {
 
   const { spaces, area, flagged, strays, toPlace } = useMemo(() => {
     const live = liveBoxes(boxes, level);
-    const shapes = displayShapes(live, autoCarve);
+    const shapes = displayShapesForLevelMemo(boxes, level, autoCarve);
     const total = shapes.reduce((sum, s) => sum + polyArea(s.page), 0);
     const names = shapes.filter((s) => s.flagged).map((s) => live.find((b) => b.id === s.id)?.name ?? s.id);
     // Every storey's strays, not just this one's: a zone left outside the
@@ -201,7 +202,7 @@ export function StatusBar() {
     if (!showCirculation) return 0;
     const visible = actors.filter((a) => a.visible);
     if (!visible.length) return 0;
-    const graph = buildCirculationGraph(boxes, storeys, arrows, autoCarve);
+    const graph = buildCirculationGraphMemo(boxes, storeys, arrows, autoCarve);
     const routes = visible.map((a) => ({ actorId: a.id, segments: actorRoute(graph, boxes, a.waypoints).segments }));
     return sharedSegments(routes, level).length;
   }, [showCirculation, actors, boxes, storeys, level, arrows, autoCarve]);
@@ -238,6 +239,7 @@ export function StatusBar() {
   }, [boxes, storeys, arrows, autoCarve]);
 
   const plotArea = plot.width * plot.depth;
+  const coverage = useMemo(() => footprintCoverage(boxes, level, autoCarve, plot), [boxes, level, autoCarve, plot]);
 
   return (
     <footer className="status">
@@ -261,7 +263,7 @@ export function StatusBar() {
             <>
               {" of "}
               <span className="num">{plotArea.toFixed(0)} m²</span> plot ·{" "}
-              <span className="num">{((area / plotArea) * 100).toFixed(0)}%</span> covered
+              <span className="num">{(coverage * 100).toFixed(0)}%</span> covered
             </>
           )}
         </span>

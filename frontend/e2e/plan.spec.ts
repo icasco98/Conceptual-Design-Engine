@@ -43,4 +43,18 @@ test.describe("the plan opens on the sample house and the core gestures work", (
     await page.click('button[title="Suggest door arrows for zones that have none"]');
     await expect(page.locator(".plan-svg .arrow")).toHaveCount(before);
   });
+
+  test("Generate searches a better placement without changing the room count, and never introduces a hard problem", async ({ page }) => {
+    const before = await page.locator(".plan-svg .box").count();
+    await expect(page.locator(".status-item.error", { hasText: "problem" })).toHaveCount(0);
+
+    await page.click('button[title="Search for a better arrangement of the rooms on this storey"]');
+
+    await expect(page.locator(".plan-svg .box")).toHaveCount(before);
+    await expect(page.locator(".status-item.error", { hasText: "problem" })).toHaveCount(0);
+
+    // The move is undoable, same as any other edit.
+    await page.keyboard.press("Control+z");
+    await expect(page.locator(".plan-svg .box")).toHaveCount(before);
+  });
 });

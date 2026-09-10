@@ -22,6 +22,7 @@ import {
   IconDoorMain,
   IconDoorSide,
   IconFootprints,
+  IconGenerate,
   IconGrid,
   IconHand,
   IconLayers,
@@ -63,6 +64,7 @@ function Rail() {
   const selected = useStore((s) => s.selected);
   const touchSelected = useStore((s) => s.touchSelected);
   const suggestArrows = useStore((s) => s.suggestArrows);
+  const generateLayout = useStore((s) => s.generateLayout);
   const undo = useStore((s) => s.undo);
   const redo = useStore((s) => s.redo);
   const canUndo = useStore((s) => s.past.length > 0);
@@ -105,6 +107,14 @@ function Rail() {
       </button>
       <button type="button" title="Suggest door arrows for zones that have none" aria-label="Suggest door arrows" onClick={suggestArrows}>
         <IconSuggest />
+      </button>
+      <button
+        type="button"
+        title="Search for a better arrangement of the rooms on this storey"
+        aria-label="Generate layout"
+        onClick={generateLayout}
+      >
+        <IconGenerate />
       </button>
       <button
         type="button"

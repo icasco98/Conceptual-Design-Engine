@@ -17,8 +17,7 @@
  * than it needs to -- so these four are always soft recommendations,
  * never hard problems, the same severity `desired` already has.
  */
-import { displayShapes } from "./carve";
-import { buildCirculationGraph, levelTouchData } from "./circulation";
+import { buildCirculationGraphMemo, displayShapesForLevelMemo, levelTouchDataMemo } from "./memo";
 import { polyArea } from "./poly";
 import { rectOf } from "./rect";
 import { polyGap } from "./touch";
@@ -28,7 +27,7 @@ import type { Arrow, Box } from "./types";
 /** Below this, two outlines are touching (or as good as, past floating-
  * point noise) -- not a gap at all, nothing to flag. Reuses the same
  * tolerance `circulation.ts` uses for "is a door actually on this wall." */
-const TOUCHING_TOL_M = 0.04;
+export const TOUCHING_TOL_M = 0.04;
 
 /** Above this, two rooms were never going to share a wall regardless --
  * this is not "how close is close," it is "close enough that a person
@@ -37,7 +36,7 @@ const TOUCHING_TOL_M = 0.04;
  * feature already treats this distance as "these were probably meant to
  * meet," so a gap check uses the same number rather than a second,
  * slightly different one for the same judgment. */
-const GAP_THRESHOLD_M = 1.0;
+export const GAP_THRESHOLD_M = 1.0;
 
 export interface GapFinding {
   roomAId: string;
@@ -70,7 +69,7 @@ export function unnecessaryGaps(
   const out: GapFinding[] = [];
   for (let level = 0; level < storeys; level++) {
     const live = liveBoxes(boxes, level);
-    const shapes = displayShapes(live, autoCarve);
+    const shapes = displayShapesForLevelMemo(boxes, level, autoCarve);
     for (let i = 0; i < live.length; i++) {
       const ra = rectOf(live[i]);
       for (let j = i + 1; j < live.length; j++) {
@@ -102,7 +101,7 @@ export function unnecessaryGaps(
  * floor area," not a specific citation -- flagged here the same way the
  * relationship table flags its own unsourced-but-defensible rows, for
  * the same later validation. */
-const CIRCULATION_RATIO_THRESHOLD = 0.15;
+export const CIRCULATION_RATIO_THRESHOLD = 0.15;
 
 export interface CirculationRatioFinding {
   level: number;
@@ -128,7 +127,7 @@ export function circulationRatio(
   const out: CirculationRatioFinding[] = [];
   for (let level = 0; level < storeys; level++) {
     const live = liveBoxes(boxes, level);
-    const shapes = displayShapes(live, autoCarve);
+    const shapes = displayShapesForLevelMemo(boxes, level, autoCarve);
     let total = 0;
     let circulation = 0;
     for (let i = 0; i < live.length; i++) {
@@ -148,7 +147,7 @@ export function circulationRatio(
  * ordinary construction tolerance -- the same reach `unnecessaryGaps`
  * already uses for "this is a real, priced difference," not a second,
  * slightly different number for the same kind of judgment. */
-const OVERHANG_THRESHOLD_M = 1.0;
+export const OVERHANG_THRESHOLD_M = 1.0;
 
 export interface OverhangFinding {
   roomId: string;
@@ -204,7 +203,7 @@ export function overhangs(boxes: Box[], storeys: number, autoCarve: boolean): Ov
   for (let level = 0; level < storeys; level++) {
     const live = liveBoxes(boxes, level);
     const byId = new Map(live.map((b) => [b.id, b]));
-    const { touchGraph } = levelTouchData(boxes, level, autoCarve);
+    const { touchGraph } = levelTouchDataMemo(boxes, level, autoCarve);
     for (const room of live) {
       if (room.shape !== "rect" || (room.rotation ?? 0) % 360 !== 0) continue;
       const r = rectOf(room);
@@ -254,7 +253,7 @@ export function overhangs(boxes: Box[], storeys: number, autoCarve: boolean): Ov
  * doors need it to -- a fraction of even the tool's own minimum corridor
  * width (1.2 m), so a genuine construction margin (a door's own inset,
  * DOOR_INSET_M) never trips this on its own. */
-const CORRIDOR_STUB_THRESHOLD_M = 0.5;
+export const CORRIDOR_STUB_THRESHOLD_M = 0.5;
 
 export interface CorridorWasteFinding {
   roomId: string;
@@ -281,7 +280,7 @@ export interface CorridorWasteFinding {
  */
 export function corridorWaste(boxes: Box[], storeys: number, arrows: Arrow[], autoCarve: boolean): CorridorWasteFinding[] {
   const out: CorridorWasteFinding[] = [];
-  const graph = buildCirculationGraph(boxes, storeys, arrows, autoCarve);
+  const graph = buildCirculationGraphMemo(boxes, storeys, arrows, autoCarve);
   for (let level = 0; level < storeys; level++) {
     for (const room of liveBoxes(boxes, level)) {
       if (room.kind !== "corridor" || room.level !== level) continue;
@@ -305,7 +304,7 @@ export function corridorWaste(boxes: Box[], storeys: number, arrows: Arrow[], au
  * residential building codes (e.g. IBC), not this project's own guess.
  * Unlike every other finding in this file, this one is a hard problem:
  * see `deadEndHallways`'s own doc comment for why. */
-const DEAD_END_LIMIT_M = 6.0;
+export const DEAD_END_LIMIT_M = 6.0;
 
 export interface DeadEndFinding {
   /** The circulation room whose own removal strands the branch below. */
@@ -372,7 +371,7 @@ export interface DeadEndFinding {
 export function deadEndHallways(boxes: Box[], storeys: number, arrows: Arrow[], autoCarve: boolean): DeadEndFinding[] {
   const out: DeadEndFinding[] = [];
   const byId = new Map(boxes.map((b) => [b.id, b]));
-  const graph = buildCirculationGraph(boxes, storeys, arrows, autoCarve);
+  const graph = buildCirculationGraphMemo(boxes, storeys, arrows, autoCarve);
   const roots = new Set(arrows.filter((a) => a.kind === "exterior-main" || a.kind === "exterior-side").map((a) => a.hostId));
   if (!roots.size) return out;
 

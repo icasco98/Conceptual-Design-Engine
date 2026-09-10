@@ -91,6 +91,18 @@ export const IconSuggest = ({ size = 17, className }: P) =>
     size,
     className,
   );
+/** A sparkle: the search/generate action, distinct from `IconSuggest`'s
+ *  arrow-and-corner (which only proposes doors) -- this one proposes an
+ *  arrangement. */
+export const IconGenerate = ({ size = 17, className }: P) =>
+  svg(
+    <>
+      <path d="M12 3v5M12 16v5M3 12h5M16 12h5" />
+      <path d="m6 6 2.5 2.5M15.5 15.5 18 18M18 6l-2.5 2.5M8.5 15.5 6 18" />
+    </>,
+    size,
+    className,
+  );
 export const IconUndo = ({ size = 17, className }: P) =>
   svg(<><path d="M9 14 4 9l5-5" /><path d="M4 9h10a6 6 0 0 1 0 12h-3" /></>, size, className);
 export const IconRedo = ({ size = 17, className }: P) =>

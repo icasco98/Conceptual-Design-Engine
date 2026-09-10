@@ -13,12 +13,14 @@ import type { ProjectSummary, SavedProject } from "../api/types";
 import { liveWallPoint, newArrowId, suggestArrows } from "../geometry/arrows";
 import { carveWith, displayShapes, releaseCarve } from "../geometry/carve";
 import { syncFrozenArrowPoints } from "../geometry/circulation";
+import { generateLayout as searchLayout } from "../geometry/generate";
 import { clampDrawnRect, clampGroup, settleInPlot } from "../geometry/plot";
-import { localPolyOf, polyArea } from "../geometry/poly";
+import { localPolyOf, polyArea, rectPolyOf } from "../geometry/poly";
+import { BASE_ROOM_RELATIONSHIPS, CULTURAL_ROOM_RELATIONSHIPS, type RelationRow } from "../geometry/relationships";
 import { isOpenToBelow, liveBoxes } from "../geometry/snap";
 import { touchSelected } from "../geometry/touch";
 import type { Actor, ActorRole, Arrow, Box, BoxShape, Plot, Point } from "../geometry/types";
-import { roomTypeInfo } from "../rooms";
+import { auxiliaryOf, circulationOf, passableOf, roomTypeInfo, tierOf } from "../rooms";
 import { DEFAULT_PLOT, DEFAULT_PRIORITY, SAMPLE_STOREYS, STOREY_HEIGHT_M, sampleArrows, sampleBoxes, storeysSpanned } from "../sample";
 
 /** A fixed rotation, not a colour per role: two actors of the same role
@@ -86,6 +88,11 @@ export interface State {
   moveIn3D: boolean;
   /** A zone is carved by anything it overlaps that outranks it. */
   autoCarve: boolean;
+  /** The cultural/household-specific adjacency rows layered on top of
+   * `BASE_ROOM_RELATIONSHIPS` for this project (geometry/relationships.ts).
+   * Defaults to `CULTURAL_ROOM_RELATIONSHIPS` -- today's behavior --
+   * swappable per project without touching the sourced base rows. */
+  ruleOverlay: RelationRow[];
   /** Who walks the plan, and where. Not in the undo history: an actor is
    * an analysis laid over the drawing, not a change to it, the same way
    * the selection and the camera are not either. Deleting one is instant. */
@@ -162,6 +169,11 @@ export interface State {
   selectArrow: (id: string | null) => void;
   /** Propose arrows for zones that have none yet (arrows.ts). */
   suggestArrows: () => void;
+  /** Search for a better placement of the rooms already on the current
+   * storey (geometry/generate.ts) -- the room program, and every other
+   * storey, are left exactly as they are. Never leaves the arrangement
+   * worse than it started. */
+  generateLayout: () => void;
   /** A new actor, named and coloured, with an empty route. Returns its id. */
   addActor: (name: string, role: ActorRole) => string;
   updateActor: (id: string, patch: Partial<Pick<Actor, "name" | "role">>) => void;
@@ -197,6 +209,7 @@ export interface State {
   toggleAbove: () => void;
   toggleMoveIn3D: () => void;
   toggleAutoCarve: () => void;
+  setRuleOverlay: (rules: RelationRow[]) => void;
   refreshProjects: () => Promise<void>;
   saveProject: (name: string) => Promise<void>;
   loadProject: (id: string) => Promise<void>;
@@ -272,6 +285,7 @@ export const useStore = create<State>((set, get) => ({
   showAbove: false,
   moveIn3D: false,
   autoCarve: false,
+  ruleOverlay: CULTURAL_ROOM_RELATIONSHIPS,
   actors: [],
   showCirculation: false,
   routingActorId: null,
@@ -606,6 +620,20 @@ export const useStore = create<State>((set, get) => ({
     set({ arrows: [...arrows, ...suggestArrows(liveBoxes(boxes, level), mine, level, autoCarve)] });
   },
 
+  generateLayout() {
+    get().remember();
+    const { boxes, arrows, level, storeys, autoCarve, plot, ruleOverlay } = get();
+    // Today's only site constraint is the plain plot rectangle -- see
+    // geometry/generate.ts's own doc comment for why it takes a boundary
+    // *polygon* rather than a `Plot` directly: a future setback-inset
+    // boundary is a drop-in replacement for this one line, with nothing
+    // else here needing to change.
+    const boundary = plot.on ? rectPolyOf({ left: plot.left, top: plot.top, width: plot.width, height: plot.depth }) : null;
+    const rules = [...BASE_ROOM_RELATIONSHIPS, ...ruleOverlay];
+    const result = searchLayout(boxes, level, storeys, arrows, autoCarve, boundary, passableOf, tierOf, auxiliaryOf, circulationOf, rules);
+    set({ boxes: result });
+  },
+
   addActor(name, role) {
     const actors = get().actors;
     const id = `actor:${Date.now().toString(36)}:${actors.length}`;
@@ -815,6 +843,9 @@ export const useStore = create<State>((set, get) => ({
   },
   toggleAutoCarve() {
     set({ autoCarve: !get().autoCarve });
+  },
+  setRuleOverlay(rules) {
+    set({ ruleOverlay: rules });
   },
 
   async refreshProjects() {

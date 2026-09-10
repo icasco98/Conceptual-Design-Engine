@@ -89,13 +89,20 @@
  * auto-connects anything -- same "flag, never force" rule as the rest of
  * this tool.
  */
-import { buildCirculationGraph, levelTouchData, minHopCount, reachabilityProblems, type ReachabilityProblem } from "./circulation";
+import { minHopCount, reachabilityProblems, type ReachabilityProblem } from "./circulation";
+import { buildCirculationGraphMemo, levelTouchDataMemo } from "./memo";
 import {
   circulationRatio,
   corridorWaste,
   deadEndHallways,
   overhangs,
   unnecessaryGaps,
+  CIRCULATION_RATIO_THRESHOLD,
+  CORRIDOR_STUB_THRESHOLD_M,
+  DEAD_END_LIMIT_M,
+  GAP_THRESHOLD_M,
+  OVERHANG_THRESHOLD_M,
+  TOUCHING_TOL_M,
   type CirculationRatioFinding,
   type CorridorWasteFinding,
   type DeadEndFinding,
@@ -120,8 +127,21 @@ export interface RelationRow {
  * `Box.privacyTierOverride`, not a type-level default that would apply to
  * every dining room in every house. Pairs not listed are neutral -- no
  * claim either way, not a missing relationship.
+ *
+ * Split into two tiers rather than one flat list: `BASE_ROOM_RELATIONSHIPS`
+ * is general, sourced-or-defensible rows that apply to any household (a
+ * kitchen belongs near its dining room, an office wants distance from
+ * service noise); `CULTURAL_ROOM_RELATIONSHIPS` is this specific
+ * household's own conventions (a diwaniya's isolation, a driver's or
+ * nanny's staff-quarters logic, a reception room's own gender/guest
+ * norms) -- real and sourced where the original comments say so, but not
+ * universal the way the base rows are. Every existing caller that doesn't
+ * pass its own `rules` list gets exactly today's behavior: `checkAdjacency`
+ * and friends default to `ROOM_RELATIONSHIPS`, the two tiers combined. A
+ * future project can instead pass `[...BASE_ROOM_RELATIONSHIPS, ...myOwnOverlay]`
+ * to swap the cultural tier for its own without touching the sourced base.
  */
-export const ROOM_RELATIONSHIPS: RelationRow[] = [
+export const BASE_ROOM_RELATIONSHIPS: RelationRow[] = [
   // -- Sourced (Carolyn Matthews, "Adjacency Matrix Decoded") --
   { a: "kitchen", b: "dining_room", relation: "required" },
   { a: "kitchen", b: "laundry", relation: "desired" },
@@ -131,6 +151,23 @@ export const ROOM_RELATIONSHIPS: RelationRow[] = [
   { a: "bedroom", b: "garage_double", relation: "undesired" },
   { a: "master_bedroom", b: "garage_single", relation: "undesired" },
   { a: "master_bedroom", b: "garage_double", relation: "undesired" },
+  // -- Provisional: defensible, not directly cited -- flag for Step 6 --
+  { a: "master_bedroom", b: "bathroom", relation: "required" },
+  { a: "entry", b: "hallway", relation: "required" },
+  { a: "garage_single", b: "mudroom", relation: "desired" },
+  { a: "garage_double", b: "mudroom", relation: "desired" },
+  { a: "garage_single", b: "entry", relation: "desired" },
+  { a: "garage_double", b: "entry", relation: "desired" },
+  { a: "bedroom", b: "kitchen", relation: "undesired" },
+  { a: "master_bedroom", b: "kitchen", relation: "undesired" },
+  // -- Sourced (generic principle: a quiet office kept from noisy/service space) --
+  { a: "office", b: "kitchen", relation: "undesired" },
+  { a: "office", b: "laundry", relation: "undesired" },
+  { a: "office", b: "garage_single", relation: "undesired" },
+  { a: "office", b: "garage_double", relation: "undesired" },
+];
+
+export const CULTURAL_ROOM_RELATIONSHIPS: RelationRow[] = [
   // -- Sourced (threshold-zone / Islamic-Arab domestic architecture lit.) --
   { a: "diwaniya", b: "bedroom", relation: "undesired" },
   { a: "diwaniya", b: "master_bedroom", relation: "undesired" },
@@ -143,14 +180,6 @@ export const ROOM_RELATIONSHIPS: RelationRow[] = [
   { a: "nanny_room", b: "laundry", relation: "desired" }, // either/or with kitchen -- see file doc
   { a: "nanny_room", b: "bedroom", relation: "desired" },
   // -- Provisional: defensible, not directly cited -- flag for Step 6 --
-  { a: "master_bedroom", b: "bathroom", relation: "required" },
-  { a: "entry", b: "hallway", relation: "required" },
-  { a: "garage_single", b: "mudroom", relation: "desired" },
-  { a: "garage_double", b: "mudroom", relation: "desired" },
-  { a: "garage_single", b: "entry", relation: "desired" },
-  { a: "garage_double", b: "entry", relation: "desired" },
-  { a: "bedroom", b: "kitchen", relation: "undesired" },
-  { a: "master_bedroom", b: "kitchen", relation: "undesired" },
   { a: "driver_room", b: "driver_bathroom", relation: "required" },
   { a: "nanny_room", b: "nanny_bathroom", relation: "required" },
   { a: "driver_room", b: "garage_single", relation: "desired" },
@@ -161,12 +190,12 @@ export const ROOM_RELATIONSHIPS: RelationRow[] = [
   { a: "nanny_room", b: "bedroom", relation: "undesired" },
   { a: "reception", b: "bedroom", relation: "undesired" },
   { a: "reception", b: "master_bedroom", relation: "undesired" },
-  // -- Sourced (generic principle: a quiet office kept from noisy/service space) --
-  { a: "office", b: "kitchen", relation: "undesired" },
-  { a: "office", b: "laundry", relation: "undesired" },
-  { a: "office", b: "garage_single", relation: "undesired" },
-  { a: "office", b: "garage_double", relation: "undesired" },
 ];
+
+/** Today's exact behavior for every caller that doesn't pass its own
+ * `rules` list: the sourced base plus this household's cultural overlay,
+ * combined. */
+export const ROOM_RELATIONSHIPS: RelationRow[] = [...BASE_ROOM_RELATIONSHIPS, ...CULTURAL_ROOM_RELATIONSHIPS];
 
 export interface AdjacencyStatus extends RelationRow {
   /** True when the relation holds -- not touching for `undesired`, a
@@ -233,10 +262,16 @@ const EASY_ACCESS_HOPS = 2;
  * declares an owner is judged exactly as it always was -- this narrows
  * one real gap, it does not force every ensuite in the tool to be tagged
  * to get a correct answer. */
-export function checkAdjacency(boxes: Box[], storeys: number, arrows: Arrow[], autoCarve: boolean): AdjacencyStatus[] {
-  const doorGraph = buildCirculationGraph(boxes, storeys, arrows, autoCarve);
+export function checkAdjacency(
+  boxes: Box[],
+  storeys: number,
+  arrows: Arrow[],
+  autoCarve: boolean,
+  rules: RelationRow[] = ROOM_RELATIONSHIPS,
+): AdjacencyStatus[] {
+  const doorGraph = buildCirculationGraphMemo(boxes, storeys, arrows, autoCarve);
   const out: AdjacencyStatus[] = [];
-  for (const row of ROOM_RELATIONSHIPS) {
+  for (const row of rules) {
     // Present "anywhere," not "on the same storey": easy access can
     // legitimately cross a storey via a stair, so a desired pair on
     // different floors still deserves an answer, not a silent skip.
@@ -257,7 +292,7 @@ export function checkAdjacency(boxes: Box[], storeys: number, arrows: Arrow[], a
       const bs_ = live.filter((b) => b.roomType === row.b);
       if (!as_.length || !bs_.length) continue;
       if (sharedLevel === null) sharedLevel = level;
-      const { touchGraph } = levelTouchData(boxes, level, autoCarve);
+      const { touchGraph } = levelTouchDataMemo(boxes, level, autoCarve);
       for (const a of as_) {
         if ((touchGraph.get(a.id) ?? []).some((e) => bs_.some((b) => b.id === e.to))) touchingAtAll = true;
       }
@@ -328,7 +363,7 @@ export function tierViolations(
   autoCarve: boolean,
   tierOf: (roomType: string) => PrivacyTier | undefined,
 ): TierViolation[] {
-  const graph = buildCirculationGraph(boxes, storeys, arrows, autoCarve);
+  const graph = buildCirculationGraphMemo(boxes, storeys, arrows, autoCarve);
   const byId = new Map(boxes.map((b) => [b.id, b]));
   const seen = new Set<string>();
   const out: TierViolation[] = [];
@@ -375,7 +410,7 @@ export function stairConnectionProblems(
   autoCarve: boolean,
   circulationOf: (roomType: string) => boolean,
 ): StairConnectionProblem[] {
-  const graph = buildCirculationGraph(boxes, storeys, arrows, autoCarve);
+  const graph = buildCirculationGraphMemo(boxes, storeys, arrows, autoCarve);
   const byId = new Map(boxes.map((b) => [b.id, b]));
   const seen = new Set<string>();
   const out: StairConnectionProblem[] = [];
@@ -424,9 +459,11 @@ export interface Findings {
  * `unnecessaryGaps` takes this as a parameter rather than reading
  * `ROOM_RELATIONSHIPS` itself, so that file never has to import this one
  * (which already imports it, for `collectFindings`). Order-independent:
- * `ROOM_RELATIONSHIPS` never lists the same pair both ways round. */
-function isUndesiredPair(a: string, b: string): boolean {
-  return ROOM_RELATIONSHIPS.some((r) => r.relation === "undesired" && ((r.a === a && r.b === b) || (r.a === b && r.b === a)));
+ * a `rules` list is never expected to list the same pair both ways round.
+ * Defaults to `ROOM_RELATIONSHIPS` -- today's behavior -- for every caller
+ * that doesn't pass its own list. */
+function isUndesiredPair(a: string, b: string, rules: RelationRow[] = ROOM_RELATIONSHIPS): boolean {
+  return rules.some((r) => r.relation === "undesired" && ((r.a === a && r.b === b) || (r.a === b && r.b === a)));
 }
 
 /**
@@ -450,13 +487,14 @@ export function collectFindings(
   tierOf: (roomType: string) => PrivacyTier | undefined,
   auxiliaryOf: (roomType: string) => boolean,
   circulationOf: (roomType: string) => boolean,
+  rules: RelationRow[] = ROOM_RELATIONSHIPS,
 ): Findings {
   return {
     reachability: reachabilityProblems(boxes, storeys, arrows, autoCarve, passableOf, auxiliaryOf, tierOf),
-    adjacency: checkAdjacency(boxes, storeys, arrows, autoCarve),
+    adjacency: checkAdjacency(boxes, storeys, arrows, autoCarve, rules),
     tier: tierViolations(boxes, storeys, arrows, autoCarve, tierOf),
     stairConnection: stairConnectionProblems(boxes, storeys, arrows, autoCarve, circulationOf),
-    gaps: unnecessaryGaps(boxes, storeys, autoCarve, isUndesiredPair),
+    gaps: unnecessaryGaps(boxes, storeys, autoCarve, (a, b) => isUndesiredPair(a, b, rules)),
     circulationRatio: circulationRatio(boxes, storeys, autoCarve, circulationOf),
     overhangs: overhangs(boxes, storeys, autoCarve),
     corridorWaste: corridorWaste(boxes, storeys, arrows, autoCarve),
@@ -465,23 +503,71 @@ export function collectFindings(
 }
 
 export interface Score {
-  /** Every tier violation, reachability problem, stair-connection
-   * problem, unmet `required`/`undesired` adjacency row, and dead-end
-   * hallway past the code limit (efficiency.ts's `deadEndHallways`) --
-   * anything that would show up in the status bar's Problems line. A
-   * candidate with any of these is not acceptable, whatever else it
-   * gets right. */
+  /** A weighted total, not a raw count: every tier violation,
+   * reachability problem, stair-connection problem and unmet
+   * `required`/`undesired` adjacency row counts as 1 (they carry no
+   * continuous magnitude of their own), but each dead-end hallway past
+   * the code limit (efficiency.ts's `deadEndHallways`) is weighted by how
+   * far past that limit it runs -- a corridor barely over the limit
+   * counts for less than one stranding people 20 m from the nearest exit.
+   * Anything nonzero here would show up in the status bar's Problems
+   * line. A candidate with any of these is not acceptable, whatever else
+   * it gets right. */
   hardProblems: number;
-  /** Every unmet `desired` adjacency row, plus every unnecessary gap,
-   * over-ratio storey, overhang and wasted corridor stub (efficiency.ts)
-   * -- the status bar's Recommendations line. Never blocks a candidate
-   * from passing; only ranks it against other candidates that are
-   * equally free of hard problems. */
+  /** A weighted total, not a raw count: every unmet `desired` adjacency
+   * row counts as 1, but every unnecessary gap, over-ratio storey,
+   * overhang and wasted corridor stub (efficiency.ts) is weighted by its
+   * own magnitude -- a gap a hair short of touching counts for much more
+   * than one a hair short of the threshold that stops it being a gap at
+   * all, and likewise for the others. The status bar's Recommendations
+   * line. Never blocks a candidate from passing; only ranks it against
+   * other candidates that are equally free of hard problems. */
   softRecommendations: number;
   /** The findings the two counts above were taken from, so a caller can
    * explain *why* a candidate scored the way it did, not just report the
    * number. */
   findings: Findings;
+}
+
+function sumWeights<T>(items: T[], weight: (item: T) => number): number {
+  return items.reduce((total, item) => total + weight(item), 0);
+}
+
+/** How much of `GAP_THRESHOLD_M`'s own range a gap has eaten into -- 1 at
+ * the tightest reportable gap (just past floating-point touching, per
+ * `TOUCHING_TOL_M`), approaching 0 at the threshold itself. The closer to
+ * touching, the more it actually costs to leave unclosed. */
+function gapWeight(gapM: number): number {
+  return Math.max(0, (GAP_THRESHOLD_M - gapM) / (GAP_THRESHOLD_M - TOUCHING_TOL_M));
+}
+
+/** How far a storey's circulation ratio runs past the point
+ * `circulationRatio` starts flagging it at all -- `efficiency.ts` only
+ * ever reports a finding above `CIRCULATION_RATIO_THRESHOLD`, so this is
+ * always a positive overshoot, larger for a storey that spends far more
+ * of itself on hallways than one that just tips over the line. */
+function circulationRatioWeight(f: CirculationRatioFinding): number {
+  return Math.max(0, f.ratio - CIRCULATION_RATIO_THRESHOLD);
+}
+
+/** How far an exposed wall runs past `OVERHANG_THRESHOLD_M` -- same
+ * "overshoot past the point this is even reported" shape as the other
+ * efficiency weights, in meters. */
+function overhangWeight(f: OverhangFinding): number {
+  return Math.max(0, f.exposedM - OVERHANG_THRESHOLD_M);
+}
+
+/** How far a corridor's wasted stub runs past `CORRIDOR_STUB_THRESHOLD_M`. */
+function corridorWasteWeight(f: CorridorWasteFinding): number {
+  return Math.max(0, f.wastedM - CORRIDOR_STUB_THRESHOLD_M);
+}
+
+/** How far a dead-end branch runs past the real code limit
+ * (`DEAD_END_LIMIT_M`) that makes it a hard problem at all -- a corridor
+ * barely over the limit is a smaller defect than one stranding people
+ * far past it, even though both are equally real violations. */
+function deadEndWeight(f: DeadEndFinding): number {
+  return Math.max(0, f.distanceM - DEAD_END_LIMIT_M);
 }
 
 /**
@@ -506,21 +592,27 @@ export function scoreCandidate(
   tierOf: (roomType: string) => PrivacyTier | undefined,
   auxiliaryOf: (roomType: string) => boolean,
   circulationOf: (roomType: string) => boolean,
+  rules: RelationRow[] = ROOM_RELATIONSHIPS,
 ): Score {
-  const findings = collectFindings(boxes, storeys, arrows, autoCarve, passableOf, tierOf, auxiliaryOf, circulationOf);
+  const findings = collectFindings(boxes, storeys, arrows, autoCarve, passableOf, tierOf, auxiliaryOf, circulationOf, rules);
   const unmetAdjacency = findings.adjacency.filter((r) => !r.ok);
+  // Tier violations, reachability problems, stair-connection problems and
+  // unmet required/undesired adjacency rows carry no continuous magnitude
+  // of their own (see each type's own fields) -- they stay a flat count of
+  // 1 each. Dead-end hallways do carry one (how far past the real code
+  // limit), so that's weighted instead of merely counted.
   const hardProblems =
     findings.tier.length +
     findings.reachability.length +
     findings.stairConnection.length +
-    findings.deadEndHallways.length +
+    sumWeights(findings.deadEndHallways, deadEndWeight) +
     unmetAdjacency.filter((r) => adjacencySeverity(r) === "problem").length;
   const softRecommendations =
     unmetAdjacency.filter((r) => adjacencySeverity(r) === "recommendation").length +
-    findings.gaps.length +
-    findings.circulationRatio.length +
-    findings.overhangs.length +
-    findings.corridorWaste.length;
+    sumWeights(findings.gaps, (g) => gapWeight(g.gapM)) +
+    sumWeights(findings.circulationRatio, circulationRatioWeight) +
+    sumWeights(findings.overhangs, overhangWeight) +
+    sumWeights(findings.corridorWaste, corridorWasteWeight);
   return { hardProblems, softRecommendations, findings };
 }
 
