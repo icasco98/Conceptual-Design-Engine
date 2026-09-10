@@ -15,7 +15,7 @@ import { useMemo } from "react";
 import { actorRoute, sharedSegments, type ReachabilityProblem } from "../geometry/circulation";
 import type { CirculationRatioFinding, CorridorWasteFinding, DeadEndFinding, GapFinding, OverhangFinding } from "../geometry/efficiency";
 import { footprintCoverage } from "../geometry/footprint";
-import { MIN_EXTERIOR_WALL_M, type SingleAspectFinding, type WindowlessFinding } from "../geometry/habitability";
+import { MIN_EXTERIOR_WALL_M, type ProportionFinding, type SingleAspectFinding, type WindowlessFinding } from "../geometry/habitability";
 import { buildCirculationGraphMemo, displayShapesForLevelMemo } from "../geometry/memo";
 import { outsidePlot } from "../geometry/plot";
 import { polyArea } from "../geometry/poly";
@@ -121,15 +121,25 @@ function windowlessFindings(problems: WindowlessFinding[], boxesById: Map<string
   });
 }
 
-/** Comfort, not code (`habitability.ts`) -- always a recommendation,
- * never a problem, the same severity a `desired` miss and every
- * efficiency.ts finding already has: the room works, it is just worse to
- * be in than it needs to be. */
-function habitabilityRecommendationFindings(aspect: SingleAspectFinding[], boxesById: Map<string, Box>): Finding[] {
-  return aspect.flatMap((p) => {
-    const room = boxesById.get(p.roomId);
-    return room ? [{ level: p.level, text: `${room.name} faces outside on one side only -- no through draught, so it holds its heat` }] : [];
-  });
+/** Comfort and usability, not code (`habitability.ts`) -- always a
+ * recommendation, never a problem, the same severity a `desired` miss and
+ * every efficiency.ts finding already has: the room works, it is just
+ * worse to be in than it needs to be. */
+function habitabilityRecommendationFindings(
+  aspect: SingleAspectFinding[],
+  proportion: ProportionFinding[],
+  boxesById: Map<string, Box>,
+): Finding[] {
+  return [
+    ...aspect.flatMap((p) => {
+      const room = boxesById.get(p.roomId);
+      return room ? [{ level: p.level, text: `${room.name} faces outside on one side only -- no through draught, so it holds its heat` }] : [];
+    }),
+    ...proportion.flatMap((p) => {
+      const room = boxesById.get(p.roomId);
+      return room ? [{ level: p.level, text: `${room.name} is ${p.aspect.toFixed(1)} times longer than it is wide -- hard to furnish as anything but a corridor` }] : [];
+    }),
+  ];
 }
 
 /** `required` and `undesired` are hard problems: a real requirement
@@ -299,7 +309,7 @@ export function StatusBar() {
       ...circulationRatioFindings(findings.circulationRatio),
       ...overhangFindings(findings.overhangs, boxesById),
       ...corridorWasteFindings(findings.corridorWaste, boxesById),
-      ...habitabilityRecommendationFindings(findings.singleAspect, boxesById),
+      ...habitabilityRecommendationFindings(findings.singleAspect, findings.proportion, boxesById),
     ];
     return { problems: organizeByFloor(hard), recommendations: organizeByFloor(soft) };
   }, [boxes, storeys, arrows, autoCarve]);

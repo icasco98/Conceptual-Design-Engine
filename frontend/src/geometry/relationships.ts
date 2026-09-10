@@ -118,7 +118,15 @@ import {
   type GapFinding,
   type OverhangFinding,
 } from "./efficiency";
-import { singleAspectRooms, windowlessSleepingRooms, type SingleAspectFinding, type WindowlessFinding } from "./habitability";
+import {
+  awkwardProportions,
+  singleAspectRooms,
+  windowlessSleepingRooms,
+  MAX_ROOM_ASPECT,
+  type ProportionFinding,
+  type SingleAspectFinding,
+  type WindowlessFinding,
+} from "./habitability";
 import { liveBoxes } from "./snap";
 import type { Arrow, Box, Point, PrivacyTier, RoomFacts } from "./types";
 
@@ -628,10 +636,11 @@ export interface Findings {
   /** Code, not cost -- see habitability.ts for why a sleeping room with
    * no wall facing outside is a hard problem and not an expensive room. */
   windowless: WindowlessFinding[];
-  /** Comfort, not code -- soft, like every efficiency.ts finding and for
-   * the same reason: a single-aspect room works, it is just worse to be
-   * in. */
+  /** Comfort and usability, not code -- soft, like every efficiency.ts
+   * finding and for the same reason: a single-aspect or over-long room
+   * works, it is just worse to be in. */
   singleAspect: SingleAspectFinding[];
+  proportion: ProportionFinding[];
   gaps: GapFinding[];
   circulationRatio: CirculationRatioFinding[];
   overhangs: OverhangFinding[];
@@ -682,6 +691,7 @@ export function collectFindings(
     undersizedDoorways: undersizedDoorways(boxes, storeys, arrows, autoCarve),
     windowless: windowlessSleepingRooms(boxes, storeys, autoCarve, facts.sleeping),
     singleAspect: singleAspectRooms(boxes, storeys, autoCarve, facts.habitable),
+    proportion: awkwardProportions(boxes, storeys, facts.habitable),
     gaps: unnecessaryGaps(boxes, storeys, autoCarve, (a, b) => isUndesiredPair(a, b, rules)),
     circulationRatio: circulationRatio(boxes, storeys, autoCarve, facts.circulation),
     overhangs: overhangs(boxes, storeys, autoCarve),
@@ -703,8 +713,8 @@ export interface Score {
    * it gets right. */
   hardProblems: number;
   /** A weighted total, not a raw count: every unmet `desired` adjacency
-   * row and every single-aspect room (`habitability.ts`) counts as 1,
-   * but every unnecessary gap, over-ratio storey,
+   * row and every single-aspect room counts as 1, but every over-long
+   * room (`habitability.ts`) and every unnecessary gap, over-ratio storey,
    * overhang and wasted corridor stub (efficiency.ts) is weighted by its
    * own magnitude -- a gap a hair short of touching counts for much more
    * than one a hair short of the threshold that stops it being a gap at
@@ -759,6 +769,13 @@ function deadEndWeight(f: DeadEndFinding): number {
   return Math.max(0, f.distanceM - DEAD_END_LIMIT_M);
 }
 
+/** How far past `MAX_ROOM_ASPECT` a room is stretched -- a room at 3.1:1
+ * is a detail, a room at 8:1 is a slot, and the search should be able to
+ * tell them apart, the same way it already can for a gap or an overhang. */
+function proportionWeight(f: ProportionFinding): number {
+  return Math.max(0, f.aspect - MAX_ROOM_ASPECT);
+}
+
 /** How far short of `MIN_DOORWAY_WALL_M` the shared wall a door sits on
  * actually falls -- the same "weight it by its own magnitude" shape
  * `deadEndWeight` uses, and for the same reason: a wall 5 cm short is a
@@ -810,7 +827,8 @@ export function scoreCandidate(
     sumWeights(findings.circulationRatio, circulationRatioWeight) +
     sumWeights(findings.overhangs, overhangWeight) +
     sumWeights(findings.corridorWaste, corridorWasteWeight) +
-    findings.singleAspect.length;
+    findings.singleAspect.length +
+    sumWeights(findings.proportion, proportionWeight);
   return { hardProblems, softRecommendations, findings };
 }
 

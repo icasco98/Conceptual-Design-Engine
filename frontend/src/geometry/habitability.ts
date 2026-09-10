@@ -262,3 +262,57 @@ export function singleAspectRooms(
   }
   return out;
 }
+
+/** Past this, a room stops being a room a person can arrange furniture in
+ * and starts reading as a corridor with a use attached: a bed or a table
+ * has to sit at one end and the rest is left over. Provisional, and
+ * marked as such the same way `relationships.ts` marks its own
+ * defensible-but-uncited rows -- the standard planning literature
+ * discusses habitable-room proportion in the 1:1 to 1:2 range and treats
+ * anything past about 1:2.5 as awkward, so 1:3 is deliberately set past
+ * the point of argument rather than at the middle of it.
+ *
+ * Corridors are exempt by `kind`, not by threshold: a hallway is
+ * *supposed* to be long and narrow, and `corridorWaste` already asks the
+ * question that actually applies to one. */
+export const MAX_ROOM_ASPECT = 3.0;
+
+export interface ProportionFinding {
+  roomId: string;
+  /** Long side over short side, always at least 1. */
+  aspect: number;
+  level: number;
+}
+
+/**
+ * Every habitable room stretched past `MAX_ROOM_ASPECT`. A soft
+ * recommendation, weighted by the overshoot -- a room at 3.1:1 is a
+ * detail and a room at 8:1 is a slot, and the search should be able to
+ * tell those apart, exactly as it can for a gap or an overhang.
+ *
+ * Rectangles and ellipses only. A hand-drawn polygon has no meaningful
+ * "long side" -- only a bounding box, which for an L-shape describes a
+ * rectangle the room is not -- so it is skipped rather than guessed at,
+ * the same narrow, stated scope limit `overhangs` takes for the same
+ * kind of reason. Rotation is irrelevant and correctly ignored: turning a
+ * room does not change its proportions.
+ */
+export function awkwardProportions(
+  boxes: Box[],
+  storeys: number,
+  habitableOf: (roomType: string) => boolean,
+): ProportionFinding[] {
+  const out: ProportionFinding[] = [];
+  for (let level = 0; level < storeys; level++) {
+    for (const room of liveBoxes(boxes, level)) {
+      if (room.level !== level || room.kind === "corridor" || room.shape === "polygon") continue;
+      if (!habitableOf(room.roomType)) continue;
+      const long = Math.max(room.width, room.height);
+      const short = Math.min(room.width, room.height);
+      if (short <= 0) continue;
+      const aspect = long / short;
+      if (aspect > MAX_ROOM_ASPECT) out.push({ roomId: room.id, aspect, level });
+    }
+  }
+  return out;
+}

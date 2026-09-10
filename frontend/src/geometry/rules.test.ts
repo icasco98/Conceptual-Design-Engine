@@ -13,7 +13,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { exteriorWallLength, singleAspectRooms, windowlessSleepingRooms } from "./habitability";
+import { awkwardProportions, exteriorWallLength, singleAspectRooms, windowlessSleepingRooms } from "./habitability";
 import { checkAdjacency, sanitaryDoorProblems, scoreCandidate, undersizedDoorways, type RelationRow } from "./relationships";
 import type { Arrow, Box } from "./types";
 import { foodOf, habitableOf, ROOM_FACTS, sanitaryOf, sleepingOf } from "../rooms";
@@ -325,5 +325,54 @@ describe("singleAspectRooms: a room needs two sides facing out to breathe", () =
     expect(open.findings.singleAspect).toHaveLength(0);
     expect(closed.hardProblems).toBe(open.hardProblems);
     expect(closed.softRecommendations).toBeGreaterThan(open.softRecommendations);
+  });
+});
+
+describe("awkwardProportions: a room stretched too long stops being a room", () => {
+  it("reports a room past three to one and not one under it", () => {
+    const slot = box({ id: "slot", left: 0, top: 0, width: 12, height: 3, roomType: "bedroom" });
+    const square = box({ id: "square", left: 0, top: 0, width: 4, height: 3, roomType: "bedroom" });
+    expect(awkwardProportions([slot], 1, habitableOf).map((f) => f.roomId)).toEqual(["slot"]);
+    expect(awkwardProportions([square], 1, habitableOf)).toEqual([]);
+  });
+
+  it("ignores rotation, which does not change a room's proportions", () => {
+    const slot = box({ id: "slot", left: 0, top: 0, width: 12, height: 3, roomType: "bedroom", rotation: 37 });
+    expect(awkwardProportions([slot], 1, habitableOf)).toHaveLength(1);
+  });
+
+  it("exempts corridors, whose job is to be long and narrow", () => {
+    const hall = box({ id: "hall", left: 0, top: 0, width: 12, height: 1.2, roomType: "hallway", kind: "corridor" });
+    expect(awkwardProportions([hall], 1, habitableOf)).toEqual([]);
+  });
+
+  it("skips a hand-drawn polygon, which has no meaningful long side", () => {
+    const lShape = box({
+      id: "l",
+      left: 0,
+      top: 0,
+      width: 12,
+      height: 3,
+      roomType: "bedroom",
+      shape: "polygon",
+      points: [
+        [0, 0],
+        [1, 0],
+        [1, 0.5],
+        [0.4, 0.5],
+        [0.4, 1],
+        [0, 1],
+      ],
+    });
+    expect(awkwardProportions([lShape], 1, habitableOf)).toEqual([]);
+  });
+
+  it("is soft and weighted by the overshoot: a slot counts for more than a slightly long room", () => {
+    const slightly = box({ id: "r", left: 0, top: 0, width: 9.6, height: 3, roomType: "bedroom" });
+    const slot = box({ id: "r", left: 0, top: 0, width: 24, height: 3, roomType: "bedroom" });
+    const a = scoreCandidate([slightly], 1, [], false, ROOM_FACTS, []);
+    const b = scoreCandidate([slot], 1, [], false, ROOM_FACTS, []);
+    expect(a.hardProblems).toBe(b.hardProblems);
+    expect(b.softRecommendations - a.softRecommendations).toBeCloseTo(8 - 3.2, 6);
   });
 });

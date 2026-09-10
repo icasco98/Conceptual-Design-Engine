@@ -1808,12 +1808,17 @@ describe("scoreCandidate and compareScores: hard problems always decide first", 
   it("counts a reachability problem as hard, not soft", () => {
     // Entry has its own exterior door; Living Room touches it but has no
     // door of its own, so it's unreached -- one hard problem, and no
-    // adjacency row involves Living Room at all, so nothing soft. Living
-    // Room is sized well past Entry's own footprint so Entry's own area
-    // stays under the efficiency rule's circulation-ratio threshold too
-    // -- this test is about reachability, not circulation ratio.
-    const entry = box({ id: "entry", left: 0, top: 0, width: 4, height: 4, roomType: "entry" });
-    const living = box({ id: "living", left: 4, top: 0, width: 30, height: 4, roomType: "living_room" });
+    // adjacency row involves Living Room at all, so nothing soft. The two
+    // rooms' sizes are doing three jobs at once, none of them the point
+    // of the test, all three needed for the soft total to stay a clean
+    // zero: Living Room is large enough next to Entry that Entry's own
+    // area stays under the circulation-ratio threshold (efficiency.ts),
+    // their shared wall runs the full height of both so neither overhangs
+    // the other (efficiency.ts again), and Living Room stops at 3:1 so it
+    // is not also an over-long room (habitability.ts). This test is about
+    // reachability; every other check has its own.
+    const entry = box({ id: "entry", left: 0, top: 0, width: 2, height: 4, roomType: "entry" });
+    const living = box({ id: "living", left: 2, top: 0, width: 12, height: 4, roomType: "living_room" });
     const ext: Arrow = { id: "ext", level: 0, hostId: "entry", kind: "exterior-main", side: 3, t: 0.5, dir: 1 };
     const s = score([entry, living], [ext]);
     expect(s.hardProblems).toBe(1);
@@ -1834,14 +1839,14 @@ describe("scoreCandidate and compareScores: hard problems always decide first", 
   });
 
   it("a candidate with zero hard problems always outranks one with any, however many recommendations it's missing", () => {
-    const empty = { reachability: [], adjacency: [], tier: [], stairConnection: [], sanitaryDoors: [], undersizedDoorways: [], windowless: [], singleAspect: [], gaps: [], circulationRatio: [], overhangs: [], corridorWaste: [], deadEndHallways: [] };
+    const empty = { reachability: [], adjacency: [], tier: [], stairConnection: [], sanitaryDoors: [], undersizedDoorways: [], windowless: [], singleAspect: [], proportion: [], gaps: [], circulationRatio: [], overhangs: [], corridorWaste: [], deadEndHallways: [] };
     const worseHard = { hardProblems: 1, softRecommendations: 0, findings: empty };
     const worseSoft = { hardProblems: 0, softRecommendations: 5, findings: empty };
     expect(compareScores(worseSoft, worseHard)).toBeLessThan(0);
   });
 
   it("among equal hard problems, fewer recommendations wins", () => {
-    const empty = { reachability: [], adjacency: [], tier: [], stairConnection: [], sanitaryDoors: [], undersizedDoorways: [], windowless: [], singleAspect: [], gaps: [], circulationRatio: [], overhangs: [], corridorWaste: [], deadEndHallways: [] };
+    const empty = { reachability: [], adjacency: [], tier: [], stairConnection: [], sanitaryDoors: [], undersizedDoorways: [], windowless: [], singleAspect: [], proportion: [], gaps: [], circulationRatio: [], overhangs: [], corridorWaste: [], deadEndHallways: [] };
     const moreSoft = { hardProblems: 2, softRecommendations: 3, findings: empty };
     const fewerSoft = { hardProblems: 2, softRecommendations: 1, findings: empty };
     expect(compareScores(fewerSoft, moreSoft)).toBeLessThan(0);
@@ -1849,7 +1854,7 @@ describe("scoreCandidate and compareScores: hard problems always decide first", 
   });
 
   it("is 0 when both counts match", () => {
-    const empty = { reachability: [], adjacency: [], tier: [], stairConnection: [], sanitaryDoors: [], undersizedDoorways: [], windowless: [], singleAspect: [], gaps: [], circulationRatio: [], overhangs: [], corridorWaste: [], deadEndHallways: [] };
+    const empty = { reachability: [], adjacency: [], tier: [], stairConnection: [], sanitaryDoors: [], undersizedDoorways: [], windowless: [], singleAspect: [], proportion: [], gaps: [], circulationRatio: [], overhangs: [], corridorWaste: [], deadEndHallways: [] };
     const a = { hardProblems: 1, softRecommendations: 1, findings: empty };
     const b = { hardProblems: 1, softRecommendations: 1, findings: empty };
     expect(compareScores(a, b)).toBe(0);
