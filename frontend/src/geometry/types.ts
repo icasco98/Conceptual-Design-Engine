@@ -216,6 +216,10 @@ export interface RoomFacts {
   /** A dedicated movement space (Entry, Hallway, Mudroom, Stair) rather
    * than a destination that merely happens to be walkable through. */
   circulation: (roomType: string) => boolean;
+  /** Contains a WC. */
+  sanitary: (roomType: string) => boolean;
+  /** Food is prepared or eaten here. */
+  food: (roomType: string) => boolean;
 }
 
 /** Someone who walks through the building, and the rooms they visit, in

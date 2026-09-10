@@ -1,10 +1,10 @@
 /**
- * Three checks, kept as three independent functions rather than merged
- * into one, because they answer three different questions and none of
+ * Four checks, kept as four independent functions rather than merged
+ * into one, because they answer four different questions and none of
  * them implies the others -- `checkAdjacency` (a room-type adjacency
  * table, sourced where it could be, see each row's comment, and marked
- * provisional where it could not, per Task 2), `tierViolations`, and
- * `stairConnectionProblems`:
+ * provisional where it could not, per Task 2), `tierViolations`,
+ * `stairConnectionProblems`, and `sanitaryDoorProblems`:
  *
  * `checkAdjacency` asks whether the *right* rooms ended up near each
  * other -- and the three relations mean three different things by
@@ -57,6 +57,15 @@
  * A stair serves every room on the floors it reaches, not just one; a
  * stair opening straight into a specific bedroom or kitchen makes that
  * room an involuntary through-route for everyone using the stairs.
+ *
+ * `sanitaryDoorProblems` asks a fourth question none of the three above
+ * can: does a door open straight between a WC and a room used for food.
+ * The gradient check cannot see it (a bathroom has no `tier` at all, on
+ * purpose), and an `undesired` row would be wrong rather than merely
+ * insufficient -- a WC *sharing a wall* with a kitchen is normal and
+ * often deliberate, since it puts both rooms on one plumbing stack. It
+ * is specifically the doorway that is the defect. See the function's own
+ * doc comment.
  *
  * `collectFindings`, at the bottom, ties this file's checks,
  * `circulation.ts`'s `reachabilityProblems` and `efficiency.ts`'s
@@ -441,6 +450,72 @@ export function stairConnectionProblems(
   return out;
 }
 
+export interface SanitaryDoorProblem {
+  /** The room containing the WC. */
+  sanitaryId: string;
+  /** The kitchen or dining room its door opens straight into. */
+  foodRoomId: string;
+  foodRoomType: string;
+  level: number;
+}
+
+/**
+ * Every door that opens straight between a room containing a WC and a
+ * room food is prepared or eaten in. Long-standing in residential
+ * building regulation and in ordinary practice everywhere: a WC gets a
+ * separating space -- a lobby, a hall, an intervening door -- before a
+ * kitchen or a dining room, so that opening the WC does not open it onto
+ * food, and so nobody sits at a table facing a WC door. (England and
+ * Wales' Approved Document G states it as an explicit requirement; the
+ * convention is far older and far wider than that one code.)
+ *
+ * Note what this is *not*: it is not an objection to a WC next to a
+ * kitchen. Sharing a wall is normal and often deliberate, since it puts
+ * both rooms' plumbing on one stack -- so this deliberately reads the
+ * door graph, not the touch graph, exactly as `required` adjacency does
+ * and for the mirror-image reason. The defect is the doorway, not the
+ * proximity.
+ *
+ * Neither the tier check nor the adjacency table can catch this.
+ * `tierViolations` skips a bathroom entirely (rooms.ts leaves it no
+ * `tier` on purpose -- a bathroom may legitimately open onto either a
+ * public or a private room), and an `undesired` row would flag the shared
+ * wall, which is the thing that is fine. This needs its own check because
+ * it asks its own question, the same reason `stairConnectionProblems` is
+ * separate from the gradient it superficially resembles.
+ *
+ * A powder room off an entrance hall, or an ensuite off a bedroom, is
+ * untouched: neither of those is a room designated for food.
+ */
+export function sanitaryDoorProblems(
+  boxes: Box[],
+  storeys: number,
+  arrows: Arrow[],
+  autoCarve: boolean,
+  sanitaryOf: (roomType: string) => boolean,
+  foodOf: (roomType: string) => boolean,
+): SanitaryDoorProblem[] {
+  const graph = buildCirculationGraphMemo(boxes, storeys, arrows, autoCarve);
+  const byId = new Map(boxes.map((b) => [b.id, b]));
+  const seen = new Set<string>();
+  const out: SanitaryDoorProblem[] = [];
+  for (const [fromId, edges] of graph) {
+    const from = byId.get(fromId);
+    if (!from || !sanitaryOf(from.roomType)) continue;
+    for (const edge of edges) {
+      const to = byId.get(edge.to);
+      if (!to || !foodOf(to.roomType)) continue;
+      // One result per door, not one per direction: the graph carries
+      // both, and a single doorway is a single defect.
+      const key = `${fromId}|${edge.to}|${edge.level}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ sanitaryId: from.id, foodRoomId: to.id, foodRoomType: to.roomType, level: edge.level });
+    }
+  }
+  return out;
+}
+
 export type Severity = "problem" | "recommendation";
 
 /** `required` and `undesired` are hard problems: a real requirement
@@ -457,6 +532,7 @@ export interface Findings {
   adjacency: AdjacencyStatus[];
   tier: TierViolation[];
   stairConnection: StairConnectionProblem[];
+  sanitaryDoors: SanitaryDoorProblem[];
   gaps: GapFinding[];
   circulationRatio: CirculationRatioFinding[];
   overhangs: OverhangFinding[];
@@ -503,6 +579,7 @@ export function collectFindings(
     adjacency: checkAdjacency(boxes, storeys, arrows, autoCarve, rules),
     tier: tierViolations(boxes, storeys, arrows, autoCarve, facts.tier),
     stairConnection: stairConnectionProblems(boxes, storeys, arrows, autoCarve, facts.circulation),
+    sanitaryDoors: sanitaryDoorProblems(boxes, storeys, arrows, autoCarve, facts.sanitary, facts.food),
     gaps: unnecessaryGaps(boxes, storeys, autoCarve, (a, b) => isUndesiredPair(a, b, rules)),
     circulationRatio: circulationRatio(boxes, storeys, autoCarve, facts.circulation),
     overhangs: overhangs(boxes, storeys, autoCarve),
@@ -513,7 +590,8 @@ export function collectFindings(
 
 export interface Score {
   /** A weighted total, not a raw count: every tier violation,
-   * reachability problem, stair-connection problem and unmet `required`/`undesired` adjacency row counts as 1 (they carry no
+   * reachability problem, stair-connection problem, WC-onto-food doorway
+   * and unmet `required`/`undesired` adjacency row counts as 1 (they carry no
    * continuous magnitude of their own), but each dead-end hallway past
    * the code limit (efficiency.ts's `deadEndHallways`) is weighted by how
    * far past that limit it runs -- a corridor barely over the limit
@@ -610,6 +688,7 @@ export function scoreCandidate(
     findings.tier.length +
     findings.reachability.length +
     findings.stairConnection.length +
+    findings.sanitaryDoors.length +
     sumWeights(findings.deadEndHallways, deadEndWeight) +
     unmetAdjacency.filter((r) => adjacencySeverity(r) === "problem").length;
   const softRecommendations =

@@ -68,6 +68,19 @@ interface RoomTypeInfo {
    * a bedroom, kitchen, or any other room that has to serve everyone
    * using the stairs as an involuntary through-route. */
   circulation?: boolean;
+  /** Contains a WC. Used only by `relationships.ts`'s
+   * `sanitaryDoorProblems`, and deliberately not the same set as
+   * `auxiliary` (a closet is auxiliary and has no WC in it) nor as the
+   * Service category (a laundry is Service and has no WC either). The
+   * question this answers is narrow and physical: is there a toilet on
+   * the other side of this door. */
+  sanitary?: boolean;
+  /** Food is prepared or eaten here. The other half of
+   * `sanitaryDoorProblems`' question. A living room is not on this list
+   * even though people eat in front of the television: this is about the
+   * rooms a plan *designates* for food, which is what the convention is
+   * written against. */
+  food?: boolean;
 }
 
 /** category_a = private, category_b = shared, category_c = service,
@@ -91,14 +104,14 @@ export const ROOM_TYPES: Record<string, RoomTypeInfo> = {
   reception: { label: "Reception", minWidth: 3.5, minHeight: 4.0, typicalWidth: 4.5, typicalHeight: 5.5, zone: "category_b", passable: false, tier: "public" },
   hallway: { label: "Hallway", minWidth: 1.2, minHeight: 2.0, typicalWidth: 1.2, typicalHeight: 3.0, zone: "category_b", passable: true, tier: "semi-public", circulation: true },
   living_room: { label: "Living Room", minWidth: 3.5, minHeight: 4.0, typicalWidth: 4.5, typicalHeight: 5.5, zone: "category_b", passable: true, tier: "private" },
-  dining_room: { label: "Dining Room", minWidth: 3.0, minHeight: 3.3, typicalWidth: 3.6, typicalHeight: 4.2, zone: "category_b", passable: true, tier: "semi-public" },
-  kitchen: { label: "Kitchen", minWidth: 2.7, minHeight: 3.0, typicalWidth: 3.6, typicalHeight: 4.2, zone: "category_b", passable: false, tier: "private" },
+  dining_room: { label: "Dining Room", minWidth: 3.0, minHeight: 3.3, typicalWidth: 3.6, typicalHeight: 4.2, zone: "category_b", passable: true, tier: "semi-public", food: true },
+  kitchen: { label: "Kitchen", minWidth: 2.7, minHeight: 3.0, typicalWidth: 3.6, typicalHeight: 4.2, zone: "category_b", passable: false, tier: "private", food: true },
   master_bedroom: { label: "Master Bedroom", minWidth: 3.3, minHeight: 3.6, typicalWidth: 4.0, typicalHeight: 4.5, zone: "category_a", passable: false, tier: "private" },
   bedroom: { label: "Bedroom", minWidth: 2.7, minHeight: 3.0, typicalWidth: 3.3, typicalHeight: 3.6, zone: "category_a", passable: false, tier: "private" },
   // Bathrooms are exempt from the gradient check on purpose -- see the
   // file doc comment above.
-  bathroom: { label: "Bathroom", minWidth: 1.5, minHeight: 1.75, typicalWidth: 1.8, typicalHeight: 2.4, zone: "category_a", passable: false, auxiliary: true },
-  half_bath: { label: "Half Bath / Powder Room", minWidth: 0.9, minHeight: 1.5, typicalWidth: 1.1, typicalHeight: 1.6, zone: "category_c", passable: false, auxiliary: true },
+  bathroom: { label: "Bathroom", minWidth: 1.5, minHeight: 1.75, typicalWidth: 1.8, typicalHeight: 2.4, zone: "category_a", passable: false, auxiliary: true, sanitary: true },
+  half_bath: { label: "Half Bath / Powder Room", minWidth: 0.9, minHeight: 1.5, typicalWidth: 1.1, typicalHeight: 1.6, zone: "category_c", passable: false, auxiliary: true, sanitary: true },
   office: { label: "Office / Study", minWidth: 2.4, minHeight: 2.7, typicalWidth: 3.0, typicalHeight: 3.3, zone: "category_a", passable: false, tier: "private" },
   laundry: { label: "Laundry", minWidth: 1.5, minHeight: 1.8, typicalWidth: 1.8, typicalHeight: 2.4, zone: "category_c", passable: false },
   garage_single: { label: "Single Garage", minWidth: 3.0, minHeight: 6.0, typicalWidth: 3.6, typicalHeight: 6.5, zone: "category_c", passable: false },
@@ -115,9 +128,9 @@ export const ROOM_TYPES: Record<string, RoomTypeInfo> = {
   // wing. A live-in maid is modeled as Nanny Room; there is no separate
   // maid type.
   driver_room: { label: "Driver Room", minWidth: 2.7, minHeight: 3.0, typicalWidth: 3.3, typicalHeight: 3.6, zone: "category_c", passable: false, tier: "private" },
-  driver_bathroom: { label: "Driver Bathroom", minWidth: 1.5, minHeight: 1.75, typicalWidth: 1.8, typicalHeight: 2.4, zone: "category_c", passable: false, auxiliary: true },
+  driver_bathroom: { label: "Driver Bathroom", minWidth: 1.5, minHeight: 1.75, typicalWidth: 1.8, typicalHeight: 2.4, zone: "category_c", passable: false, auxiliary: true, sanitary: true },
   nanny_room: { label: "Nanny Room", minWidth: 2.7, minHeight: 3.0, typicalWidth: 3.3, typicalHeight: 3.6, zone: "category_c", passable: false, tier: "private" },
-  nanny_bathroom: { label: "Nanny Bathroom", minWidth: 1.5, minHeight: 1.75, typicalWidth: 1.8, typicalHeight: 2.4, zone: "category_c", passable: false, auxiliary: true },
+  nanny_bathroom: { label: "Nanny Bathroom", minWidth: 1.5, minHeight: 1.75, typicalWidth: 1.8, typicalHeight: 2.4, zone: "category_c", passable: false, auxiliary: true, sanitary: true },
   // No bathroom requirement -- it does not need to be ensuite.
   prayer_room: { label: "Prayer Room", minWidth: 2.0, minHeight: 2.5, typicalWidth: 2.5, typicalHeight: 3.0, zone: "category_a", passable: false, tier: "private" },
   other: { label: "Room", minWidth: 2.0, minHeight: 2.0, typicalWidth: 3.0, typicalHeight: 3.0, zone: "category_b", passable: false },
@@ -162,6 +175,13 @@ export function circulationOf(roomType: string): boolean {
   return !!roomTypeInfo(roomType).circulation;
 }
 
+export function sanitaryOf(roomType: string): boolean {
+  return !!roomTypeInfo(roomType).sanitary;
+}
+
+export function foodOf(roomType: string): boolean {
+  return !!roomTypeInfo(roomType).food;
+}
 
 /** The whole set, as one object -- what `collectFindings`, `scoreCandidate`
  * and `generateLayout` take. The individual functions above stay exported
@@ -174,4 +194,6 @@ export const ROOM_FACTS: RoomFacts = {
   tier: tierOf,
   auxiliary: auxiliaryOf,
   circulation: circulationOf,
+  sanitary: sanitaryOf,
+  food: foodOf,
 };

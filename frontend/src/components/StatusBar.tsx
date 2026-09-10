@@ -18,7 +18,15 @@ import { footprintCoverage } from "../geometry/footprint";
 import { buildCirculationGraphMemo, displayShapesForLevelMemo } from "../geometry/memo";
 import { outsidePlot } from "../geometry/plot";
 import { polyArea } from "../geometry/poly";
-import { adjacencySeverity, collectFindings, TIER_ORDER, type AdjacencyStatus, type StairConnectionProblem, type TierViolation } from "../geometry/relationships";
+import {
+  adjacencySeverity,
+  collectFindings,
+  TIER_ORDER,
+  type AdjacencyStatus,
+  type SanitaryDoorProblem,
+  type StairConnectionProblem,
+  type TierViolation,
+} from "../geometry/relationships";
 import { liveBoxes } from "../geometry/snap";
 import { floorLabel, ROOM_FACTS, roomTypeInfo } from "../rooms";
 import type { Box } from "../geometry/types";
@@ -67,6 +75,20 @@ function stairConnectionFindings(problems: StairConnectionProblem[], boxesById: 
     const other = boxesById.get(s.otherRoomId);
     if (!stair || !other) return [];
     return [{ level: s.level, text: `${stair.name} opens straight into ${other.name} instead of a hallway or other circulation space` }];
+  });
+}
+
+/** A WC opening straight onto a kitchen or dining room
+ * (`sanitaryDoorProblems`). Named here as well as counted by
+ * `scoreCandidate` on purpose: a hard problem the generator counts but
+ * the status bar never mentions would have the tool telling someone
+ * their plan is fine while the search says it is not. */
+function sanitaryDoorFindings(problems: SanitaryDoorProblem[], boxesById: Map<string, Box>): Finding[] {
+  return problems.flatMap((p) => {
+    const wc = boxesById.get(p.sanitaryId);
+    const room = boxesById.get(p.foodRoomId);
+    if (!wc || !room) return [];
+    return [{ level: p.level, text: `${wc.name} opens straight into ${room.name} -- a WC needs a hall or lobby between it and a room used for food` }];
   });
 }
 
@@ -226,6 +248,7 @@ export function StatusBar() {
       ...reachabilityFindings(findings.reachability, boxesById),
       ...stairConnectionFindings(findings.stairConnection, boxesById),
       ...adjacencyProblemFindings(findings.adjacency),
+      ...sanitaryDoorFindings(findings.sanitaryDoors, boxesById),
       ...deadEndFindings(findings.deadEndHallways, boxesById),
     ];
     const soft = [
