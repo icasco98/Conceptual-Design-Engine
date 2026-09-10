@@ -60,6 +60,30 @@ interface TuningRecord {
   baseline: EvaluationResult;
   best: EvaluationResult;
   config: SearchConfig;
+  /** Every training run, adopted or not, oldest first. A run that failed
+   * to beat the incumbent is the more useful half of this: without it the
+   * file reads as a straight line of improvements and the next person has
+   * no way to tell a search direction that was tried and rejected from
+   * one nobody ever tried. Deliberately just the numbers -- the losing
+   * config itself is not worth carrying, only the fact that a run under
+   * those settings did not beat what was already here. */
+  history: TuningRun[];
+}
+
+interface TuningRun {
+  pass: string;
+  seed: number;
+  generations: number;
+  iterationsPerEval: number;
+  /** What `DEFAULT_SEARCH_CONFIG` scored on this run. */
+  defaults: { meanHardProblems: number; meanSoftRecommendations: number; cleanRate: number };
+  /** What the run's own best config scored. */
+  trained: { meanHardProblems: number; meanSoftRecommendations: number; cleanRate: number };
+  /** What the config stored at the time scored, re-measured on this
+   * run's rule set and seed -- null on the first run, when there was
+   * none. */
+  incumbent: { meanHardProblems: number; meanSoftRecommendations: number } | null;
+  adopted: boolean;
 }
 
 const TUNING_PATH = new URL("./scenarios.tuning.json", import.meta.url);
@@ -106,19 +130,40 @@ describe("search tuning record", () => {
             ` | record updated: ${beatsStored}`,
         );
 
-        if (beatsStored) {
-          const record: TuningRecord = {
-            pass: process.env.TUNING_PASS ?? stored.pass,
-            generations: GENERATIONS,
-            iterationsPerEval: ITERATIONS_PER_EVAL,
-            seed: SEED,
-            scenarioCount: scenarios.length,
-            baseline: result.baseline,
-            best: result.best.evaluation,
-            config: result.best.config,
-          };
-          writeFileSync(TUNING_PATH, `${JSON.stringify(record, null, 2)}\n`);
-        }
+        const trim = (e: EvaluationResult) => ({
+          meanHardProblems: e.meanHardProblems,
+          meanSoftRecommendations: e.meanSoftRecommendations,
+          cleanRate: e.cleanRate,
+        });
+        const run: TuningRun = {
+          pass: process.env.TUNING_PASS ?? stored.pass,
+          seed: SEED,
+          generations: GENERATIONS,
+          iterationsPerEval: ITERATIONS_PER_EVAL,
+          defaults: trim(result.baseline),
+          trained: trim(result.best.evaluation),
+          incumbent: incumbentEval
+            ? { meanHardProblems: incumbentEval.meanHardProblems, meanSoftRecommendations: incumbentEval.meanSoftRecommendations }
+            : null,
+          adopted: beatsStored,
+        };
+        // The log grows on every run; the config and its headline numbers
+        // only move when the run actually won. A losing run still leaves
+        // its evidence behind, which is the point of keeping one.
+        const record: TuningRecord = beatsStored
+          ? {
+              pass: run.pass,
+              generations: GENERATIONS,
+              iterationsPerEval: ITERATIONS_PER_EVAL,
+              seed: SEED,
+              scenarioCount: scenarios.length,
+              baseline: result.baseline,
+              best: result.best.evaluation,
+              config: result.best.config,
+              history: [...(stored.history ?? []), run],
+            }
+          : { ...stored, history: [...(stored.history ?? []), run] };
+        writeFileSync(TUNING_PATH, `${JSON.stringify(record, null, 2)}\n`);
         return;
       }
 
@@ -143,6 +188,9 @@ describe("search tuning record", () => {
       // Sanity that the record describes THIS tool's config shape and not
       // a stale one from before a field was added or renamed.
       expect(Object.keys(record.config).sort()).toEqual(Object.keys(DEFAULT_SEARCH_CONFIG).sort());
+      // The headline numbers have to be one of the logged runs, or the
+      // record is claiming a result no run ever produced.
+      expect(record.history.some((run) => run.adopted && run.trained.meanHardProblems === record.best.meanHardProblems)).toBe(true);
     },
     1_800_000,
   );
