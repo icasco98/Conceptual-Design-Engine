@@ -338,16 +338,30 @@ export function generateLayout(
   // happened to start with. This storey's arrows are re-suggested fresh
   // against each candidate's actual geometry (`arrows.ts`'s own
   // `suggestArrows`, the same one-click "Suggest" a person uses by hand);
-  // every other storey's doors are carried through unchanged. Costs one
-  // extra touch-graph walk per candidate on top of `scoreCandidate`
-  // itself, but a search that can't see whether a move made a room
-  // reachable can't actually improve reachability -- only rearrange
-  // positions around a reachability picture that never changes.
+  // every other storey's doors are carried through unchanged.
+  //
+  // "Fresh" has to mean fresh, not "whatever was suggested once at the
+  // start, plus new ones bolted on": `startingLevelArrows` can itself
+  // already contain auto-suggested doors (`Arrow.targetId` set) computed
+  // against the ARRANGEMENT THE SEARCH STARTED FROM, and once a move
+  // separates a pair that used to touch, that stale entry does not
+  // magically stop being true just because nobody removed it -- carrying
+  // it into every later candidate's `candidateArrows` unconditionally
+  // would score reachability and adjacency against a door set that no
+  // longer matches the candidate's own geometry, exactly the "optimizing
+  // around a picture that never changes" failure this design already
+  // rejects for a *fixed* door set (see the file doc comment). A hand-
+  // placed door never carries a `targetId` (`store.ts`'s `addArrow`/
+  // `moveArrow` never set one, and clear it on a manual move) and an
+  // exterior door never has one either, so filtering on it is exactly
+  // "keep what a person or the caller actually placed, re-derive
+  // everything `suggestArrows` itself produced" -- not a heuristic, the
+  // same distinction `Arrow.targetId`'s own doc comment already draws.
   const otherLevelArrows = arrows.filter((a) => a.level !== level);
-  const startingLevelArrows = arrows.filter((a) => a.level === level);
+  const fixedLevelArrows = arrows.filter((a) => a.level === level && a.targetId === undefined);
   const score = (candidate: Box[]) => {
-    const suggested = suggestArrows(liveBoxes(candidate, level), startingLevelArrows, level, autoCarve);
-    const candidateArrows = [...otherLevelArrows, ...startingLevelArrows, ...suggested];
+    const suggested = suggestArrows(liveBoxes(candidate, level), fixedLevelArrows, level, autoCarve);
+    const candidateArrows = [...otherLevelArrows, ...fixedLevelArrows, ...suggested];
     return scoreCandidate(candidate, storeys, candidateArrows, autoCarve, facts, rules);
   };
 

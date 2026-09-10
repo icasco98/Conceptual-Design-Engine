@@ -24,6 +24,7 @@
  */
 import { newArrowId } from "./geometry/arrows";
 import { rectPolyOf } from "./geometry/poly";
+import { topologyLayout, type TopologyRoom } from "./geometry/topology";
 import type { Arrow, Box, Plot } from "./geometry/types";
 import { roomTypeInfo } from "./rooms";
 import { DEFAULT_PRIORITY } from "./sample";
@@ -200,33 +201,6 @@ export const EXAMPLE_PROGRAMS: RoomProgram[] = [
   },
 ];
 
-/** Simple left-to-right, top-to-bottom shelf packing -- deliberately
- * naive (fixed `gap` between every room, never touching), since the
- * point is a plausible-but-bad starting point for `generateLayout` to
- * improve, not a good layout in its own right. Rooms are packed tallest
- * first, the standard shelf-packing heuristic, for a slightly less
- * wasteful start; it still has no notion of adjacency, tiers, or
- * anything else the rule set cares about. */
-function shelfPack(rooms: { width: number; height: number }[], plot: Plot, gap = 0.3): { left: number; top: number }[] {
-  const order = rooms.map((_, i) => i).sort((a, b) => rooms[b].height - rooms[a].height);
-  const positions: { left: number; top: number }[] = new Array(rooms.length);
-  let x = plot.left + gap;
-  let y = plot.top + gap;
-  let rowHeight = 0;
-  for (const i of order) {
-    const r = rooms[i];
-    if (x > plot.left + gap && x + r.width > plot.left + plot.width - gap) {
-      x = plot.left + gap;
-      y += rowHeight + gap;
-      rowHeight = 0;
-    }
-    positions[i] = { left: x, top: y };
-    x += r.width + gap;
-    rowHeight = Math.max(rowHeight, r.height);
-  }
-  return positions;
-}
-
 export interface Scenario {
   id: string;
   label: string;
@@ -239,13 +213,33 @@ export interface Scenario {
   arrows: Arrow[];
 }
 
-/** One (plot, program) pairing, turned into a naive starting layout: every
- * room instance at its `rooms.ts` typical size, shelf-packed with gaps
- * (never touching), plus one exterior door on the entry. Rooms are
- * `placed: true` from the start -- `generateLayout` only ever moves rooms
- * already live on a storey, never places an unplaced one, so a scenario
- * has to start placed, however naively, for the search to have anything
- * to improve. */
+/** One (plot, program) pairing, turned into a starting layout via the
+ * topology and dimensioning stages (`geometry/topology.ts`): a bubble
+ * diagram settles roughly who should sit near whom from the room list and
+ * `relationships.ts`'s own required/desired rows, then a slice-and-dice
+ * area partition turns that into real, non-overlapping rectangles that
+ * exactly tile the plot -- adjacency-related rooms landing in
+ * neighbouring slices rather than scattered arbitrarily, which is the
+ * actual point: two rooms only ever get a door between them once their
+ * walls meet within `TOUCH_TOL_M`, and a start where nothing is ever
+ * within a meter of anything (the old shelf pack, kept apart by a flat
+ * 0.3 m gap) essentially never lets the search find that by chance.
+ *
+ * A room's own weight in the partition is its typical footprint area,
+ * floored at its own minimum -- see `topology.ts`'s `dimensionRooms` for
+ * why that floor is only a bias, never a guarantee: a program that
+ * doesn't fit the plot even at every room's minimum size (the same test
+ * `scenarios.evaluator.ts`'s `isFeasible` runs) still produces a real,
+ * non-overlapping placement here, just one where some rooms end up
+ * smaller than they should be, which is the honest picture of what
+ * "doesn't fit" actually looks like for a floor plan -- not a shelf-
+ * packed overflow spilling past the plot boundary, which the old
+ * approach allowed and this one structurally cannot.
+ *
+ * Rooms are `placed: true` from the start, plus one exterior door on the
+ * entry -- `generateLayout` only ever moves rooms already live on a
+ * storey, never places an unplaced one, so a scenario has to start
+ * placed for the search to have anything to improve. */
 export function buildScenario(plotTemplate: PlotTemplate, program: RoomProgram): Scenario {
   const plot: Plot = { on: true, left: 0, top: 0, width: plotTemplate.width, depth: plotTemplate.depth };
   const flat = flattenProgram(program.blocks);
@@ -254,35 +248,45 @@ export function buildScenario(plotTemplate: PlotTemplate, program: RoomProgram):
     return Array.from({ length: count }, (_, i) => ({
       id: `${program.id}:${plotTemplate.id}:${roomType}:${i}`,
       roomType,
-      width: info.typicalWidth,
-      height: info.typicalHeight,
       minWidth: info.minWidth,
       minHeight: info.minHeight,
+      targetAreaM2: info.typicalWidth * info.typicalHeight,
     }));
   });
-  const positions = shelfPack(instances, plot);
-  const boxes: Box[] = instances.map((inst, i) => ({
-    id: inst.id,
-    name: `${roomTypeInfo(inst.roomType).label} ${i + 1}`,
-    kind: "room",
-    shape: "rect",
-    roomType: inst.roomType,
-    isEntry: inst.roomType === "entry",
-    level: 0,
-    levelTo: 0,
-    heightM: 3,
-    priority: DEFAULT_PRIORITY,
-    left: positions[i].left,
-    top: positions[i].top,
-    width: inst.width,
-    height: inst.height,
-    minWidth: inst.minWidth,
-    minHeight: inst.minHeight,
-    rotation: 0,
-    carvedBy: [],
-    deleted: false,
-    initial: { left: positions[i].left, top: positions[i].top, width: inst.width, height: inst.height },
+  const topologyRooms: TopologyRoom[] = instances.map(({ id, roomType, minWidth, minHeight, targetAreaM2 }) => ({
+    id,
+    roomType,
+    minWidth,
+    minHeight,
+    targetAreaM2,
   }));
+  const placed = topologyLayout(topologyRooms, { left: plot.left, top: plot.top, width: plot.width, height: plot.depth });
+  const placedById = new Map(placed.map((p) => [p.id, p]));
+  const boxes: Box[] = instances.map((inst, i) => {
+    const rect = placedById.get(inst.id)!;
+    return {
+      id: inst.id,
+      name: `${roomTypeInfo(inst.roomType).label} ${i + 1}`,
+      kind: "room",
+      shape: "rect",
+      roomType: inst.roomType,
+      isEntry: inst.roomType === "entry",
+      level: 0,
+      levelTo: 0,
+      heightM: 3,
+      priority: DEFAULT_PRIORITY,
+      left: rect.left,
+      top: rect.top,
+      width: rect.width,
+      height: rect.height,
+      minWidth: inst.minWidth,
+      minHeight: inst.minHeight,
+      rotation: 0,
+      carvedBy: [],
+      deleted: false,
+      initial: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+    };
+  });
 
   const entry = boxes.find((b) => b.isEntry);
   const exteriorArrow: Arrow | null = entry

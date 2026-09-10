@@ -1,33 +1,33 @@
 {
-  "pass": "pass-5",
-  "generations": 30,
+  "pass": "batch-002",
+  "generations": 40,
   "iterationsPerEval": 150,
-  "seed": 59,
+  "seed": 101,
   "scenarioCount": 56,
   "baseline": {
     "scenarioCount": 56,
-    "meanHardProblems": 21.696428571428573,
-    "meanSoftRecommendations": 19.475541225306436,
+    "meanHardProblems": 16.852379435637744,
+    "meanSoftRecommendations": 22.101254889761016,
     "cleanRate": 0
   },
   "best": {
     "scenarioCount": 56,
-    "meanHardProblems": 21.610643463629025,
-    "meanSoftRecommendations": 19.558312278884294,
+    "meanHardProblems": 15.563818849113714,
+    "meanSoftRecommendations": 24.170675238877124,
     "cleanRate": 0
   },
   "config": {
-    "tStart": 3.135909702108842,
-    "tEnd": 0.0016091020416226687,
+    "tStart": 3,
+    "tEnd": 0.00193591751724213,
     "hardProblemWeight": 1000,
-    "stepFloorM": 0.1,
-    "stepScaleM": 2.630015428751134,
-    "rotFloorDeg": 1,
-    "rotScaleDeg": 20,
+    "stepFloorM": 0.11882830428555625,
+    "stepScaleM": 2.68502329855423,
+    "rotFloorDeg": 0.8353083686079257,
+    "rotScaleDeg": 23.100637522454445,
     "moveWeights": {
-      "translate": 1,
+      "translate": 0.9170506490466113,
       "resize": 1,
-      "rotate": 1,
+      "rotate": 0.8468292106659366,
       "swap": 1,
       "snap": 1
     }
@@ -153,6 +153,27 @@
       "incumbent": {
         "meanHardProblems": 21.732142857142858,
         "meanSoftRecommendations": 19.31749126848837
+      },
+      "adopted": true
+    },
+    {
+      "pass": "batch-002",
+      "seed": 101,
+      "generations": 40,
+      "iterationsPerEval": 150,
+      "defaults": {
+        "meanHardProblems": 16.852379435637744,
+        "meanSoftRecommendations": 22.101254889761016,
+        "cleanRate": 0
+      },
+      "trained": {
+        "meanHardProblems": 15.563818849113714,
+        "meanSoftRecommendations": 24.170675238877124,
+        "cleanRate": 0
+      },
+      "incumbent": {
+        "meanHardProblems": 16.947213003334824,
+        "meanSoftRecommendations": 21.89518303672083
       },
       "adopted": true
     }

@@ -1,10 +1,26 @@
 /// <reference types="node" />
 /**
- * Writes a visual confirmation for scenarios the report flags as
- * infeasible (>100% coverage even after the search) -- a diagram, not
- * just a number, so the claim "this program does not fit this plot" can
- * actually be checked by eye. Output lands in `scenario-renders/`
- * (gitignored -- generated, not tracked) for the current run.
+ * Writes a visual confirmation for a scenario that is tight for its
+ * plot -- a diagram, not just a number, so a claim about what a tight
+ * program's starting layout actually looks like can be checked by eye.
+ * Output lands in `scenario-renders/` (gitignored -- generated, not
+ * tracked) for the current run.
+ *
+ * Before batch 002 (topology + dimensioning, `geometry/topology.ts`),
+ * this rendered a program whose rooms overflowed the plot at their full
+ * typical size -- shelf-packing never shrank anything, so "coverage over
+ * 100%" was a real, visible overflow past the plot boundary. The
+ * dimensioning stage's slice-and-dice area partition structurally cannot
+ * produce that anymore: every recursive split exactly tiles its own
+ * rectangle, so the starting layout always covers exactly 100% of the
+ * plot, however many rooms are asked to share it. What "this is tight"
+ * looks like now is every room's own share shrinking below its typical
+ * size instead of the plot boundary being violated -- which is what this
+ * file actually shows and asserts on. None of the 56 (plot, program)
+ * pairs in `EXAMPLE_PROGRAMS` x `PLOT_TEMPLATES` are genuinely infeasible
+ * (`scenarios.evaluator.ts`'s own `isFeasible`, the sum of every room's
+ * *minimum* footprint against the plot) -- the scenario below is
+ * deliberately the tightest one *at typical size*, not an infeasible one.
  *
  * One self-contained `.html` file, not two bare `.svg` ones: the person
  * this diagram is *for* does not run a dev server, and a `.svg` file does
@@ -24,9 +40,10 @@ import { suggestArrows } from "./geometry/arrows";
 import { generateLayout } from "./geometry/generate";
 import { footprintCoverage } from "./geometry/footprint";
 import { scoreCandidate } from "./geometry/relationships";
-import { ROOM_FACTS } from "./rooms";
+import { ROOM_FACTS, roomTypeInfo } from "./rooms";
 import { renderScenarioSVG, scenarioPageHTML } from "./scenarios.render";
 import { boundaryOf, buildScenario, EXAMPLE_PROGRAMS, PLOT_TEMPLATES } from "./scenarios";
+import { isFeasible } from "./scenarios.evaluator";
 
 const OUT_DIR = new URL("../scenario-renders/", import.meta.url);
 
@@ -39,7 +56,7 @@ function writeOut(name: string, html: string) {
 
 describe("scenario visual confirmation", () => {
   it(
-    "renders the naive start and the post-search result for a scenario that does not fit its plot",
+    "renders the topology+dimensioning start and the post-search result for a scenario too tight to fit at typical room sizes",
     () => {
       const plotTemplate = PLOT_TEMPLATES.find((p) => p.id === "plot_250_square")!;
       const program = EXAMPLE_PROGRAMS.find((p) => p.id === "extended_gulf")!;
@@ -48,13 +65,20 @@ describe("scenario visual confirmation", () => {
       const startArrows = [...arrows, ...suggestArrows(boxes, arrows, 0, false)];
       const startScore = scoreCandidate(boxes, 1, startArrows, false, ROOM_FACTS);
       const startCoverage = footprintCoverage(boxes, 0, false, plot);
+      // The naive-typical-size total, for comparison against what the
+      // partition actually gave each room -- see the file doc comment for
+      // why `footprintCoverage` alone can no longer tell "tight" from
+      // "comfortable" the way it could for the old shelf-packed start.
+      const typicalAreaTotal = boxes.reduce((sum, b) => sum + roomTypeInfo(b.roomType).typicalWidth * roomTypeInfo(b.roomType).typicalHeight, 0);
+      const actualAreaTotal = boxes.reduce((sum, b) => sum + b.width * b.height, 0);
+      const squeezeRatio = actualAreaTotal / typicalAreaTotal;
 
       const startSvg = renderScenarioSVG(plot, boxes, {
-        title: `${program.label} on ${plotTemplate.label} -- naive start`,
+        title: `${program.label} on ${plotTemplate.label} -- topology + dimensioning start`,
         lines: [
           `${boxes.length} rooms, ${(plot.width * plot.depth).toFixed(0)} m² plot`,
-          `coverage ${(startCoverage * 100).toFixed(0)}% -- hard ${startScore.hardProblems}, soft ${startScore.softRecommendations.toFixed(1)}`,
-          "Rooms with a red dashed outline sit outside the plot boundary.",
+          `coverage ${(startCoverage * 100).toFixed(0)}% (the partition always tiles the plot exactly) -- hard ${startScore.hardProblems}, soft ${startScore.softRecommendations.toFixed(1)}`,
+          `every room's own share is only ${(squeezeRatio * 100).toFixed(0)}% of its typical size, never below its own minimum -- this is what "tight" looks like now.`,
         ],
       });
 
@@ -72,7 +96,7 @@ describe("scenario visual confirmation", () => {
         lines: [
           `${result.length} rooms, ${(plot.width * plot.depth).toFixed(0)} m² plot`,
           `coverage ${(resultCoverage * 100).toFixed(0)}% -- hard ${resultScore.hardProblems}, soft ${resultScore.softRecommendations.toFixed(1)}`,
-          "Still over 100%: the search can reposition and shrink to each room's own minimum, never remove a room.",
+          "The search may reposition, turn and resize rooms (never below each room's own minimum), but it may never delete one.",
         ],
       });
 
@@ -80,24 +104,38 @@ describe("scenario visual confirmation", () => {
         "extended_gulf_on_250_square.html",
         scenarioPageHTML(`${program.label} on ${plotTemplate.label}`, [
           {
-            heading: "Before: the naive shelf-packed start",
-            notes: ["Every room at its typical size, laid out in simple rows with a gap between each. Nothing touches, so nothing is connected yet."],
+            heading: "Before: the topology + dimensioning start",
+            notes: [
+              "A bubble diagram settles roughly who sits near whom, then a slice-and-dice partition turns that into real rectangles that exactly tile the plot -- every room gets a real, non-overlapping, boundary-respecting share, and this program asks for more typical-size area than the plot actually has, so every room's share comes out smaller than typical (never below its own minimum) instead of spilling past the boundary the way a shelf pack would have.",
+            ],
             svg: startSvg,
           },
           {
             heading: "After: what the placement search settled on",
-            notes: ["The search may move, turn and shrink rooms (never below each room's own minimum), but it may never delete one -- so a program bigger than the lot stays bigger than the lot."],
+            notes: ["The search may move, turn and resize rooms (never below each room's own minimum), but it may never delete one -- so a program this tight for its lot stays tight after the search too."],
             svg: resultSvg,
           },
         ]),
       );
 
       console.log("Wrote", path);
-      // The whole point of this scenario: it does not fit before or
-      // after the search. If either of these ever comes back under 100%,
-      // the room program changed -- not a passing/failing generator.
-      expect(startCoverage).toBeGreaterThan(1);
-      expect(resultCoverage).toBeGreaterThan(1);
+      // This scenario is deliberately tight, not infeasible: it still
+      // fits at every room's own minimum size (the same ground truth
+      // `scenarios.evaluator.ts`'s own `isFeasible` is built on) --
+      // that's what makes "every room's typical-size share shrinks, but
+      // nothing goes below its floor" a real, checkable claim rather than
+      // a foregone conclusion. If this ever comes back false, the room
+      // program or plot changed enough that a different one should be
+      // chosen for this illustration.
+      expect(isFeasible(plotTemplate, program)).toBe(true);
+      // The whole point: naive typical sizing genuinely doesn't fit...
+      expect(typicalAreaTotal).toBeGreaterThan(plot.width * plot.depth);
+      // ...so the partition visibly squeezes every room below typical...
+      expect(squeezeRatio).toBeLessThan(0.9);
+      // ...while never squeezing any single room below its own minimum,
+      // which is the one floor this stage promises to respect whenever
+      // the plot has enough total area to honour it (it does here).
+      for (const b of boxes) expect(b.width * b.height).toBeGreaterThanOrEqual(b.minWidth * b.minHeight - 1e-6);
     },
     30_000,
   );
