@@ -401,11 +401,10 @@ export function collectFindings(
   passableOf: (roomType: string) => boolean,
   tierOf: (roomType: string) => PrivacyTier | undefined,
   auxiliaryOf: (roomType: string) => boolean,
-  isServiceOf: (roomType: string) => boolean,
   circulationOf: (roomType: string) => boolean,
 ): Findings {
   return {
-    reachability: reachabilityProblems(boxes, storeys, arrows, autoCarve, passableOf, auxiliaryOf, isServiceOf),
+    reachability: reachabilityProblems(boxes, storeys, arrows, autoCarve, passableOf, auxiliaryOf, tierOf),
     adjacency: checkAdjacency(boxes, storeys, arrows, autoCarve),
     tier: tierViolations(boxes, storeys, arrows, autoCarve, tierOf),
     stairConnection: stairConnectionProblems(boxes, storeys, arrows, autoCarve, circulationOf),
@@ -450,10 +449,9 @@ export function scoreCandidate(
   passableOf: (roomType: string) => boolean,
   tierOf: (roomType: string) => PrivacyTier | undefined,
   auxiliaryOf: (roomType: string) => boolean,
-  isServiceOf: (roomType: string) => boolean,
   circulationOf: (roomType: string) => boolean,
 ): Score {
-  const findings = collectFindings(boxes, storeys, arrows, autoCarve, passableOf, tierOf, auxiliaryOf, isServiceOf, circulationOf);
+  const findings = collectFindings(boxes, storeys, arrows, autoCarve, passableOf, tierOf, auxiliaryOf, circulationOf);
   const unmetAdjacency = findings.adjacency.filter((r) => !r.ok);
   const hardProblems =
     findings.tier.length +

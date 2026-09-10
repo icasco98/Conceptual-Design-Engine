@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { carveWith, displayShapes, releaseCarve, shapeStillUsable, subtractKeepLargest } from "./carve";
 import { arrowSegment, liveWallPoint, nearestWallPoint, suggestArrows } from "./arrows";
-import { actorRoute, arrowIsLive, buildCirculationGraph, liveArrowIds, minHopCount, outOfBounds, reachabilityProblems, routeLength, sharedSegments, syncFrozenArrowPoints } from "./circulation";
+import { actorRoute, arrowIsLive, buildCirculationGraph, levelTouchData, liveArrowIds, minHopCount, outOfBounds, reachabilityProblems, routeLength, sharedSegments, syncFrozenArrowPoints } from "./circulation";
 import { buildTouchGraph, touchingEdges } from "./doors";
 import { footprintRings } from "./footprint";
 import { clampDrawnRect, clampGroup, isOutsidePlot, limitGrowth, limitPointGrowth, settleInPlot, shiftInside } from "./plot";
@@ -13,7 +13,7 @@ import { isOpenToBelow, liveBoxes, nearestNeighborPoint, snapToGrid, snapToNearb
 import { touchDelta, touchSelected, polyGap } from "./touch";
 import type { Arrow, Box, Plot, Point, Poly } from "./types";
 import { SAMPLE_STOREYS, sampleArrows, sampleBoxes } from "../sample";
-import { auxiliaryOf, circulationOf, isServiceOf, passableOf, tierOf, zoneOf } from "../rooms";
+import { auxiliaryOf, circulationOf, passableOf, tierOf, zoneOf } from "../rooms";
 
 function box(partial: Partial<Box> & { id: string; left: number; top: number; width: number; height: number }): Box {
   return {
@@ -1050,29 +1050,39 @@ describe("circulation: a route is the shortest walk of real doors", () => {
       expect(segments[segments.length - 1].pts.at(-1)).toEqual(centerOf(rectOf(dining)));
     });
 
-    it("routes from the garage to the dining room through the entry and living room -- the only doored way there", () => {
-      // Kitchen touches a shorter path to the Dining Room geometrically,
-      // but no door was placed on that shared wall -- so the honest
-      // route is the longer one through Entry and Living Room.
+    it("routes from the garage to the dining room through the shared hallway -- the only doored way there", () => {
+      // Garage and Dining Room don't touch at all in this house; the
+      // only real route between them runs through the Hallway spine,
+      // which both are doored onto directly.
       const { segments, broken } = actorRoute(graph, boxes, [byName("Garage").id, byName("Dining Room").id]);
       expect(broken).toHaveLength(0);
       expect(segments).toHaveLength(1);
       expect(segments[0].level).toBe(0);
-      const entryCentre = centerOf(rectOf(byName("Entry")));
-      expect(segments[0].pts.some((p) => p[0] === entryCentre[0] && p[1] === entryCentre[1])).toBe(true);
+      const hallwayCentre = centerOf(rectOf(byName("Hallway")));
+      expect(segments[0].pts.some((p) => p[0] === hallwayCentre[0] && p[1] === hallwayCentre[1])).toBe(true);
     });
 
-    it("finds no direct route between the kitchen and the dining room -- they touch, but no door was placed on that wall", () => {
+    it("finds a direct route between the kitchen and the dining room -- a real, required door", () => {
       const kitchen = byName("Kitchen");
       const dining = byName("Dining Room");
-      expect((graph.get(kitchen.id) ?? []).some((e) => e.to === dining.id)).toBe(false);
-      // The honest long way still exists, through the doors that are
-      // actually there -- this is not a broken leg, just a longer one.
+      expect((graph.get(kitchen.id) ?? []).some((e) => e.to === dining.id)).toBe(true);
       const { segments, broken } = actorRoute(graph, boxes, [kitchen.id, dining.id]);
       expect(broken).toHaveLength(0);
       expect(segments).toHaveLength(1);
-      const livingCentre = centerOf(rectOf(byName("Living Room")));
-      expect(segments[0].pts.some((p) => p[0] === livingCentre[0] && p[1] === livingCentre[1])).toBe(true);
+      // Direct: room centre, door, room centre -- nothing else between.
+      expect(segments[0].pts).toHaveLength(3);
+    });
+
+    it("keeps a diwaniya guest's own door apart from the household's front door -- never physically adjacent to Entry", () => {
+      const { touchGraph } = levelTouchData(boxes, 0, false);
+      const diwaniya = byName("Diwaniya");
+      const entry = byName("Entry");
+      expect((touchGraph.get(diwaniya.id) ?? []).some((e) => e.to === entry.id)).toBe(false);
+    });
+
+    it("scores the sample house with zero hard problems", () => {
+      const score = scoreCandidate(boxes, SAMPLE_STOREYS, arrows, false, passableOf, tierOf, auxiliaryOf, circulationOf);
+      expect(score.hardProblems).toBe(0);
     });
   });
 });
@@ -1212,7 +1222,7 @@ describe("reachabilityProblems: every room reached from some exterior door, with
       { id: "d1", level: 0, hostId: "entry", kind: "interior", side: 1, t: 0.5, dir: 1 },
       { id: "d2", level: 0, hostId: "hall", kind: "interior", side: 1, t: 0.5, dir: 1 },
     ];
-    expect(reachabilityProblems([entry, hall, bed], 1, arrows, false, passableOf, auxiliaryOf, isServiceOf)).toEqual([]);
+    expect(reachabilityProblems([entry, hall, bed], 1, arrows, false, passableOf, auxiliaryOf, tierOf)).toEqual([]);
   });
 
   it("names the non-passable room that stands in the way, when that is the only route", () => {
@@ -1226,7 +1236,7 @@ describe("reachabilityProblems: every room reached from some exterior door, with
       { id: "d1", level: 0, hostId: "entry", kind: "interior", side: 1, t: 0.5, dir: 1 },
       { id: "d2", level: 0, hostId: "garage", kind: "interior", side: 1, t: 0.5, dir: 1 },
     ];
-    const problems = reachabilityProblems([entry, garage, bed], 1, arrows, false, passableOf, auxiliaryOf, isServiceOf);
+    const problems = reachabilityProblems([entry, garage, bed], 1, arrows, false, passableOf, auxiliaryOf, tierOf);
     // The garage itself is reached (entry can walk into it); only the
     // bedroom beyond it, which nothing else reaches, is a problem.
     expect(problems).toEqual([{ roomId: "bed", kind: "through_room", viaIds: ["garage"], level: 0 }]);
@@ -1236,7 +1246,7 @@ describe("reachabilityProblems: every room reached from some exterior door, with
     const entry = box({ id: "entry", left: 0, top: 0, width: 4, height: 4, roomType: "entry" });
     const isolated = box({ id: "isolated", left: 20, top: 20, width: 4, height: 4, roomType: "bedroom" });
     const arrows: Arrow[] = [{ id: "ext", level: 0, hostId: "entry", kind: "exterior-main", side: 3, t: 0.5, dir: 1 }];
-    const problems = reachabilityProblems([entry, isolated], 1, arrows, false, passableOf, auxiliaryOf, isServiceOf);
+    const problems = reachabilityProblems([entry, isolated], 1, arrows, false, passableOf, auxiliaryOf, tierOf);
     expect(problems).toEqual([{ roomId: "isolated", kind: "unreachable", viaIds: [], level: 0 }]);
   });
 
@@ -1254,7 +1264,7 @@ describe("reachabilityProblems: every room reached from some exterior door, with
       { id: "extSide", level: 0, hostId: "diwaniya", kind: "exterior-side", side: 3, t: 0.5, dir: 1 },
       { id: "d2", level: 0, hostId: "diwaniya", kind: "interior", side: 1, t: 0.5, dir: 1 },
     ];
-    const problems = reachabilityProblems([entry, hall, diwaniya, driver], 1, arrows, false, passableOf, auxiliaryOf, isServiceOf);
+    const problems = reachabilityProblems([entry, hall, diwaniya, driver], 1, arrows, false, passableOf, auxiliaryOf, tierOf);
     // Nothing is unreachable: the driver room is reached via the
     // diwaniya's own door, and the diwaniya itself is a root, so it is
     // never reported even though it is not passable.
@@ -1270,7 +1280,7 @@ describe("reachabilityProblems: every room reached from some exterior door, with
       { id: "d1", level: 0, hostId: "entry", kind: "interior", side: 1, t: 0.5, dir: 1 },
       { id: "d2", level: 0, hostId: "bed", kind: "interior", side: 1, t: 0.5, dir: 1 },
     ];
-    const problems = reachabilityProblems([entry, bed, ensuite], 1, arrows, false, passableOf, auxiliaryOf, isServiceOf);
+    const problems = reachabilityProblems([entry, bed, ensuite], 1, arrows, false, passableOf, auxiliaryOf, tierOf);
     // The bedroom itself is fine (reached from entry); the ensuite, an
     // auxiliary type gated only by a non-Service room, is not reported
     // even though nothing continues walking past the bedroom to it.
@@ -1286,8 +1296,28 @@ describe("reachabilityProblems: every room reached from some exterior door, with
       { id: "d1", level: 0, hostId: "entry", kind: "interior", side: 1, t: 0.5, dir: 1 },
       { id: "d2", level: 0, hostId: "garage", kind: "interior", side: 1, t: 0.5, dir: 1 },
     ];
-    const problems = reachabilityProblems([entry, garage, bath], 1, arrows, false, passableOf, auxiliaryOf, isServiceOf);
+    const problems = reachabilityProblems([entry, garage, bath], 1, arrows, false, passableOf, auxiliaryOf, tierOf);
     expect(problems).toEqual([{ roomId: "bath", kind: "through_room", viaIds: ["garage"], level: 0 }]);
+  });
+
+  it("does not flag a driver's or nanny's bathroom for being Service by zone -- the exemption is keyed on tier, not category", () => {
+    // Driver Room and Nanny Room are Service by zone (zoneOf -- the
+    // schedule's own colour-grouping) but Private by tier: real
+    // bedroom-like rooms, not a utility space a bathroom is merely stuck
+    // behind. A category-based exemption would wrongly flag these two
+    // exactly the way it once wrongly barred household staff from the
+    // kitchen (circulation.ts's own FORBIDDEN) -- this is that same bug,
+    // the other direction.
+    const entry = box({ id: "entry", left: 0, top: 0, width: 4, height: 4, roomType: "entry" });
+    const driver = box({ id: "driver", left: 4, top: 0, width: 4, height: 4, roomType: "driver_room" });
+    const driverBath = box({ id: "driverBath", left: 8, top: 0, width: 2, height: 2, roomType: "driver_bathroom" });
+    const arrows: Arrow[] = [
+      { id: "ext", level: 0, hostId: "entry", kind: "exterior-main", side: 3, t: 0.5, dir: 1 },
+      { id: "d1", level: 0, hostId: "entry", kind: "interior", side: 1, t: 0.5, dir: 1 },
+      { id: "d2", level: 0, hostId: "driver", kind: "interior", side: 1, t: 0.5, dir: 1 },
+    ];
+    const problems = reachabilityProblems([entry, driver, driverBath], 1, arrows, false, passableOf, auxiliaryOf, tierOf);
+    expect(problems).toEqual([]);
   });
 });
 
@@ -1487,7 +1517,7 @@ describe("collectFindings: the one call that ties all three checks together", ()
     const bed = box({ id: "bed", left: 4, top: 0, width: 4, height: 4, roomType: "bedroom" });
     const ext: Arrow = { id: "ext", level: 0, hostId: "entry", kind: "exterior-main", side: 3, t: 0.5, dir: 1 };
     const door: Arrow = { id: "d", level: 0, hostId: "entry", kind: "interior", side: 1, t: 0.5, dir: 1 };
-    const findings = collectFindings([entry, bed], 1, [ext, door], false, passableOf, tierOf, auxiliaryOf, isServiceOf, circulationOf);
+    const findings = collectFindings([entry, bed], 1, [ext, door], false, passableOf, tierOf, auxiliaryOf, circulationOf);
     // Same door, evaluated three different ways: it does connect the
     // household to the entry (no reachability problem), it is not a
     // room-type pair the adjacency table has an opinion on, and it does
@@ -1525,7 +1555,7 @@ describe("stairConnectionProblems: a stair should open onto circulation, not a s
 
 describe("scoreCandidate and compareScores: hard problems always decide first", () => {
   const score = (boxes: Box[], arrows: Arrow[] = []) =>
-    scoreCandidate(boxes, 1, arrows, false, passableOf, tierOf, auxiliaryOf, isServiceOf, circulationOf);
+    scoreCandidate(boxes, 1, arrows, false, passableOf, tierOf, auxiliaryOf, circulationOf);
 
   it("scores a genuinely clean candidate 0 and 0", () => {
     const entry = box({ id: "entry", left: 0, top: 0, width: 4, height: 4, roomType: "entry" });

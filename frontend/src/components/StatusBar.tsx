@@ -18,7 +18,7 @@ import { outsidePlot } from "../geometry/plot";
 import { polyArea } from "../geometry/poly";
 import { adjacencySeverity, collectFindings, TIER_ORDER, type AdjacencyStatus, type StairConnectionProblem, type TierViolation } from "../geometry/relationships";
 import { liveBoxes } from "../geometry/snap";
-import { auxiliaryOf, circulationOf, floorLabel, isServiceOf, passableOf, roomTypeInfo, tierOf } from "../rooms";
+import { auxiliaryOf, circulationOf, floorLabel, passableOf, roomTypeInfo, tierOf } from "../rooms";
 import type { Box } from "../geometry/types";
 import { IconFootprints, IconTick, IconWarn } from "./icons";
 import { useStore } from "../state/store";
@@ -164,7 +164,7 @@ export function StatusBar() {
   // order the four checks happened to produce them in.
   const { privacyProblems, privacyRecommendations } = useMemo(() => {
     const boxesById = new Map(boxes.map((b) => [b.id, b]));
-    const findings = collectFindings(boxes, storeys, arrows, autoCarve, passableOf, tierOf, auxiliaryOf, isServiceOf, circulationOf);
+    const findings = collectFindings(boxes, storeys, arrows, autoCarve, passableOf, tierOf, auxiliaryOf, circulationOf);
     const problems = [
       ...tierFindings(findings.tier, boxesById),
       ...reachabilityFindings(findings.reachability, boxesById),

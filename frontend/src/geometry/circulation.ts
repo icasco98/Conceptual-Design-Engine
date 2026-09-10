@@ -61,7 +61,7 @@ import { buildTouchGraph, type Touch } from "./doors";
 import { pointOnPolyBoundary } from "./poly";
 import { centerOf, rectOf } from "./rect";
 import { liveBoxes } from "./snap";
-import type { ActorRole, Arrow, Box, Point, Poly } from "./types";
+import type { ActorRole, Arrow, Box, Point, Poly, PrivacyTier } from "./types";
 
 const TOUCH_TOL_M = 0.04;
 /** How close a placed door must sit to a wall's own run to count as
@@ -509,17 +509,27 @@ export interface ReachabilityProblem {
  *
  * One exception, and it is narrow on purpose: an `auxiliaryOf` room
  * (rooms.ts -- a bathroom, a closet) reached only through rooms that are
- * *not* Service (`isServiceOf`) is not reported as `through_room` at all.
- * That combination -- an ensuite bathroom whose only door is its own
- * bedroom's -- is not a defect, it is what an attached bathroom or closet
- * is supposed to look like, and flagging it on every house with one would
- * drown out the case this check actually exists to catch. The exception
- * does not extend to a Service blocker: a bathroom reached only through a
- * garage is still exactly the "walking through the wrong room" problem,
- * whatever the bathroom's own type says. An auxiliary room with *no* door
- * to anything at all is still reported as `unreachable` -- this narrows
- * one specific false alarm, it does not exempt auxiliary rooms from the
- * check altogether. */
+ * themselves part of the privacy gradient (`tierOf` returns something,
+ * not `undefined`) is not reported as `through_room` at all. That
+ * combination -- an ensuite bathroom whose only door is its own
+ * bedroom's, or its own driver's/nanny's room's -- is not a defect, it is
+ * what an attached bathroom or closet is supposed to look like, and
+ * flagging it on every house with one would drown out the case this
+ * check actually exists to catch. This is deliberately keyed on `tier`,
+ * not `zoneOf`'s Service category: Driver Room and Nanny Room are
+ * Service by zone (for the schedule's own colour-grouping) but Private by
+ * tier -- real bedroom-like rooms a bathroom can legitimately belong to,
+ * same as any other bedroom, not a utility space a bathroom is merely
+ * stuck behind. Using category here would misjudge them exactly the way
+ * `circulation.ts`'s own `FORBIDDEN` once misjudged the kitchen. A pure
+ * utility space -- garage, laundry, storage -- has no tier at all
+ * (rooms.ts leaves it `undefined`), which is what actually marks it as
+ * "just in the way": a bathroom reached only through one of those is
+ * still exactly the "walking through the wrong room" problem, whatever
+ * the bathroom's own type says. An auxiliary room with *no* door to
+ * anything at all is still reported as `unreachable` -- this narrows one
+ * specific false alarm, it does not exempt auxiliary rooms from the check
+ * altogether. */
 export function reachabilityProblems(
   boxes: Box[],
   storeys: number,
@@ -527,7 +537,7 @@ export function reachabilityProblems(
   autoCarve: boolean,
   passableOf: (roomType: string) => boolean,
   auxiliaryOf: (roomType: string) => boolean,
-  isServiceOf: (roomType: string) => boolean,
+  tierOf: (roomType: string) => PrivacyTier | undefined,
 ): ReachabilityProblem[] {
   const graph = buildCirculationGraph(boxes, storeys, arrows, autoCarve);
   const byId = new Map(boxes.map((b) => [b.id, b]));
@@ -556,7 +566,7 @@ export function reachabilityProblems(
         return !!nb && !roots.has(id) && !passableOf(nb.roomType);
       });
       if (neighborIds.length && blockers.length) {
-        const attachedToItsOwner = auxiliaryOf(b.roomType) && blockers.every((id) => !isServiceOf(byId.get(id)!.roomType));
+        const attachedToItsOwner = auxiliaryOf(b.roomType) && blockers.every((id) => tierOf(byId.get(id)!.roomType) !== undefined);
         if (attachedToItsOwner) continue;
         problems.push({ roomId: b.id, kind: "through_room", viaIds: blockers.slice(0, 2), level });
       } else {

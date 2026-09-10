@@ -51,12 +51,13 @@ interface RoomTypeInfo {
    * independent stop in circulation -- a bathroom, a closet. Used only
    * by `reachabilityProblems`: an auxiliary room reached solely through
    * one other room is not a "through_room" problem *provided* that other
-   * room isn't itself a Service room (`isServiceOf`) -- a bathroom off a
-   * bedroom is a normal suite; a bathroom off a garage is still worth
-   * flagging. Unset (false) for everything else, including a bedroom or
-   * a kitchen: those are real destinations, and being reachable only
-   * through one specific other room is exactly the problem this check
-   * exists to catch for them. */
+   * room has a `tier` of its own (public, semi-public or private) -- a
+   * bathroom off a bedroom, or off a driver's or nanny's room, is a
+   * normal suite; a bathroom off a garage or laundry (no `tier` at all)
+   * is still worth flagging. Unset (false) for everything else, including
+   * a bedroom or a kitchen: those are real destinations, and being
+   * reachable only through one specific other room is exactly the
+   * problem this check exists to catch for them. */
   auxiliary?: boolean;
   /** A dedicated movement space -- Entry, Hallway, Mudroom, Stair --
    * rather than a destination room that merely happens to be walkable
@@ -159,12 +160,4 @@ export function auxiliaryOf(roomType: string): boolean {
 
 export function circulationOf(roomType: string): boolean {
   return !!roomTypeInfo(roomType).circulation;
-}
-
-/** Service-category, for `reachabilityProblems`'s own purpose: whether a
- * room legitimately "owns" an auxiliary room it gates, or is just a
- * utility space that happens to be in the way. Reuses `zone` rather than
- * adding a third column that would just restate it. */
-export function isServiceOf(roomType: string): boolean {
-  return zoneOf(roomType) === "category_c";
 }

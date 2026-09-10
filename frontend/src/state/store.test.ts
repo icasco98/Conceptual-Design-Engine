@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_PLOT } from "../sample";
 import type { SavedProject } from "../api/types";
 import { polyArea } from "../geometry/poly";
+import type { Box, Point } from "../geometry/types";
 import { migrateLayout, useStore } from "./store";
 
 beforeEach(() => {
@@ -106,9 +107,28 @@ describe("deleting a zone cleans up after itself", () => {
 });
 
 describe("convertToRect: a polygon reverts to a rectangle of the same area", () => {
+  // The sample house itself has no polygon-shaped room any more (every
+  // room in it is a plain rect, deliberately, so its geometry is exactly
+  // what the room-relationship checks say it is) -- so this generic
+  // geometry feature gets its own fixture, a chamfered pentagon (one
+  // corner of a square cut off) turned into a real box via `updateBox`,
+  // rather than depending on which room the current sample happens to
+  // give a fancy shape.
+  const PENTAGON: Point[] = [
+    [0, 0],
+    [0.7, 0],
+    [1, 0.3],
+    [1, 1],
+    [0, 1],
+  ];
+  function polygonFixture(): Box {
+    const garage = useStore.getState().boxes.find((b) => b.name === "Garage")!;
+    useStore.getState().updateBox(garage.id, { shape: "polygon", points: PENTAGON });
+    return useStore.getState().boxes.find((b) => b.id === garage.id)!;
+  }
+
   it("matches the polygon's own area, not its (larger) bounding box", () => {
-    const before = useStore.getState().boxes.find((b) => b.name === "Diwaniya")!;
-    expect(before.shape).toBe("polygon");
+    const before = polygonFixture();
     const expectedArea = polyArea(before.points!) * before.width * before.height;
 
     useStore.getState().convertToRect(before.id);
@@ -123,7 +143,7 @@ describe("convertToRect: a polygon reverts to a rectangle of the same area", () 
   });
 
   it("keeps the same centre and the bounding box's own aspect ratio", () => {
-    const before = useStore.getState().boxes.find((b) => b.name === "Diwaniya")!;
+    const before = polygonFixture();
     const beforeCentre = [before.left + before.width / 2, before.top + before.height / 2];
     const beforeRatio = before.width / before.height;
 
@@ -136,7 +156,7 @@ describe("convertToRect: a polygon reverts to a rectangle of the same area", () 
   });
 
   it("is undoable", () => {
-    const before = useStore.getState().boxes.find((b) => b.name === "Diwaniya")!;
+    const before = polygonFixture();
     useStore.getState().convertToRect(before.id);
     useStore.getState().undo();
     const restored = useStore.getState().boxes.find((b) => b.id === before.id)!;
@@ -145,7 +165,7 @@ describe("convertToRect: a polygon reverts to a rectangle of the same area", () 
   });
 
   it("does nothing to a zone that is already a rectangle", () => {
-    const before = useStore.getState().boxes.find((b) => b.name === "Garage")!;
+    const before = useStore.getState().boxes.find((b) => b.name === "Kitchen")!;
     expect(before.shape).toBe("rect");
     useStore.getState().convertToRect(before.id);
     const after = useStore.getState().boxes.find((b) => b.id === before.id)!;

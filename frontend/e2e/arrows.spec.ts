@@ -16,10 +16,10 @@ test.describe("door arrows: two-way, and flagged once a carve takes their wall",
     const before = page.locator(".plan-svg .arrow.stale");
     await expect(before).toHaveCount(0);
 
-    // .last(): the rotated Study's own side door -- alone on its own
-    // wall, away from the cluster of doors around the entry and clear of
-    // the tool rail at the plan's left edge, so a carve centred on it
-    // never reaches a neighbour by accident.
+    // .last(): the Garage's own exterior door -- alone on its own wall
+    // (nothing sits south of the Garage), away from the cluster of doors
+    // around the entry, so a carve centred on it never reaches a
+    // neighbour by accident.
     const targetArrow = page.locator(".plan-svg .arrow.exterior-side").last();
     const arrowBox = await targetArrow.boundingBox();
     if (!arrowBox) throw new Error("no arrow bounding box");

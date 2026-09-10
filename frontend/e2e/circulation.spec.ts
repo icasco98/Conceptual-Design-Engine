@@ -31,11 +31,12 @@ test.describe("circulation: recording a route end to end", () => {
     await page.click(".actors-pane >> text=+ Add actor");
     const row = page.locator(".actor-row").first();
     await row.getByText("Record route").click();
-    // Closet is roomType "closet" -> category_a (private): a caterer has
-    // no business there.
-    for (const name of ["Garage", "Closet"]) {
-      await page.locator(`.room-label:text-is("${name}")`).first().click({ force: true });
-    }
+    await page.locator(`.room-label:text-is("Garage")`).first().click({ force: true });
+    // Office (level 1) is roomType "office" -> category_a (private): a
+    // caterer has no business there. Recording a route across floors is
+    // itself worth confirming works, not just the flag it produces.
+    await page.getByText("Level 1", { exact: true }).click();
+    await page.locator(`.room-label:text-is("Office")`).first().click({ force: true });
     await row.getByText("Done recording").click();
     await expect(row.locator(".actor-flag")).toBeVisible();
   });
