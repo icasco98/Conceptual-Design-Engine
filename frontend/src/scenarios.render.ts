@@ -16,9 +16,10 @@
  * carry several diagrams and their captions side by side, which a single
  * `.svg` cannot. Every visual this mode produces goes through it.
  */
+import { arrowSegment } from "./geometry/arrows";
 import { polyOfBox } from "./geometry/poly";
 import { isOutsidePlot } from "./geometry/plot";
-import type { Box, Plot } from "./geometry/types";
+import type { Arrow, Box, Plot } from "./geometry/types";
 
 const PADDING_M = 2;
 const PX_PER_M = 14;
@@ -44,8 +45,19 @@ export interface RenderCaption {
  * flags (even partly) is drawn in the warning color, exactly the same
  * fact the status bar's own "Outside the plot" line reports, so this
  * never disagrees with what the app itself would say about the same
- * arrangement. */
-export function renderScenarioSVG(plot: Plot, boxes: Box[], caption: RenderCaption): string {
+ * arrangement.
+ *
+ * `arrows` draws the doors, if any are passed. Most of what this tool
+ * checks is *about* doors -- whether one exists, whether it fits, whether
+ * it opens somewhere it should not -- and a picture of the rooms alone
+ * cannot show any of that: two plans that differ only in where a door
+ * sits are the same picture without them. Each door is drawn at
+ * `arrowSegment`'s own position, the same one `circulation.ts` reads to
+ * decide whether it is a real connection, so a door drawn here is a door
+ * the checks actually see. An exterior door is drawn in its own colour:
+ * the difference between a room's own street entrance and an interior
+ * door is exactly the difference several of these rules turn on. */
+export function renderScenarioSVG(plot: Plot, boxes: Box[], caption: RenderCaption, arrows: Arrow[] = []): string {
   const minX = -PADDING_M;
   const minY = -PADDING_M;
   const maxX = plot.width + PADDING_M;
@@ -75,6 +87,20 @@ export function renderScenarioSVG(plot: Plot, boxes: Box[], caption: RenderCapti
     })
     .join("\n    ");
 
+  const byId = new Map(boxes.map((b) => [b.id, b]));
+  const doors = arrows
+    .flatMap((arrow) => {
+      const host = byId.get(arrow.hostId);
+      if (!host) return [];
+      const [tail, head] = arrowSegment(host, arrow).map((p) => toPx(p));
+      const exterior = arrow.kind === "exterior-main" || arrow.kind === "exterior-side";
+      const stroke = exterior ? "#b35c00" : "#1f6f4a";
+      return [
+        `<line x1="${tail[0].toFixed(1)}" y1="${tail[1].toFixed(1)}" x2="${head[0].toFixed(1)}" y2="${head[1].toFixed(1)}" stroke="${stroke}" stroke-width="3" stroke-linecap="round" />`,
+      ];
+    })
+    .join("\n    ");
+
   const captionLines = [`<text x="12" y="18" font-size="14" font-weight="600" font-family="sans-serif" fill="#1a1a1a">${esc(caption.title)}</text>`]
     .concat(caption.lines.map((line, i) => `<text x="12" y="${34 + i * 16}" font-size="12" font-family="sans-serif" fill="#4a4a4a">${esc(line)}</text>`))
     .join("\n  ");
@@ -84,6 +110,7 @@ export function renderScenarioSVG(plot: Plot, boxes: Box[], caption: RenderCapti
   ${captionLines}
   ${plotRect}
   ${rooms}
+  ${doors}
 </svg>`;
 }
 

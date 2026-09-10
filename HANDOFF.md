@@ -361,3 +361,124 @@ first describe block).
   size, a tightened zone rotating to 39° with its swept corner landing on
   18.00 rather than through it, and switching the boundary on under a
   house that does not fit moving nothing. No console errors.
+
+## The rule set after batch 001 (September 2026)
+
+Ten rules were added to the scoring layer in one autonomous batch of five
+passes, each pass proposing, implementing, regression-checking, re-tuning
+and committing before the next began. `reports/batch-001.html` is the
+write-up for the owner; it opens by double-click and needs nothing
+installed. What follows is the part a developer needs.
+
+**All ten are read-only diagnostics in the generator/scoring layer.**
+Nothing in `Canvas2D.tsx` or `store.ts` changed behaviour. The rules
+report; they never move, resize or connect anything. Same promise as
+every check that was already there.
+
+**Hard problems added:** a WC opening straight onto a kitchen or dining
+room (`sanitaryDoorProblems`); a door drawn across less shared wall than a
+door leaf needs (`undersizedDoorways`); two doorways cut into one wall too
+close to both exist (`doorClearanceProblems`); a sleeping room with no
+exterior wall to escape through (`windowlessSleepingRooms`, habitability.ts);
+a diwaniya with no street door of its own (`ownEntranceProblems`).
+
+**Soft recommendations added:** garage-to-kitchen easy access and a guest
+WC near a diwaniya or reception (both `RelationRow`s); a habitable room
+facing outside on only one side (`singleAspectRooms`); a habitable room
+stretched past 1:3 (`awkwardProportions`); an upper-floor wet room not
+sitting over a wet room below (`unstackedWetRooms`, efficiency.ts).
+
+**One candidate was reverted, and the reason generalises.** The
+escape-window rule was first written against every *habitable* room, on
+the light-and-ventilation requirement. It fired on the sample house's own
+Dining Room -- correctly, in that the room genuinely has zero exterior
+wall, and wrongly, because that code has an explicit exception: an
+interior room may borrow light and air from an adjoining room through a
+large enough opening, which is how an open-plan dining room is normally
+justified. **This tool models solid walls and doors and nothing in
+between**, so it cannot tell a wide cased opening from masonry. Any future
+rule whose real-world version has a "unless it opens onto the next room"
+exception has the same problem and should be narrowed the same way,
+rather than approximated.
+
+**Two new files.** `geometry/habitability.ts` is whether a room can be
+lived in -- deliberately not in efficiency.ts, which means "is this
+wasting money" and already carries one reluctant exception in
+`deadEndHallways`; a second would stop that file meaning anything.
+`geometry/rules.test.ts` holds this batch's tests, since geometry.test.ts
+is long and organized around the original checks.
+
+**`RoomFacts` replaced the four loose predicates.** `collectFindings`,
+`scoreCandidate` and `generateLayout` take one object (`ROOM_FACTS`,
+built in rooms.ts) instead of `passableOf, tierOf, auxiliaryOf,
+circulationOf` positionally. Each individual check still takes only what
+it reads and is still unit-tested that way -- the bundle is only for the
+aggregating entry points, which were gaining a positional argument (and
+therefore an edit to every caller in the tool) for every new room-type
+fact. Six facts have been added since: `sanitary`, `food`, `sleeping`,
+`habitable`, `wet`, `ownEntrance`.
+
+**Two guardrails now exist and are worth keeping.**
+`scenarios.baseline.json` freezes every scenario's post-search hard-problem
+count and `scenarios.baseline.test.ts` fails if any of them rises. Only
+hard problems are pinned: soft recommendations carry continuous
+magnitudes that legitimately drift whenever the search's tuning changes,
+so pinning them would fail for reasons that are not regressions.
+Rewriting the file is deliberate (`UPDATE_SCENARIO_BASELINE=1`) and is for
+when an accepted rule legitimately changes what a scenario *should*
+score, never to turn a red run green. It was rewritten exactly once in
+this batch, for the diwaniya rule: 28 of 56 scenarios gained exactly 1,
+and they are exactly the 28 containing a diwaniya. The tempting wrong
+move there was to give `buildScenario` a diwaniya door so the finding
+would vanish; that is editing the evidence.
+
+`scenarios.tuning.json` is the search-tuning record -- the best
+`SearchConfig` found, what it scored, and a log of every run including
+the ones that lost. Train with `RUN_TUNING=1`; it does not run under
+`npm test` because one evaluation is the whole feasible suite. **Vary
+`TUNING_SEED` per run**: `train` starts from `DEFAULT_SEARCH_CONFIG` and
+is deterministic, so reusing a seed re-derives that seed's answer exactly
+(this happened in pass 2 and cost a run). The incumbent is re-measured on
+the current rule set rather than compared against its stored numbers,
+because a config recorded before a rule existed was scored by a rule set
+that could not see it.
+
+**`DEFAULT_SEARCH_CONFIG` was deliberately not changed**, five times over.
+
+## The one thing the next batch should fix
+
+**The search never produces a clean plan, and tuning is not why.** Zero of
+56 scenarios reached zero hard problems, before this batch and after it,
+under every config six training runs found. Mean hard problems moved by
+well under a percent each time.
+
+The cause is mechanical. `buildScenario` shelf-packs rooms with a fixed
+0.3 m gap between every pair, and `generateLayout` improves a plan by
+nudging position, size and rotation by continuous random amounts. Two
+rooms only *connect* when their walls meet within `TOUCH_TOL_M` (4 cm),
+and a continuous random walk essentially never lands on a 4 cm target. So
+rooms almost never touch, `suggestArrows` almost never has a wall to put
+a door on, and nearly every room in nearly every scenario ends
+`unreachable`. That single fact is most of the hard-problem count in the
+whole suite, and it is why nine of the ten new rules -- almost all of them
+about doors -- find nothing there at all despite being correct and tested.
+
+No annealing schedule fixes this. What fixes it is a new *move kind* in
+`generateLayout`'s own repertoire: slide a room until it is flush against
+a chosen neighbour's wall, rather than hoping to land there. `snap.ts`
+already has the machinery (`snapToNearbyNeighbors`, `wallSnapAdjust`) that
+the canvas uses for exactly this when a person drags a zone. Add it as a
+fifth entry in `moveWeights` and the student can tune how often it is
+tried. Do that before adding more rules; the rule set is well ahead of the
+search's ability to satisfy it.
+
+Second, smaller: six of the ten rules are proven by fixture only, because
+`EXAMPLE_PROGRAMS` has no powder room, no second storey and (until the
+search can connect anything) no interior doors. A two-storey program and a
+guest-WC block would let the suite actually exercise them.
+
+**`scenarios.render.ts` now draws doors** (pass an `arrows` array) and
+`scenarioPageHTML` wraps SVGs in a self-contained `.html` file. The bare
+`.svg` output was a real usability bug: the owner could not open the one
+artifact meant to let them check a claim by eye. Every visual this mode
+produces should go through the HTML wrapper.
