@@ -1,33 +1,33 @@
 {
-  "pass": "pass-1",
+  "pass": "pass-2",
   "generations": 30,
   "iterationsPerEval": 150,
-  "seed": 7,
+  "seed": 11,
   "scenarioCount": 56,
   "baseline": {
     "scenarioCount": 56,
-    "meanHardProblems": 21.160714285714285,
-    "meanSoftRecommendations": 19.275927139744606,
+    "meanHardProblems": 21.196428571428573,
+    "meanSoftRecommendations": 18.744385458031804,
     "cleanRate": 0
   },
   "best": {
     "scenarioCount": 56,
-    "meanHardProblems": 21.125,
-    "meanSoftRecommendations": 19.354446737017042,
+    "meanHardProblems": 21.142857142857142,
+    "meanSoftRecommendations": 18.462595021928678,
     "cleanRate": 0
   },
   "config": {
     "tStart": 3,
-    "tEnd": 0.0016909593790590475,
+    "tEnd": 0.002234921774502433,
     "hardProblemWeight": 1000,
-    "stepFloorM": 0.1,
+    "stepFloorM": 0.11722216216256842,
     "stepScaleM": 2.5,
-    "rotFloorDeg": 0.9650683235215882,
-    "rotScaleDeg": 19.914366700614874,
+    "rotFloorDeg": 0.9734221840742976,
+    "rotScaleDeg": 15.654421247685184,
     "moveWeights": {
       "translate": 1,
       "resize": 1,
-      "rotate": 1.0459978732978925,
+      "rotate": 1,
       "swap": 1
     }
   }

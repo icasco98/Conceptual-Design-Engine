@@ -66,6 +66,12 @@ const TUNING_PATH = new URL("./scenarios.tuning.json", import.meta.url);
 
 const GENERATIONS = Number(process.env.TUNING_GENERATIONS ?? 30);
 const ITERATIONS_PER_EVAL = Number(process.env.TUNING_ITERATIONS ?? 150);
+/** Vary this per training run. The seed drives both the hill-climb's own
+ * proposals and every evaluation inside it, so re-running a pass with the
+ * seed it last used re-derives the identical config and learns nothing --
+ * `train` is deterministic by design, starting from the same defaults
+ * every time. The incumbent is re-measured under whatever seed the
+ * current run uses, so the comparison stays like for like regardless. */
 const SEED = Number(process.env.TUNING_SEED ?? 7);
 
 describe("search tuning record", () => {
