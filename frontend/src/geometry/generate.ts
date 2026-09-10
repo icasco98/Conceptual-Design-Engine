@@ -45,6 +45,17 @@
  * strategy, on top of `memo.ts`'s caching of the geometry `scoreCandidate`
  * itself rebuilds.
  *
+ * Doors are part of the fitness function, not a step bolted on before or
+ * after the search: every candidate that survives the cheap filter has
+ * its own doors freshly proposed (`arrows.ts`'s `suggestArrows`, the
+ * storey being searched only) before `scoreCandidate` ever sees it, so
+ * reachability and required-adjacency are real, live signals the search
+ * responds to, the same way a hard problem in any other check is. A
+ * search that scored candidates against one fixed door set could not
+ * tell "this move made a room reachable" from "this move did nothing" --
+ * it would only ever be optimizing position around a circulation picture
+ * that never changes.
+ *
  * The best candidate found (by `compareScores`) is tracked separately
  * from the annealing walk and returned at the end, regardless of where
  * the stochastic walk itself ends up -- standard SA practice, and what
@@ -60,6 +71,7 @@
  * with no change to this search loop, its cheap-reject step, or
  * `withinBoundary` itself.
  */
+import { suggestArrows } from "./arrows";
 import { pointOnPolyBoundary, polyOfBox } from "./poly";
 import { boxesTrulyIntersect } from "./rect";
 import { compareScores, scoreCandidate, type RelationRow, type Score } from "./relationships";
@@ -236,7 +248,24 @@ export function generateLayout(
   const iterations = options.iterations ?? DEFAULT_ITERATIONS;
   const rng = mulberry32(options.seed ?? Date.now());
   const cooling = Math.pow(T_END / T_START, 1 / Math.max(1, iterations));
-  const score = (candidate: Box[]) => scoreCandidate(candidate, storeys, arrows, autoCarve, passableOf, tierOf, auxiliaryOf, circulationOf, rules);
+  // Doors are not a separate, later step -- they're part of what makes a
+  // candidate good or bad (reachability, required adjacency), so every
+  // candidate is scored with its OWN doors, not the doors the arrangement
+  // happened to start with. This storey's arrows are re-suggested fresh
+  // against each candidate's actual geometry (`arrows.ts`'s own
+  // `suggestArrows`, the same one-click "Suggest" a person uses by hand);
+  // every other storey's doors are carried through unchanged. Costs one
+  // extra touch-graph walk per candidate on top of `scoreCandidate`
+  // itself, but a search that can't see whether a move made a room
+  // reachable can't actually improve reachability -- only rearrange
+  // positions around a reachability picture that never changes.
+  const otherLevelArrows = arrows.filter((a) => a.level !== level);
+  const startingLevelArrows = arrows.filter((a) => a.level === level);
+  const score = (candidate: Box[]) => {
+    const suggested = suggestArrows(liveBoxes(candidate, level), startingLevelArrows, level, autoCarve);
+    const candidateArrows = [...otherLevelArrows, ...startingLevelArrows, ...suggested];
+    return scoreCandidate(candidate, storeys, candidateArrows, autoCarve, passableOf, tierOf, auxiliaryOf, circulationOf, rules);
+  };
 
   let current = boxes;
   let currentScore = score(current);

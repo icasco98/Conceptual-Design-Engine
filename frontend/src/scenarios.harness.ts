@@ -3,16 +3,14 @@
  * what happened -- the actual stress test `scenarios.ts`'s building
  * blocks exist for.
  *
- * Doors are not part of what `generateLayout` searches (see its own doc
- * comment -- placement/size/rotation only), so they are added once, with
- * `arrows.ts`'s own `suggestArrows`, after the naive start and again
- * after the search settles -- the same "arrange, then hit Suggest" two
- * steps a person already uses, not something this harness invents. That
- * means the search itself isn't directly rewarded for creating doors; it
- * improves position purely by closing gaps and fixing tier/overlap
- * issues, and reachability tends to follow once rooms actually touch.
- * Worth revisiting (re-deriving doors during the search itself, at real
- * cost) if that proves too coarse in practice.
+ * `generateLayout` now re-suggests doors against every candidate it
+ * considers (see its own doc comment), so the search itself already
+ * responds to reachability, not just gaps and overlaps. This harness
+ * still calls `suggestArrows` once more itself, before and after: once
+ * to score the naive shelf-packed start fairly (it has no doors of its
+ * own yet), and once to hand back a real, persistable door set for
+ * whatever position the search actually settled on -- `generateLayout`
+ * only returns rooms, never the doors it tried along the way.
  */
 import { suggestArrows } from "./geometry/arrows";
 import { generateLayout } from "./geometry/generate";
