@@ -609,3 +609,105 @@ the owner wants eventually is still explicitly not next: it would be a
 viewer for the bubble graph this batch already computes internally and
 discards after dimensioning, better built once the placement pipeline
 itself is more settled.
+
+## Batch 003 (September 2026): what the topology stage still didn't model
+
+Went the other direction from its own predecessor's recommendation
+above, on explicit instruction, not by accident -- ordered to test a
+specific hypothesis about `topology.ts` itself before resuming rule
+work: the bubble stage had no repulsion for `undesired` pairs, no notion
+of the privacy-tier gradient, and the dimensioning stage had no notion
+of which rooms need a real exterior wall. `reports/batch-003.html` is
+the write-up; this is the part a developer needs.
+
+**Diagnosed first** (a one-off tabulation of every `collectFindings`
+category across all 56 scenarios, deleted after use -- not kept as a
+permanent test since `scenarios.report.test.ts` already serves that
+role). Confirmed the hypothesis but did not let it dominate: unmet
+`undesired` adjacency (97 instances/37 scenarios) and tier violations
+(37/29) were real, but reachability (556/56, `through_room` -- a route
+exists only through a non-passable room -- accounting for 433 of those)
+dwarfs both by more than 5x and touches every single scenario. Say this
+plainly to whoever picks this up: **reachability is still the largest
+hard-problem category in the suite, and this batch did not touch it.**
+
+**Three additions to `geometry/topology.ts`, all optional fields on
+`TopologyRoom` (`tier`, `isEntryPoint`, `needsExterior`) populated by
+`scenarios.ts` from the same `rooms.ts` facts every other check already
+reads:** extra repulsion between `undesired`-adjacency instance pairs on
+top of the generic repulsion every pair already got (`buildUndesiredPairs`);
+a privacy-tier bias pulling public-tier rooms toward the entry point and
+pushing private-tier ones away, as a spring proportional to current
+distance; and a boundary-touch repair pass in `dimensionRooms` that
+swaps rectangle *assignments* (never rectangles themselves, so the
+partition's own non-overlap/tiling guarantee is untouched) so a room
+needing a real exterior wall (`rooms.ts`'s `sleeping` fact) preferentially
+lands on a slice that actually touches the plot boundary.
+
+**Windowless sleeping rooms went from 22 instances (13 scenarios) to
+zero, across the whole suite** -- the cleanest single result in the
+batch, and it came from the boundary-repair pass alone.
+
+**Committed as one commit, not three, against the batch's usual
+per-task convention -- deliberately, not from time pressure.** Measured
+in isolation, the undesired-repulsion boost alone (holding the tier bias
+and boundary repair back) makes the suite net *worse* than batch 002
+(mean hard problems 16.92 vs. 16.36): pushing undesired pairs apart
+disrupts the bubble diagram's coherence in ways that cost more in
+reachability than they save in adjacency. Only the full combination of
+all three recovers a real improvement. Landing Task 2 alone would have
+meant either a genuine regression or dishonestly loosening the
+regression baseline to hide one -- so all three were measured, tested
+and committed together, with the commit message saying exactly this. If
+you extend one of these three forces independently in a future batch,
+re-measure the combination, not the one piece in isolation.
+
+**Squarified treemap (Task 5) was not attempted.** Slice-and-dice's
+non-overlap/boundary-fit guarantee holds by construction; a squarified
+variant needs its own version of that argument, and the boundary-repair
+pass added this batch leans directly on the slice-and-dice guarantee for
+its own safety proof. Skipped on purpose rather than risked under time
+pressure -- see the report for the reasoning in full.
+
+**Numbers, `DEFAULT_SEARCH_CONFIG`, 400 iterations, the same per-scenario
+seeds as the regression baseline:**
+
+| | before | after |
+|---|---|---|
+| clean rate (zero hard problems) | 0 of 56 | 2 of 56 |
+| mean hard problems | 16.36 | 14.65 |
+| windowless sleeping rooms, whole suite | 22 | 0 |
+| unmet undesired adjacency, whole suite | 97 | 50 |
+| tier-gradient violations, whole suite | 37 | 33 |
+| reachability findings, whole suite | 556 | 573 |
+| doorway-clearance conflicts, whole suite | 4 | 14 |
+
+Two categories got measurably worse in raw count (reachability,
+doorway clearance) even though the net weighted score improved -- the
+report's own "honest, mixed picture" section says so rather than only
+reporting the net number. Neither was investigated further this batch.
+
+**Regression baseline regenerated** (`UPDATE_SCENARIO_BASELINE=1`): 38 of
+56 improved, 14 regressed (different starting geometry, same random-walk
+explanation as every prior baseline rewrite), 4 unchanged.
+
+**Retrained `scenarios.student.ts`'s `SearchConfig`** (`RUN_TUNING=1`, 40
+generations, 150 iterations/eval, seed 311, labelled `batch-003` in
+`scenarios.tuning.json`) -- beats both the untuned defaults and batch
+002's own stored config re-measured against today's topology. Same as
+every prior pass, `DEFAULT_SEARCH_CONFIG` itself is untouched; the
+record is an input to a future manual adoption decision.
+
+**The next batch should go after reachability, not another topology
+bias.** It is the largest hard-problem category by a wide margin (556,
+then 573 -- essentially flat across this whole batch) and fires in every
+one of the 56 scenarios both before and after this batch's work.
+Nothing in `topology.ts` currently models circulation at all: the bubble
+diagram now pulls related rooms together, pushes conflicting ones apart,
+and biases by privacy tier, but has no concept of a passable-room
+backbone (entry, hallway, mudroom, stair) that has to actually reach
+everything. `through_room` findings (a route exists, but only through a
+non-passable room) are 433 of the 556 -- the single largest reachability
+subtype and a plausible place to start. This is real design work, not a
+sixth task bolted onto this batch; it deserves its own batch, diagnosed
+the same way this one started.
