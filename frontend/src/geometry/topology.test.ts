@@ -68,15 +68,60 @@ describe("layoutBubbles: the topology stage's force-directed bubble diagram", ()
     expect(Number.isFinite(one[0].y)).toBe(true);
   });
 
-  it("only pulls on required/desired rows -- an undesired-only pair behaves like two unconnected rooms", () => {
+  it("gets no attraction from an undesired-only row, only the batch 003 repulsion boost", () => {
     const rooms: TopologyRoom[] = [room({ id: "a", roomType: "bedroom" }), room({ id: "b", roomType: "garage_single", targetAreaM2: 20 })];
     const rules: RelationRow[] = [{ a: "bedroom", b: "garage_single", relation: "undesired" }];
     const withRule = layoutBubbles(rooms, rules);
     const withoutRule = layoutBubbles(rooms, []);
-    // Same starting spiral, same (absent) attraction either way -- an
-    // undesired row that this stage doesn't model at all should produce
-    // exactly the same settle as no row at all.
-    expect(withRule).toEqual(withoutRule);
+    // Batch 002: an undesired row was not modelled at all, so `withRule`
+    // and `withoutRule` settled identically. Batch 003, Task 2, adds real
+    // extra repulsion for it (`buildUndesiredPairs`), which is expected to
+    // change the settle -- so this no longer asserts equality, it asserts
+    // the *direction* of the change: strictly farther apart, never closer,
+    // which is what "repulsion, never attraction" on an undesired row
+    // means in practice.
+    expect(dist(withRule[0], withRule[1])).toBeGreaterThan(dist(withoutRule[0], withoutRule[1]));
+  });
+
+  it("pushes an undesired pair farther apart than an unconnected pair of the same sizes (Task 2, batch 003)", () => {
+    const undesiredRooms: TopologyRoom[] = [
+      room({ id: "a", roomType: "bedroom", targetAreaM2: 12 }),
+      room({ id: "b", roomType: "kitchen", targetAreaM2: 15 }),
+    ];
+    const undesiredRules: RelationRow[] = [{ a: "bedroom", b: "kitchen", relation: "undesired" }];
+    const unconnectedRooms: TopologyRoom[] = [
+      room({ id: "a", roomType: "bedroom", targetAreaM2: 12 }),
+      room({ id: "b", roomType: "office", targetAreaM2: 15 }),
+    ];
+    const undesiredBubbles = layoutBubbles(undesiredRooms, undesiredRules);
+    const unconnectedBubbles = layoutBubbles(unconnectedRooms, []);
+    const undesiredDist = dist(undesiredBubbles[0], undesiredBubbles[1]);
+    const unconnectedDist = dist(unconnectedBubbles[0], unconnectedBubbles[1]);
+    expect(undesiredDist).toBeGreaterThan(unconnectedDist);
+  });
+
+  it("settles a private-tier room farther from the entry than a public-tier one (Task 3, batch 003)", () => {
+    const rooms: TopologyRoom[] = [
+      room({ id: "entry", roomType: "entry", targetAreaM2: 3, minWidth: 1.2, minHeight: 1.2, isEntryPoint: true, tier: "public" }),
+      room({ id: "living", roomType: "living_room", targetAreaM2: 18, tier: "public" }),
+      room({ id: "bedroom", roomType: "bedroom", targetAreaM2: 12, tier: "private" }),
+    ];
+    const bubbles = layoutBubbles(rooms);
+    const byId = new Map(bubbles.map((b) => [b.id, b]));
+    const entry = byId.get("entry")!;
+    const publicDist = dist(entry, byId.get("living")!);
+    const privateDist = dist(entry, byId.get("bedroom")!);
+    expect(privateDist).toBeGreaterThan(publicDist);
+  });
+
+  it("biases nothing when no room declares itself the entry point -- existing callers are unaffected", () => {
+    const rooms: TopologyRoom[] = [
+      room({ id: "a", roomType: "living_room", targetAreaM2: 18, tier: "public" }),
+      room({ id: "b", roomType: "bedroom", targetAreaM2: 12, tier: "private" }),
+    ];
+    const withTiers = layoutBubbles(rooms);
+    const withoutTiers = layoutBubbles(rooms.map((r) => ({ ...r, tier: undefined })));
+    expect(withTiers).toEqual(withoutTiers);
   });
 });
 
@@ -140,6 +185,58 @@ describe("dimensionRooms: the dimensioning stage's area partition", () => {
 
   it("is a no-op on an empty room list", () => {
     expect(topologyLayout([], boundary)).toEqual([]);
+  });
+
+  it("prefers a boundary-touching slice for a room that needs an exterior wall (Task 4, batch 003)", () => {
+    // A 4x3 grid of 12 equal-weight rooms -- enough recursion depth for
+    // slice-and-dice to produce at least one fully interior leaf (touching
+    // none of the plot's own four sides), the case this task exists to
+    // repair. Bubble positions are supplied directly rather than run
+    // through `layoutBubbles`, so the partition this test checks is
+    // exactly reproducible regardless of anything the force simulation
+    // does.
+    const gridBoundary = { left: 0, top: 0, width: 100, height: 100 };
+    const rooms: TopologyRoom[] = Array.from({ length: 12 }, (_, i) => room({ id: `r${i}`, targetAreaM2: 10, minWidth: 2, minHeight: 2 }));
+    const bubbles = rooms.map((r, i) => ({ id: r.id, roomType: r.roomType, x: (i % 4) * 10, y: Math.floor(i / 4) * 10, radius: 1 }));
+
+    const touches = (p: PlacedRoom) =>
+      Math.abs(p.left - gridBoundary.left) < 0.01 ||
+      Math.abs(p.top - gridBoundary.top) < 0.01 ||
+      Math.abs(p.left + p.width - (gridBoundary.left + gridBoundary.width)) < 0.01 ||
+      Math.abs(p.top + p.height - (gridBoundary.top + gridBoundary.height)) < 0.01;
+
+    // Control: nobody needs an exterior wall, so nothing should be swapped
+    // -- find a room the plain area partition left fully interior.
+    const control = dimensionRooms(rooms, bubbles, gridBoundary);
+    const interior = control.find((p) => !touches(p));
+    expect(interior).toBeDefined(); // the grid is built specifically to produce one
+
+    // Same rooms, same bubbles, only that one room now flagged as needing
+    // an exterior wall -- it should end up on a boundary-touching slice
+    // instead, by trading places with some other, non-needing room that
+    // was already on one.
+    const withNeed = rooms.map((r) => (r.id === interior!.id ? { ...r, needsExterior: true } : r));
+    const repaired = dimensionRooms(withNeed, bubbles, gridBoundary);
+    const repairedRoom = repaired.find((p) => p.id === interior!.id)!;
+    expect(touches(repairedRoom)).toBe(true);
+
+    // The repair must never break the partition's own guarantees: still
+    // exactly tiling, still no overlap, whichever rooms ended up where.
+    const total = repaired.reduce((s, p) => s + p.width * p.height, 0);
+    expect(total).toBeCloseTo(gridBoundary.width * gridBoundary.height, 6);
+    for (let i = 0; i < repaired.length; i++) {
+      for (let j = i + 1; j < repaired.length; j++) {
+        expect(rectsOverlap(repaired[i], repaired[j])).toBe(false);
+      }
+    }
+  });
+
+  it("leaves a needing room unmet rather than forcing it when nothing else is available to trade", () => {
+    // A single room, alone with the whole boundary: it already touches
+    // every side there is, so the repair pass has nothing to do and
+    // nothing to report as a failure either.
+    const placed = dimensionRooms([room({ id: "only", needsExterior: true })], [{ id: "only", roomType: "bedroom", x: 0, y: 0, radius: 1 }], boundary);
+    expect(placed).toEqual([{ id: "only", left: boundary.left, top: boundary.top, width: boundary.width, height: boundary.height }]);
   });
 
   it("tiles the boundary exactly -- every rectangle's total area sums to the plot's own", () => {

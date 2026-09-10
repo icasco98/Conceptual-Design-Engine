@@ -26,10 +26,25 @@
  * directed graph layout (Fruchterman & Reingold, 1991) and a textbook
  * slice-and-dice area partition, not a novel algorithm and not a model
  * anyone has to trust rather than read.
+ *
+ * Batch 003 added three more forces/biases the bubble and dimensioning
+ * stages didn't have, after diagnosing (see `reports/batch-003.html`) that
+ * batch 002's own "rooms now touch" fix still left a real, if smaller,
+ * gap between what the topology stage models and what the rule set
+ * actually checks: extra repulsion between `undesired` pairs
+ * (`buildUndesiredPairs`, Task 2 -- the generic repulsion above treats an
+ * undesired pair exactly like any two unrelated rooms), a privacy-tier
+ * bias toward/away from the entry point (`TopologyRoom.tier`/
+ * `isEntryPoint`, Task 3), and a boundary-touch repair pass in
+ * `dimensionRooms` for rooms that need a real exterior wall
+ * (`TopologyRoom.needsExterior`, Task 4). All three are additive and
+ * strictly optional on the `TopologyRoom` shape -- a caller (an existing
+ * test, say) that never sets `tier`, `isEntryPoint` or `needsExterior`
+ * gets exactly batch 002's behaviour back, unchanged.
  */
 import type { RelationRow } from "./relationships";
 import { ROOM_RELATIONSHIPS } from "./relationships";
-import type { Point } from "./types";
+import type { Point, PrivacyTier } from "./types";
 
 /** What either stage needs to know about one room instance -- deliberately
  * not a `Box`: this file works before a room has a real rectangle, and
@@ -46,6 +61,27 @@ export interface TopologyRoom {
   targetAreaM2: number;
   minWidth: number;
   minHeight: number;
+  /** `rooms.ts`'s own `tier` for this instance's room type -- `undefined`
+   * for a type the gradient check exempts (a bathroom, a garage). Read
+   * only by the topology stage's tier-gradient bias (Task 3, batch 003):
+   * public-tier rooms are nudged toward the entry point, private-tier ones
+   * away from it. A caller that never sets this (an existing test
+   * constructing a bare `TopologyRoom`) gets no bias at all, the same as
+   * before this field existed. */
+  tier?: PrivacyTier;
+  /** This is the room the rest of the bubble diagram orients itself
+   * around -- normally the one instance of `entry` a program has. At most
+   * one room should set this; if more than one does, the last one found
+   * wins and nothing crashes over it, but the caller (`scenarios.ts`) only
+   * ever sets it on the actual entry. */
+  isEntryPoint?: boolean;
+  /** Needs a real exterior wall to be a usable room at all -- `rooms.ts`'s
+   * `sleeping` fact (a bedroom, a driver's or nanny's room), handed in by
+   * the caller the same way every other room-type fact reaches this file:
+   * as a plain value on the instance, not a lookup this file performs
+   * itself. Read only by `dimensionRooms`'s boundary-repair pass (Task 4,
+   * batch 003). */
+  needsExterior?: boolean;
 }
 
 /** One room's position and "personal space" after the topology stage --
@@ -91,6 +127,29 @@ function radiusFor(areaM2: number): number {
  * here means the dimensioning stage is rarely fighting the space the
  * topology stage left it. */
 const BUBBLE_PADDING_M = 0.4;
+
+/** How much stronger the repulsion between an `undesired` pair is than
+ * the generic term every pair already gets (Task 2, batch 003) -- e.g.
+ * `2.5` means an undesired pair feels 3.5x a normal pair's separation
+ * force (the generic 1x plus this 2.5x extra), which is enough to reliably
+ * settle them farther apart than an unrelated pair of the same sizes
+ * (`topology.test.ts`'s own test for this) without so overwhelming the
+ * simulation that a genuinely small plot can no longer settle at all --
+ * chosen empirically against that test and the scenario suite (see
+ * `reports/batch-003.html`), not derived from anything physical. */
+const UNDESIRED_REPULSION_BOOST = 2.5;
+
+/** The spring constant for the privacy-tier bias toward/away from the
+ * entry point (Task 3, batch 003) -- multiplied by a room's own current
+ * distance from the entry each iteration, so it scales with how far off a
+ * room already is rather than applying one fixed push regardless of
+ * position. Kept modest relative to `BUBBLE_PADDING_M`-scaled repulsion
+ * and attraction forces so the tier bias nudges the settle rather than
+ * overriding what adjacency already decided -- a kitchen (private tier)
+ * required to sit next to the dining room (semi-public, unbiased) should
+ * still end up there even though the bias alone would pull it away from
+ * the entry. */
+const TIER_BIAS_STRENGTH = 0.12;
 
 /**
  * `rooms`, one instance-to-instance edge per `required`/`desired` row in
@@ -139,6 +198,68 @@ function buildEdges(rooms: TopologyRoom[], rules: RelationRow[]): { a: number; b
     }
   }
   return edges;
+}
+
+/**
+ * Every instance-to-instance pair whose types are marked `undesired` in
+ * `rules` -- unlike `buildEdges`' required/desired pairing, this is a full
+ * cross product of the two types' instances, not a cycled one-to-one:
+ * `checkAdjacency`'s own undesired check fails the whole row the moment
+ * *any* instance of one type touches *any* instance of the other, so
+ * keeping only one representative pair apart (the way one bedroom can
+ * stand in for "the bedroom" in a required row) would leave every other
+ * bedroom free to end up against the kitchen anyway. Three bedrooms and
+ * one kitchen means three pairs kept apart, not one.
+ *
+ * Order-independent and de-duplicated (`a < b`), since a pair pushed apart
+ * twice is no different from once -- just double the force for no reason.
+ */
+function buildUndesiredPairs(rooms: TopologyRoom[], rules: RelationRow[]): { a: number; b: number }[] {
+  const byType = new Map<string, number[]>();
+  rooms.forEach((r, i) => {
+    const list = byType.get(r.roomType);
+    if (list) list.push(i);
+    else byType.set(r.roomType, [i]);
+  });
+
+  const pairs: { a: number; b: number }[] = [];
+  const seen = new Set<string>();
+  for (const row of rules) {
+    if (row.relation !== "undesired") continue;
+    const as = byType.get(row.a);
+    const bs = byType.get(row.b);
+    if (!as?.length || !bs?.length) continue;
+    for (const a of as) {
+      for (const b of bs) {
+        if (a === b) continue;
+        const lo = Math.min(a, b);
+        const hi = Math.max(a, b);
+        const key = `${lo}|${hi}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        pairs.push({ a: lo, b: hi });
+      }
+    }
+  }
+  return pairs;
+}
+
+/** The unit vector from a point `[dx, dy]` apart, and the distance it was
+ * built from -- shared by every force in `layoutBubbles` that needs one.
+ * Two points closer than `1e-6` (shouldn't happen off the spiral start,
+ * but never divide by zero over it) get a deterministic tie-break
+ * direction from `seed` instead of an undefined one -- an arbitrary
+ * irrational-ish angle spread, not random, so the whole simulation stays
+ * seedless and reproducible. */
+function safeDirection(dx: number, dy: number, seed: number): { ux: number; uy: number; d: number } {
+  let d = Math.hypot(dx, dy);
+  if (d < 1e-6) {
+    const a = seed * 2.399963;
+    dx = Math.cos(a);
+    dy = Math.sin(a);
+    d = 1;
+  }
+  return { ux: dx / d, uy: dy / d, d };
 }
 
 /** Deterministic, RNG-free starting positions -- a Fibonacci/sunflower
@@ -209,6 +330,8 @@ export function layoutBubbles(rooms: TopologyRoom[], rules: RelationRow[] = ROOM
 
   const positions = spiralStart(radii.map((radius) => ({ radius })));
   const edges = buildEdges(rooms, rules);
+  const undesiredPairs = buildUndesiredPairs(rooms, rules);
+  const entryIndex = rooms.findIndex((r) => r.isEntryPoint);
   const iterations = options.iterations ?? DEFAULT_BUBBLE_ITERATIONS;
   const avgRadius = radii.reduce((s, r) => s + r, 0) / n;
   let temperature = Math.max(MIN_TEMP_M, avgRadius);
@@ -220,20 +343,7 @@ export function layoutBubbles(rooms: TopologyRoom[], rules: RelationRow[] = ROOM
 
     for (let i = 0; i < n; i++) {
       for (let j = i + 1; j < n; j++) {
-        let dx = positions[i][0] - positions[j][0];
-        let dy = positions[i][1] - positions[j][1];
-        let d = Math.hypot(dx, dy);
-        if (d < 1e-6) {
-          // Exactly coincident (shouldn't happen off the spiral start, but
-          // never divide by zero over it): a deterministic tie-break
-          // direction from the pair's own indices, not random.
-          const a = (i - j) * 2.399963; // an arbitrary irrational-ish angle spread
-          dx = Math.cos(a);
-          dy = Math.sin(a);
-          d = 1;
-        }
-        const ux = dx / d;
-        const uy = dy / d;
+        const { ux, uy, d } = safeDirection(positions[i][0] - positions[j][0], positions[i][1] - positions[j][1], i - j);
         const k = radii[i] + radii[j] + BUBBLE_PADDING_M;
         const repel = (k * k) / d;
         fx[i] += ux * repel;
@@ -257,6 +367,49 @@ export function layoutBubbles(rooms: TopologyRoom[], rules: RelationRow[] = ROOM
       fy[edge.a] += uy * pull;
       fx[edge.b] -= ux * pull;
       fy[edge.b] -= uy * pull;
+    }
+
+    // Task 2 (batch 003): an undesired pair gets extra repulsion on top of
+    // the generic term every pair already got above -- the generic term
+    // alone treats an undesired pair exactly like any two unconnected
+    // rooms of the same size, which is what left batch 002's own bubble
+    // stage with nothing actively keeping a bedroom away from a kitchen.
+    // Same `k²/d` shape as the generic repulsion, scaled up, so it stays
+    // one physically consistent kind of force rather than a bolted-on
+    // special case.
+    for (const pair of undesiredPairs) {
+      const { ux, uy, d } = safeDirection(positions[pair.a][0] - positions[pair.b][0], positions[pair.a][1] - positions[pair.b][1], pair.a + pair.b * 97 + 1);
+      const k = radii[pair.a] + radii[pair.b] + BUBBLE_PADDING_M;
+      const repel = ((k * k) / d) * UNDESIRED_REPULSION_BOOST;
+      fx[pair.a] += ux * repel;
+      fy[pair.a] += uy * repel;
+      fx[pair.b] -= ux * repel;
+      fy[pair.b] -= uy * repel;
+    }
+
+    // Task 3 (batch 003): bias by privacy tier toward or away from the
+    // entry point -- public rooms pulled toward it, private rooms pushed
+    // away, both as a spring proportional to the current distance so the
+    // bias scales naturally with how far off a room already is rather
+    // than applying one fixed nudge regardless of position. Semi-public
+    // and tier-exempt rooms (`tier === undefined` -- a bathroom, a garage)
+    // get no bias either way: the gradient the tier check actually cares
+    // about is public-vs-private, and there is no single "correct"
+    // direction for a room the check itself never judges. Skipped
+    // entirely when no room declares itself the entry point (an existing
+    // caller building a bare `TopologyRoom` list, or a program with no
+    // `entry` at all) -- there is nothing to bias toward or away from.
+    if (entryIndex !== -1) {
+      const anchor = positions[entryIndex];
+      for (let i = 0; i < n; i++) {
+        if (i === entryIndex) continue;
+        const tier = rooms[i].tier;
+        if (tier !== "public" && tier !== "private") continue;
+        const { ux, uy, d } = safeDirection(positions[i][0] - anchor[0], positions[i][1] - anchor[1], i + 500);
+        const bias = (tier === "public" ? -TIER_BIAS_STRENGTH : TIER_BIAS_STRENGTH) * d;
+        fx[i] += ux * bias;
+        fy[i] += uy * bias;
+      }
     }
 
     let totalMove = 0;
@@ -383,6 +536,93 @@ function slice(order: number[], from: number, to: number, rooms: TopologyRoom[],
   slice(order, from + splitAt, to, rooms, rectB, out);
 }
 
+/** Within this, a rectangle's own edge and the plot boundary's
+ * corresponding edge are the same line -- floating point from repeated
+ * fraction splits, not a real gap; the same order of tolerance
+ * `EDGE_TOL_M` (habitability.ts) uses for the analogous "is this the same
+ * wall" question. */
+const BOUNDARY_TOUCH_TOL_M = 0.01;
+
+/** Whether any of `rect`'s four sides sits on `boundary`'s own matching
+ * side -- computed directly from the two rectangles' coordinates, not
+ * from split history. This is exact for a slice-and-dice partition
+ * specifically because every recursive cut in `slice` either preserves a
+ * side unchanged from its parent or replaces it with a brand-new internal
+ * cut strictly inside the parent's own extent (see `slice`'s own doc
+ * comment on why the partition tiles `boundary` exactly) -- so a leaf
+ * rectangle's side can only ever equal the *original* boundary's
+ * coordinate by having been preserved all the way down, never by
+ * coincidentally landing on the same number some other way. */
+function touchesBoundary(rect: Rect, boundary: Rect): boolean {
+  return (
+    Math.abs(rect.left - boundary.left) <= BOUNDARY_TOUCH_TOL_M ||
+    Math.abs(rect.top - boundary.top) <= BOUNDARY_TOUCH_TOL_M ||
+    Math.abs(rect.left + rect.width - (boundary.left + boundary.width)) <= BOUNDARY_TOUCH_TOL_M ||
+    Math.abs(rect.top + rect.height - (boundary.top + boundary.height)) <= BOUNDARY_TOUCH_TOL_M
+  );
+}
+
+/**
+ * The dimensioning stage's boundary-repair pass (Task 4, batch 003):
+ * swaps rectangle *assignments* (never rectangles themselves, so the
+ * partition `slice` already built stays exactly as non-overlapping and
+ * boundary-respecting as it was) so that a room needing a real exterior
+ * wall (`TopologyRoom.needsExterior` -- `rooms.ts`'s `sleeping` fact, a
+ * bedroom, a driver's or nanny's room) ends up in a slice that actually
+ * touches the plot boundary, whenever some other, non-needing room
+ * currently holds one and can be swapped for it.
+ *
+ * Deliberately a swap, not a re-partition: `slice`'s own weight-ordered
+ * recursion is what guarantees the tiling never overlaps and never spills
+ * past `boundary`, and re-deriving that guarantee for a boundary-aware
+ * variant of the recursion itself is exactly the risk Task 5's own
+ * write-up in `reports/batch-003.html` declines to take for the
+ * squarified treemap. Swapping which room-id points at which
+ * already-computed `Rect` sidesteps that risk completely -- the set of
+ * rectangles in `out` never changes, only the mapping from id to
+ * rectangle does, so whatever was true of the partition before this runs
+ * (exact tiling, no overlap) is still true after it, unconditionally.
+ *
+ * Greedy, and bounded to at most one swap per needing room: for each room
+ * that needs an exterior wall and isn't currently on one, pick whichever
+ * available non-needing, boundary-touching room's rectangle is closest in
+ * area to what this room actually wants (`splitWeight`, the same measure
+ * `slice` itself allocates by) and trade with it. Closest-by-area rather
+ * than first-found: a bedroom trading into a closet-sized corner slice
+ * would trade an unmet exterior wall for a room now far under its own
+ * minimum, which `generateLayout`'s own resize move has to fight uphill
+ * against every neighbour instead of just growing into slack. Some
+ * needing rooms may still end up without one -- a program with more
+ * bedrooms than the plot has perimeter to give them is a real fact about
+ * the program, not something a rectangle-swap can invent its way out of;
+ * same "flagged, never forced" shape as everywhere else in this file.
+ */
+function repairBoundaryAssignment(rooms: TopologyRoom[], boundary: Rect, out: Map<string, Rect>): void {
+  const touching = new Set(rooms.filter((r) => touchesBoundary(out.get(r.id)!, boundary)).map((r) => r.id));
+  for (const room of rooms) {
+    if (!room.needsExterior || touching.has(room.id)) continue;
+    let bestId: string | null = null;
+    let bestGap = Infinity;
+    const wanted = splitWeight(room);
+    for (const other of rooms) {
+      if (other.id === room.id || other.needsExterior || !touching.has(other.id)) continue;
+      const rect = out.get(other.id)!;
+      const gap = Math.abs(rect.width * rect.height - wanted);
+      if (gap < bestGap) {
+        bestGap = gap;
+        bestId = other.id;
+      }
+    }
+    if (bestId === null) continue; // nothing available to trade with -- left unmet, not forced
+    const mine = out.get(room.id)!;
+    const theirs = out.get(bestId)!;
+    out.set(room.id, theirs);
+    out.set(bestId, mine);
+    touching.delete(bestId);
+    touching.add(room.id);
+  }
+}
+
 /**
  * The dimensioning stage: `rooms` and the rough centres `layoutBubbles`
  * found for them, turned into real rectangles that exactly tile
@@ -390,7 +630,9 @@ function slice(order: number[], from: number, to: number, rooms: TopologyRoom[],
  * treemap, not the squarified variant: see the file doc comment on why
  * the simpler one was kept), ordered by `nearestNeighborOrder` so rooms
  * the topology stage placed near each other tend to land in neighbouring
- * slices rather than opposite corners of the plot.
+ * slices rather than opposite corners of the plot, then repaired
+ * (`repairBoundaryAssignment`, Task 4 batch 003) so a room that needs a
+ * real exterior wall preferentially ends up on one.
  *
  * `bubbles` must carry the same ids as `rooms` (in any order) -- normally
  * whatever `layoutBubbles` just returned for this exact room list.
@@ -409,6 +651,7 @@ export function dimensionRooms(rooms: TopologyRoom[], bubbles: BubbleNode[], bou
 
   const out = new Map<string, Rect>();
   slice(order, 0, order.length, rooms, boundary, out);
+  repairBoundaryAssignment(rooms, boundary, out);
   return rooms.map((r) => {
     const rect = out.get(r.id)!;
     return { id: r.id, left: rect.left, top: rect.top, width: rect.width, height: rect.height };

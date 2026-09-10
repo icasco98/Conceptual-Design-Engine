@@ -26,7 +26,7 @@ import { newArrowId } from "./geometry/arrows";
 import { rectPolyOf } from "./geometry/poly";
 import { topologyLayout, type TopologyRoom } from "./geometry/topology";
 import type { Arrow, Box, Plot } from "./geometry/types";
-import { roomTypeInfo } from "./rooms";
+import { roomTypeInfo, sleepingOf, tierOf } from "./rooms";
 import { DEFAULT_PRIORITY } from "./sample";
 
 export interface PlotTemplate {
@@ -253,12 +253,21 @@ export function buildScenario(plotTemplate: PlotTemplate, program: RoomProgram):
       targetAreaM2: info.typicalWidth * info.typicalHeight,
     }));
   });
+  // Batch 003: `tierOf`, `sleepingOf` and which instance is the entry are
+  // exactly the same room-type facts `rooms.ts` already hands every other
+  // caller (`ROOM_FACTS`) -- `topology.ts` stays agnostic of `rooms.ts`'s
+  // own catalogue (see `TopologyRoom`'s own doc comment), so this is the
+  // one place that turns a `roomType` into the values its Task 2/3/4
+  // biases actually read.
   const topologyRooms: TopologyRoom[] = instances.map(({ id, roomType, minWidth, minHeight, targetAreaM2 }) => ({
     id,
     roomType,
     minWidth,
     minHeight,
     targetAreaM2,
+    tier: tierOf(roomType),
+    isEntryPoint: roomType === "entry",
+    needsExterior: sleepingOf(roomType),
   }));
   const placed = topologyLayout(topologyRooms, { left: plot.left, top: plot.top, width: plot.width, height: plot.depth });
   const placedById = new Map(placed.map((p) => [p.id, p]));

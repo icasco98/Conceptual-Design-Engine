@@ -2,505 +2,505 @@
   {
     "scenarioId": "minimal__plot_250_square",
     "label": "Young couple, minimal on 250 m² (near-square, 17.4x14.4)",
-    "startHardProblems": 8,
-    "startSoftRecommendations": 2,
-    "hardProblems": 5,
-    "softRecommendations": 8.7967,
-    "coverage": 0.9661
+    "startHardProblems": 5,
+    "startSoftRecommendations": 3,
+    "hardProblems": 3,
+    "softRecommendations": 7.1527,
+    "coverage": 0.9711
   },
   {
     "scenarioId": "small_nuclear__plot_250_square",
     "label": "Small nuclear family on 250 m² (near-square, 17.4x14.4)",
-    "startHardProblems": 11.299,
-    "startSoftRecommendations": 5.8623,
-    "hardProblems": 11.299,
-    "softRecommendations": 5.8497,
-    "coverage": 0.9983
+    "startHardProblems": 10.9012,
+    "startSoftRecommendations": 5.9142,
+    "hardProblems": 7,
+    "softRecommendations": 20.9478,
+    "coverage": 0.955
   },
   {
     "scenarioId": "extended_gulf__plot_250_square",
     "label": "Extended Gulf household on 250 m² (near-square, 17.4x14.4)",
-    "startHardProblems": 30.3063,
-    "startSoftRecommendations": 17.2001,
-    "hardProblems": 30.3063,
-    "softRecommendations": 17.2001,
-    "coverage": 1
+    "startHardProblems": 29.4748,
+    "startSoftRecommendations": 14.4304,
+    "hardProblems": 23,
+    "softRecommendations": 20.8465,
+    "coverage": 0.9417
   },
   {
     "scenarioId": "multigenerational__plot_250_square",
     "label": "Multigenerational household on 250 m² (near-square, 17.4x14.4)",
-    "startHardProblems": 34.8329,
-    "startSoftRecommendations": 20.3207,
-    "hardProblems": 34.1886,
-    "softRecommendations": 23.4709,
-    "coverage": 0.9973
+    "startHardProblems": 37.7579,
+    "startSoftRecommendations": 19.1153,
+    "hardProblems": 31.1232,
+    "softRecommendations": 25.3004,
+    "coverage": 0.9942
   },
   {
     "scenarioId": "minimal__plot_250_narrow",
     "label": "Young couple, minimal on 250 m² (narrow/deep, 10x25)",
-    "startHardProblems": 7,
-    "startSoftRecommendations": 0.2237,
-    "hardProblems": 5,
-    "softRecommendations": 3.434,
-    "coverage": 0.977
+    "startHardProblems": 6,
+    "startSoftRecommendations": 1,
+    "hardProblems": 4,
+    "softRecommendations": 2.7225,
+    "coverage": 0.9832
   },
   {
     "scenarioId": "small_nuclear__plot_250_narrow",
     "label": "Small nuclear family on 250 m² (narrow/deep, 10x25)",
-    "startHardProblems": 12,
-    "startSoftRecommendations": 6.3233,
-    "hardProblems": 8.1929,
-    "softRecommendations": 14.3116,
-    "coverage": 0.9567
+    "startHardProblems": 12.3263,
+    "startSoftRecommendations": 8.9873,
+    "hardProblems": 7.2223,
+    "softRecommendations": 11.9388,
+    "coverage": 0.9727
   },
   {
     "scenarioId": "extended_gulf__plot_250_narrow",
     "label": "Extended Gulf household on 250 m² (narrow/deep, 10x25)",
-    "startHardProblems": 31.5606,
-    "startSoftRecommendations": 16.3736,
-    "hardProblems": 30.5606,
-    "softRecommendations": 19.5767,
-    "coverage": 0.9977
+    "startHardProblems": 24.3794,
+    "startSoftRecommendations": 14.6153,
+    "hardProblems": 22.3792,
+    "softRecommendations": 17.6913,
+    "coverage": 0.9795
   },
   {
     "scenarioId": "multigenerational__plot_250_narrow",
     "label": "Multigenerational household on 250 m² (narrow/deep, 10x25)",
-    "startHardProblems": 34.6687,
-    "startSoftRecommendations": 14.7109,
-    "hardProblems": 34.6687,
-    "softRecommendations": 14.7109,
-    "coverage": 1
+    "startHardProblems": 38.7997,
+    "startSoftRecommendations": 20.9724,
+    "hardProblems": 30.5861,
+    "softRecommendations": 26.8287,
+    "coverage": 0.9881
   },
   {
     "scenarioId": "minimal__plot_300_square",
     "label": "Young couple, minimal on 300 m² (near-square, 19x15.8)",
-    "startHardProblems": 8,
-    "startSoftRecommendations": 2,
-    "hardProblems": 7,
-    "softRecommendations": 3.8517,
-    "coverage": 0.9845
+    "startHardProblems": 5,
+    "startSoftRecommendations": 3,
+    "hardProblems": 1,
+    "softRecommendations": 11.2907,
+    "coverage": 0.9542
   },
   {
     "scenarioId": "small_nuclear__plot_300_square",
     "label": "Small nuclear family on 300 m² (near-square, 19x15.8)",
-    "startHardProblems": 11.2406,
-    "startSoftRecommendations": 5.7849,
-    "hardProblems": 9.2387,
-    "softRecommendations": 8.9937,
-    "coverage": 0.9516
+    "startHardProblems": 10.8163,
+    "startSoftRecommendations": 5.799,
+    "hardProblems": 9,
+    "softRecommendations": 12.4061,
+    "coverage": 0.9379
   },
   {
     "scenarioId": "extended_gulf__plot_300_square",
     "label": "Extended Gulf household on 300 m² (near-square, 19x15.8)",
-    "startHardProblems": 30.1934,
-    "startSoftRecommendations": 18.0195,
-    "hardProblems": 19.7327,
-    "softRecommendations": 30.5754,
-    "coverage": 0.9733
+    "startHardProblems": 28.346,
+    "startSoftRecommendations": 15.4894,
+    "hardProblems": 21.7672,
+    "softRecommendations": 29.0074,
+    "coverage": 0.9609
   },
   {
     "scenarioId": "multigenerational__plot_300_square",
     "label": "Multigenerational household on 300 m² (near-square, 19x15.8)",
-    "startHardProblems": 34.6583,
-    "startSoftRecommendations": 19.8852,
-    "hardProblems": 29.6583,
-    "softRecommendations": 35.8393,
-    "coverage": 0.9813
+    "startHardProblems": 37.3998,
+    "startSoftRecommendations": 18.7119,
+    "hardProblems": 29.1117,
+    "softRecommendations": 32.3729,
+    "coverage": 0.9822
   },
   {
     "scenarioId": "minimal__plot_300_narrow",
     "label": "Young couple, minimal on 300 m² (narrow/deep, 10.9x27.4)",
-    "startHardProblems": 7,
-    "startSoftRecommendations": 0.2414,
-    "hardProblems": 6,
-    "softRecommendations": 2.6903,
-    "coverage": 0.9986
+    "startHardProblems": 6,
+    "startSoftRecommendations": 1,
+    "hardProblems": 3,
+    "softRecommendations": 3.6116,
+    "coverage": 0.9595
   },
   {
     "scenarioId": "small_nuclear__plot_300_narrow",
     "label": "Small nuclear family on 300 m² (narrow/deep, 10.9x27.4)",
-    "startHardProblems": 12,
-    "startSoftRecommendations": 6.2736,
-    "hardProblems": 9,
-    "softRecommendations": 26.2184,
-    "coverage": 0.9522
+    "startHardProblems": 12.2812,
+    "startSoftRecommendations": 8.8823,
+    "hardProblems": 8.9806,
+    "softRecommendations": 11.4821,
+    "coverage": 0.9028
   },
   {
     "scenarioId": "extended_gulf__plot_300_narrow",
     "label": "Extended Gulf household on 300 m² (narrow/deep, 10.9x27.4)",
-    "startHardProblems": 26.9534,
-    "startSoftRecommendations": 17.9996,
-    "hardProblems": 22.2893,
-    "softRecommendations": 22.6321,
-    "coverage": 0.9874
+    "startHardProblems": 24.2516,
+    "startSoftRecommendations": 14.4704,
+    "hardProblems": 20.2516,
+    "softRecommendations": 22.7982,
+    "coverage": 0.9781
   },
   {
     "scenarioId": "multigenerational__plot_300_narrow",
     "label": "Multigenerational household on 300 m² (narrow/deep, 10.9x27.4)",
-    "startHardProblems": 34.5646,
-    "startSoftRecommendations": 14.538,
-    "hardProblems": 32.5646,
-    "softRecommendations": 19.0493,
-    "coverage": 0.9944
+    "startHardProblems": 35.6107,
+    "startSoftRecommendations": 18.8695,
+    "hardProblems": 27.3998,
+    "softRecommendations": 27.9021,
+    "coverage": 0.9947
   },
   {
     "scenarioId": "minimal__plot_400_square",
     "label": "Young couple, minimal on 400 m² (near-square, 21.9x18.3)",
-    "startHardProblems": 8,
-    "startSoftRecommendations": 2,
-    "hardProblems": 4,
-    "softRecommendations": 7.5168,
-    "coverage": 0.9532
+    "startHardProblems": 5,
+    "startSoftRecommendations": 3,
+    "hardProblems": 0,
+    "softRecommendations": 14.1586,
+    "coverage": 0.9487
   },
   {
     "scenarioId": "small_nuclear__plot_400_square",
     "label": "Small nuclear family on 400 m² (near-square, 21.9x18.3)",
-    "startHardProblems": 11.1362,
-    "startSoftRecommendations": 5.6596,
-    "hardProblems": 9.1015,
-    "softRecommendations": 12.4805,
-    "coverage": 0.9892
+    "startHardProblems": 10.6634,
+    "startSoftRecommendations": 5.5922,
+    "hardProblems": 6,
+    "softRecommendations": 16.7608,
+    "coverage": 0.9699
   },
   {
     "scenarioId": "extended_gulf__plot_400_square",
     "label": "Extended Gulf household on 400 m² (near-square, 21.9x18.3)",
-    "startHardProblems": 30.0856,
-    "startSoftRecommendations": 17.7688,
-    "hardProblems": 24.0856,
-    "softRecommendations": 28.4265,
-    "coverage": 0.9704
+    "startHardProblems": 25.1033,
+    "startSoftRecommendations": 16.1144,
+    "hardProblems": 22,
+    "softRecommendations": 21.642,
+    "coverage": 0.9846
   },
   {
     "scenarioId": "multigenerational__plot_400_square",
     "label": "Multigenerational household on 400 m² (near-square, 21.9x18.3)",
-    "startHardProblems": 34.3433,
-    "startSoftRecommendations": 19.2038,
-    "hardProblems": 26.3075,
-    "softRecommendations": 41.7905,
-    "coverage": 0.9671
+    "startHardProblems": 34.9769,
+    "startSoftRecommendations": 16.3705,
+    "hardProblems": 27.5753,
+    "softRecommendations": 27.624,
+    "coverage": 0.9754
   },
   {
     "scenarioId": "minimal__plot_400_narrow",
     "label": "Young couple, minimal on 400 m² (narrow/deep, 12.7x31.6)",
-    "startHardProblems": 7,
-    "startSoftRecommendations": 0.2085,
+    "startHardProblems": 6,
+    "startSoftRecommendations": 1,
     "hardProblems": 5,
-    "softRecommendations": 6.9019,
-    "coverage": 0.966
+    "softRecommendations": 0.8577,
+    "coverage": 0.9843
   },
   {
     "scenarioId": "small_nuclear__plot_400_narrow",
     "label": "Small nuclear family on 400 m² (narrow/deep, 12.7x31.6)",
-    "startHardProblems": 12,
-    "startSoftRecommendations": 6.1102,
-    "hardProblems": 9,
-    "softRecommendations": 22.2257,
-    "coverage": 0.9863
+    "startHardProblems": 12.2009,
+    "startSoftRecommendations": 8.6828,
+    "hardProblems": 8,
+    "softRecommendations": 19.365,
+    "coverage": 0.9801
   },
   {
     "scenarioId": "extended_gulf__plot_400_narrow",
     "label": "Extended Gulf household on 400 m² (narrow/deep, 12.7x31.6)",
-    "startHardProblems": 30.5733,
-    "startSoftRecommendations": 15.5885,
-    "hardProblems": 21.5733,
-    "softRecommendations": 31.1739,
-    "coverage": 0.9852
+    "startHardProblems": 19.0355,
+    "startSoftRecommendations": 17.0017,
+    "hardProblems": 18.0355,
+    "softRecommendations": 23.4495,
+    "coverage": 0.9787
   },
   {
     "scenarioId": "multigenerational__plot_400_narrow",
     "label": "Multigenerational household on 400 m² (narrow/deep, 12.7x31.6)",
-    "startHardProblems": 34.422,
-    "startSoftRecommendations": 14.2744,
-    "hardProblems": 28,
-    "softRecommendations": 31.1855,
-    "coverage": 0.9741
+    "startHardProblems": 34.2748,
+    "startSoftRecommendations": 19.507,
+    "hardProblems": 21.0385,
+    "softRecommendations": 37.273,
+    "coverage": 0.9834
   },
   {
     "scenarioId": "minimal__plot_450_square",
     "label": "Young couple, minimal on 450 m² (near-square, 23.2x19.4)",
-    "startHardProblems": 8,
-    "startSoftRecommendations": 2,
-    "hardProblems": 6,
-    "softRecommendations": 9.6493,
-    "coverage": 0.9795
+    "startHardProblems": 5,
+    "startSoftRecommendations": 3,
+    "hardProblems": 1,
+    "softRecommendations": 19.2528,
+    "coverage": 0.9846
   },
   {
     "scenarioId": "small_nuclear__plot_450_square",
     "label": "Small nuclear family on 450 m² (near-square, 23.2x19.4)",
-    "startHardProblems": 11.0903,
-    "startSoftRecommendations": 5.6094,
-    "hardProblems": 9.0891,
-    "softRecommendations": 12.0828,
-    "coverage": 0.9959
+    "startHardProblems": 10.5955,
+    "startSoftRecommendations": 5.5005,
+    "hardProblems": 7.3062,
+    "softRecommendations": 16.1845,
+    "coverage": 0.9883
   },
   {
     "scenarioId": "extended_gulf__plot_450_square",
     "label": "Extended Gulf household on 450 m² (near-square, 23.2x19.4)",
-    "startHardProblems": 30.0373,
-    "startSoftRecommendations": 17.6896,
-    "hardProblems": 22.5288,
-    "softRecommendations": 29.5566,
-    "coverage": 0.9812
+    "startHardProblems": 23.8141,
+    "startSoftRecommendations": 17.0564,
+    "hardProblems": 21.5186,
+    "softRecommendations": 34.1741,
+    "coverage": 0.9865
   },
   {
     "scenarioId": "multigenerational__plot_450_square",
     "label": "Multigenerational household on 450 m² (near-square, 23.2x19.4)",
-    "startHardProblems": 34.2184,
-    "startSoftRecommendations": 18.8956,
-    "hardProblems": 27.6809,
-    "softRecommendations": 32.613,
-    "coverage": 0.9769
+    "startHardProblems": 33.0383,
+    "startSoftRecommendations": 21.0085,
+    "hardProblems": 23,
+    "softRecommendations": 30.4384,
+    "coverage": 0.9704
   },
   {
     "scenarioId": "minimal__plot_450_narrow",
     "label": "Young couple, minimal on 450 m² (narrow/deep, 13.4x33.5)",
-    "startHardProblems": 7,
-    "startSoftRecommendations": 0.2237,
-    "hardProblems": 4,
-    "softRecommendations": 5.7867,
-    "coverage": 0.9594
+    "startHardProblems": 6,
+    "startSoftRecommendations": 1,
+    "hardProblems": 5,
+    "softRecommendations": 0.1837,
+    "coverage": 0.931
   },
   {
     "scenarioId": "small_nuclear__plot_450_narrow",
     "label": "Small nuclear family on 450 m² (narrow/deep, 13.4x33.5)",
-    "startHardProblems": 12,
-    "startSoftRecommendations": 6.0729,
-    "hardProblems": 9,
-    "softRecommendations": 25.2492,
-    "coverage": 0.9666
+    "startHardProblems": 12.1653,
+    "startSoftRecommendations": 8.6005,
+    "hardProblems": 10.8543,
+    "softRecommendations": 18.0817,
+    "coverage": 0.9576
   },
   {
     "scenarioId": "extended_gulf__plot_450_narrow",
     "label": "Extended Gulf household on 450 m² (narrow/deep, 13.4x33.5)",
-    "startHardProblems": 30.5553,
-    "startSoftRecommendations": 15.3982,
-    "hardProblems": 23.5553,
-    "softRecommendations": 31.422,
-    "coverage": 0.9707
+    "startHardProblems": 22,
+    "startSoftRecommendations": 14.1004,
+    "hardProblems": 20,
+    "softRecommendations": 12.7919,
+    "coverage": 0.9898
   },
   {
     "scenarioId": "multigenerational__plot_450_narrow",
     "label": "Multigenerational household on 450 m² (narrow/deep, 13.4x33.5)",
-    "startHardProblems": 34.3933,
-    "startSoftRecommendations": 14.1471,
-    "hardProblems": 24.3933,
-    "softRecommendations": 23.1821,
-    "coverage": 0.9704
+    "startHardProblems": 33.1797,
+    "startSoftRecommendations": 19.3804,
+    "hardProblems": 32.1797,
+    "softRecommendations": 23.6977,
+    "coverage": 0.9967
   },
   {
     "scenarioId": "minimal__plot_500_square",
     "label": "Young couple, minimal on 500 m² (near-square, 24.5x20.4)",
-    "startHardProblems": 8,
-    "startSoftRecommendations": 2,
-    "hardProblems": 5,
-    "softRecommendations": 3.6604,
-    "coverage": 0.8596
+    "startHardProblems": 5,
+    "startSoftRecommendations": 3,
+    "hardProblems": 2,
+    "softRecommendations": 15.4693,
+    "coverage": 0.9424
   },
   {
     "scenarioId": "small_nuclear__plot_500_square",
     "label": "Small nuclear family on 500 m² (near-square, 24.5x20.4)",
-    "startHardProblems": 11.0486,
-    "startSoftRecommendations": 5.5804,
-    "hardProblems": 10,
-    "softRecommendations": 5.3432,
-    "coverage": 0.9658
+    "startHardProblems": 10.5307,
+    "startSoftRecommendations": 5.4139,
+    "hardProblems": 8,
+    "softRecommendations": 17.7441,
+    "coverage": 0.9281
   },
   {
     "scenarioId": "extended_gulf__plot_500_square",
     "label": "Extended Gulf household on 500 m² (near-square, 24.5x20.4)",
-    "startHardProblems": 30,
-    "startSoftRecommendations": 17.611,
-    "hardProblems": 21,
-    "softRecommendations": 26.5896,
-    "coverage": 0.9877
+    "startHardProblems": 23.762,
+    "startSoftRecommendations": 17.002,
+    "hardProblems": 21.5778,
+    "softRecommendations": 25.2216,
+    "coverage": 0.9898
   },
   {
     "scenarioId": "multigenerational__plot_500_square",
     "label": "Multigenerational household on 500 m² (near-square, 24.5x20.4)",
-    "startHardProblems": 34.133,
-    "startSoftRecommendations": 18.5805,
-    "hardProblems": 27.2181,
-    "softRecommendations": 32.3774,
-    "coverage": 0.9701
+    "startHardProblems": 32.9421,
+    "startSoftRecommendations": 20.8322,
+    "hardProblems": 27.9124,
+    "softRecommendations": 23.3828,
+    "coverage": 0.9913
   },
   {
     "scenarioId": "minimal__plot_500_narrow",
     "label": "Young couple, minimal on 500 m² (narrow/deep, 14.1x35.4)",
-    "startHardProblems": 7,
-    "startSoftRecommendations": 0.2374,
-    "hardProblems": 6,
-    "softRecommendations": 3.3793,
-    "coverage": 0.9987
+    "startHardProblems": 6,
+    "startSoftRecommendations": 1,
+    "hardProblems": 3,
+    "softRecommendations": 6.744,
+    "coverage": 0.9836
   },
   {
     "scenarioId": "small_nuclear__plot_500_narrow",
     "label": "Small nuclear family on 500 m² (narrow/deep, 14.1x35.4)",
-    "startHardProblems": 12,
-    "startSoftRecommendations": 6.0341,
+    "startHardProblems": 12.1296,
+    "startSoftRecommendations": 8.5183,
     "hardProblems": 8,
-    "softRecommendations": 11.0716,
-    "coverage": 0.9524
+    "softRecommendations": 6.2894,
+    "coverage": 0.965
   },
   {
     "scenarioId": "extended_gulf__plot_500_narrow",
     "label": "Extended Gulf household on 500 m² (narrow/deep, 14.1x35.4)",
-    "startHardProblems": 25.5372,
-    "startSoftRecommendations": 17.3147,
-    "hardProblems": 22.5372,
-    "softRecommendations": 20.5653,
-    "coverage": 0.993
+    "startHardProblems": 21,
+    "startSoftRecommendations": 15.8056,
+    "hardProblems": 20,
+    "softRecommendations": 18.2793,
+    "coverage": 0.957
   },
   {
     "scenarioId": "multigenerational__plot_500_narrow",
     "label": "Multigenerational household on 500 m² (narrow/deep, 14.1x35.4)",
-    "startHardProblems": 34.3645,
-    "startSoftRecommendations": 14.0668,
-    "hardProblems": 24.3645,
-    "softRecommendations": 31.576,
-    "coverage": 0.9311
+    "startHardProblems": 34.0846,
+    "startSoftRecommendations": 19.2555,
+    "hardProblems": 26,
+    "softRecommendations": 26.6119,
+    "coverage": 0.9415
   },
   {
     "scenarioId": "minimal__plot_600_square",
     "label": "Young couple, minimal on 600 m² (near-square, 26.8x22.4)",
-    "startHardProblems": 8,
-    "startSoftRecommendations": 2,
-    "hardProblems": 4,
-    "softRecommendations": 12.9953,
-    "coverage": 0.9923
+    "startHardProblems": 5,
+    "startSoftRecommendations": 3,
+    "hardProblems": 2,
+    "softRecommendations": 10.9644,
+    "coverage": 0.9718
   },
   {
     "scenarioId": "small_nuclear__plot_600_square",
     "label": "Small nuclear family on 600 m² (near-square, 26.8x22.4)",
-    "startHardProblems": 11,
-    "startSoftRecommendations": 5.4805,
+    "startHardProblems": 10.4089,
+    "startSoftRecommendations": 5.2489,
     "hardProblems": 9,
-    "softRecommendations": 11.8054,
-    "coverage": 0.9836
+    "softRecommendations": 16.0164,
+    "coverage": 0.9847
   },
   {
     "scenarioId": "extended_gulf__plot_600_square",
     "label": "Extended Gulf household on 600 m² (near-square, 26.8x22.4)",
-    "startHardProblems": 30,
-    "startSoftRecommendations": 17.4705,
-    "hardProblems": 25,
-    "softRecommendations": 18.8582,
-    "coverage": 0.9689
+    "startHardProblems": 23.6615,
+    "startSoftRecommendations": 16.8974,
+    "hardProblems": 22,
+    "softRecommendations": 22.9875,
+    "coverage": 0.9841
   },
   {
     "scenarioId": "multigenerational__plot_600_square",
     "label": "Multigenerational household on 600 m² (near-square, 26.8x22.4)",
-    "startHardProblems": 34.052,
-    "startSoftRecommendations": 18.0984,
-    "hardProblems": 30,
-    "softRecommendations": 31.2699,
-    "coverage": 0.9763
+    "startHardProblems": 32.7868,
+    "startSoftRecommendations": 20.4999,
+    "hardProblems": 22.7366,
+    "softRecommendations": 37.2482,
+    "coverage": 0.9643
   },
   {
     "scenarioId": "minimal__plot_600_narrow",
     "label": "Young couple, minimal on 600 m² (narrow/deep, 15.5x38.7)",
-    "startHardProblems": 7,
-    "startSoftRecommendations": 0.2195,
-    "hardProblems": 5,
-    "softRecommendations": 6.9806,
-    "coverage": 0.9938
+    "startHardProblems": 6,
+    "startSoftRecommendations": 1,
+    "hardProblems": 3,
+    "softRecommendations": 16.984,
+    "coverage": 0.987
   },
   {
     "scenarioId": "small_nuclear__plot_600_narrow",
     "label": "Small nuclear family on 600 m² (narrow/deep, 15.5x38.7)",
-    "startHardProblems": 12,
-    "startSoftRecommendations": 6.0143,
-    "hardProblems": 8,
-    "softRecommendations": 24.0827,
-    "coverage": 0.9449
+    "startHardProblems": 12.0667,
+    "startSoftRecommendations": 8.3625,
+    "hardProblems": 10,
+    "softRecommendations": 9.1923,
+    "coverage": 0.9633
   },
   {
     "scenarioId": "extended_gulf__plot_600_narrow",
     "label": "Extended Gulf household on 600 m² (narrow/deep, 15.5x38.7)",
-    "startHardProblems": 30.5012,
-    "startSoftRecommendations": 15.303,
-    "hardProblems": 16.4714,
-    "softRecommendations": 55.0483,
-    "coverage": 0.9585
+    "startHardProblems": 25,
+    "startSoftRecommendations": 14.7846,
+    "hardProblems": 21,
+    "softRecommendations": 24.3387,
+    "coverage": 0.9875
   },
   {
     "scenarioId": "multigenerational__plot_600_narrow",
     "label": "Multigenerational household on 600 m² (narrow/deep, 15.5x38.7)",
-    "startHardProblems": 34.3146,
-    "startSoftRecommendations": 13.963,
-    "hardProblems": 25.8629,
-    "softRecommendations": 31.2893,
-    "coverage": 0.9527
+    "startHardProblems": 35.3145,
+    "startSoftRecommendations": 21.0519,
+    "hardProblems": 22.1273,
+    "softRecommendations": 35.0702,
+    "coverage": 0.9704
   },
   {
     "scenarioId": "minimal__plot_750_square",
     "label": "Young couple, minimal on 750 m² (near-square, 30x25)",
-    "startHardProblems": 8,
-    "startSoftRecommendations": 2,
-    "hardProblems": 6,
-    "softRecommendations": 11.8459,
-    "coverage": 0.9744
+    "startHardProblems": 5,
+    "startSoftRecommendations": 3,
+    "hardProblems": 0,
+    "softRecommendations": 7.3621,
+    "coverage": 0.9841
   },
   {
     "scenarioId": "small_nuclear__plot_750_square",
     "label": "Small nuclear family on 750 m² (near-square, 30x25)",
-    "startHardProblems": 11,
-    "startSoftRecommendations": 5.4229,
-    "hardProblems": 8,
-    "softRecommendations": 16.0081,
-    "coverage": 0.9487
+    "startHardProblems": 10.2451,
+    "startSoftRecommendations": 5.0287,
+    "hardProblems": 9,
+    "softRecommendations": 14.0391,
+    "coverage": 0.9587
   },
   {
     "scenarioId": "extended_gulf__plot_750_square",
     "label": "Extended Gulf household on 750 m² (near-square, 30x25)",
-    "startHardProblems": 30,
-    "startSoftRecommendations": 17.3968,
+    "startHardProblems": 23.5282,
+    "startSoftRecommendations": 16.7586,
     "hardProblems": 21,
-    "softRecommendations": 29.5231,
-    "coverage": 0.9812
+    "softRecommendations": 32.4407,
+    "coverage": 0.9939
   },
   {
     "scenarioId": "multigenerational__plot_750_square",
     "label": "Multigenerational household on 750 m² (near-square, 30x25)",
-    "startHardProblems": 34,
-    "startSoftRecommendations": 17.7642,
-    "hardProblems": 31,
-    "softRecommendations": 22.3812,
-    "coverage": 0.9735
+    "startHardProblems": 37.6782,
+    "startSoftRecommendations": 21.0635,
+    "hardProblems": 32.7569,
+    "softRecommendations": 30.2526,
+    "coverage": 0.9829
   },
   {
     "scenarioId": "minimal__plot_750_narrow",
     "label": "Young couple, minimal on 750 m² (narrow/deep, 17.3x43.3)",
-    "startHardProblems": 7,
-    "startSoftRecommendations": 0.2274,
-    "hardProblems": 5,
-    "softRecommendations": 8.6952,
-    "coverage": 0.9852
+    "startHardProblems": 6,
+    "startSoftRecommendations": 1,
+    "hardProblems": 4,
+    "softRecommendations": 20.7816,
+    "coverage": 0.9905
   },
   {
     "scenarioId": "small_nuclear__plot_750_narrow",
     "label": "Small nuclear family on 750 m² (narrow/deep, 17.3x43.3)",
-    "startHardProblems": 12,
-    "startSoftRecommendations": 6.0216,
-    "hardProblems": 7,
-    "softRecommendations": 24.6344,
-    "coverage": 0.9679
+    "startHardProblems": 11.9797,
+    "startSoftRecommendations": 8.2289,
+    "hardProblems": 9,
+    "softRecommendations": 11.6297,
+    "coverage": 0.9727
   },
   {
     "scenarioId": "extended_gulf__plot_750_narrow",
     "label": "Extended Gulf household on 750 m² (narrow/deep, 17.3x43.3)",
-    "startHardProblems": 30.4549,
-    "startSoftRecommendations": 15.2433,
-    "hardProblems": 19.4549,
-    "softRecommendations": 42.4754,
-    "coverage": 0.9714
+    "startHardProblems": 23,
+    "startSoftRecommendations": 14,
+    "hardProblems": 20,
+    "softRecommendations": 37.2764,
+    "coverage": 0.9934
   },
   {
     "scenarioId": "multigenerational__plot_750_narrow",
     "label": "Multigenerational household on 750 m² (narrow/deep, 17.3x43.3)",
-    "startHardProblems": 34.245,
-    "startSoftRecommendations": 13.7904,
-    "hardProblems": 23.245,
-    "softRecommendations": 33.6169,
-    "coverage": 0.9834
+    "startHardProblems": 30.4852,
+    "startSoftRecommendations": 21.1492,
+    "hardProblems": 18.7044,
+    "softRecommendations": 30.9058,
+    "coverage": 0.9829
   }
 ]
