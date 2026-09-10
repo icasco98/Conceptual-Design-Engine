@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Batch 001 &mdash; ten new design rules</title>
+<style>
+:root { color-scheme: light; }
+body { margin:0; padding:0; background:#f2f2ef; color:#1b1b1b;
+       font-family: Georgia, 'Iowan Old Style', 'Times New Roman', serif; line-height:1.6; }
+.wrap { max-width: 860px; margin: 0 auto; padding: 32px 20px 80px; }
+h1 { font-size: 30px; line-height:1.25; margin:0 0 6px; }
+.sub { color:#555; font-size:15px; margin:0 0 28px; }
+h2 { font-size:23px; margin:0 0 4px; padding-top:6px; }
+h4 { font-size:17px; margin:0 0 6px; display:flex; gap:10px; align-items:baseline; flex-wrap:wrap; }
+h5 { font-size:13px; text-transform:uppercase; letter-spacing:.07em; color:#666;
+     margin:0 0 6px; font-family: system-ui, sans-serif; }
+p { margin:0 0 12px; }
+section { background:#fff; border:1px solid #ddd8d0; border-radius:8px;
+          padding:22px 24px; margin:0 0 26px; }
+.lede { color:#555; font-style:italic; margin-bottom:20px; }
+.rule { border-top:1px solid #ece8e2; padding-top:18px; margin-top:18px; }
+.rule:first-of-type { border-top:none; padding-top:0; margin-top:0; }
+.src { font-size:13.5px; color:#5a5a5a; background:#f7f5f1; border-left:3px solid #cfc8bd;
+       padding:7px 12px; margin:0 0 14px; font-family: system-ui, sans-serif; }
+.tag { font-family: system-ui, sans-serif; font-size:11px; font-weight:700; letter-spacing:.08em;
+       padding:3px 8px; border-radius:3px; white-space:nowrap; }
+.tag.acc { background:#dcefe1; color:#1c5c33; }
+.tag.rev { background:#f6e0d8; color:#8a3c1e; }
+.note { font-size:14px; color:#5a5a5a; background:#faf8f4; border:1px dashed #ddd6cb;
+        padding:10px 13px; border-radius:5px; }
+.pair { display:flex; gap:16px; flex-wrap:wrap; margin:16px 0 18px; }
+.pair figure { margin:0; flex:1 1 300px; min-width:0; overflow-x:auto; }
+svg { max-width:100%; height:auto; display:block; border:1px solid #e3ded6; border-radius:4px; }
+.status { background:#f7f6f2; border-radius:6px; padding:13px 16px; margin:16px 0 0; }
+.status p { margin:0; font-size:14.5px; }
+.hero { background:#1f2a26; color:#f2f0ea; border-radius:8px; padding:26px 26px 20px; margin:0 0 26px; }
+.hero h1 { color:#fff; }
+.hero p { color:#ccd4cf; }
+.hero strong { color:#fff; }
+.figs { display:flex; gap:18px; flex-wrap:wrap; margin:18px 0 4px; }
+.figs div { flex:1 1 150px; }
+.big { font-size:34px; font-weight:700; line-height:1.1; color:#fff;
+       font-family: system-ui, sans-serif; }
+.cap { font-size:12.5px; text-transform:uppercase; letter-spacing:.07em; color:#9fb0a7;
+       font-family: system-ui, sans-serif; margin-top:2px; }
+table { border-collapse:collapse; width:100%; font-size:14px; margin:6px 0 4px;
+        font-family: system-ui, sans-serif; }
+th, td { text-align:left; padding:7px 10px; border-bottom:1px solid #eae5dd; }
+th { font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:#666; font-weight:600; }
+td.num { text-align:right; font-variant-numeric: tabular-nums; }
+.scroll { overflow-x:auto; }
+ul { margin:0 0 12px; padding-left:22px; }
+li { margin:0 0 7px; }
+@media (max-width:620px) { .pair figure { flex-basis:100%; } h1 { font-size:25px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="hero">
+<h1>Ten new design rules, and what they found</h1>
+<p>Batch 001 &mdash; five rounds of: propose a rule, build it, test it, check nothing else broke, re-tune the automatic search, commit.</p>
+<div class="figs">
+  <div><div class="big">10</div><div class="cap">rules accepted</div></div>
+  <div><div class="big">1</div><div class="cap">reverted</div></div>
+  <div><div class="big">0%</div><div class="cap">clean rate, 0 of 56</div></div>
+  <div><div class="big">+1</div><div class="cap">problem found, on 28 plans</div></div>
+</div>
+<p style="margin-top:18px"><strong>What the next batch should work on:</strong> not more rules &mdash; the automatic search. It never once produced a plan with zero problems, in any of the 56 test cases, before or after any of this. The reason is mechanical and fixable: the test plans start with every room sitting 0.3&nbsp;m apart, and the search nudges rooms around at random, so it almost never lands two rooms exactly flush against each other &mdash; which is the only way a door can exist between them. It needs a move that snaps a room to its neighbour's wall. That is one new kind of move in the search, not a new rule.</p>
+</div>
+
+
+<section>
+<h2>What this is, in one page</h2>
+<p>This tool has two halves. One is the drawing editor you use by hand. The other &mdash; the half this report is about &mdash; is a set of <em>rules</em>: things the tool knows about how houses work, which it uses both to tell you what is wrong with a plan you have drawn, and to judge plans that its own automatic search invents.</p>
+<p>This batch added ten rules to that set. Every one of them comes from a real, established convention or building-code requirement, and each one is written up in the code with the reason it exists, so the next person can argue with it rather than guess at it. Nothing here changes the drawing editor: <strong>these rules only ever look and report. They never move, resize or connect anything on their own.</strong></p>
+<p>The tool separates two kinds of finding, and this report keeps that distinction:</p>
+<ul>
+<li><strong>A problem</strong> is the tool saying the plan does not work &mdash; a bedroom with no way out, a door that cannot physically be built.</li>
+<li><strong>A suggestion</strong> is the tool saying the plan works but costs more or is worse to live in than it needs to be &mdash; a kitchen too far from the car, pipes that could have shared one stack.</li>
+</ul>
+<p>Enough satisfied suggestions can never outweigh a single problem. That ordering is deliberate and has not changed.</p>
+<h5 style="margin-top:22px">How to read the pictures</h5>
+<p>Each diagram is a plan view, drawn to scale, with the plot boundary as the dashed rectangle. <span style="color:#1f6f4a;font-weight:700">Green bars are interior doors.</span> <span style="color:#b35c00;font-weight:700">Orange bars are doors to the outside.</span> Rooms outlined in red sit outside the plot boundary. These are drawn by the tool itself, from the same numbers the rules read, so a door you can see here is a door the rules can see too.</p>
+</section>
+
+<section><h2>Pass 1</h2><p class="lede">Two rules about where rooms sit relative to each other.</p><div class="rule"><h4><span class="tag acc">ACCEPTED</span>The kitchen should be a short walk from the garage</h4>
+<p class="src">Standard residential planning: the service-entry sequence, garage &rarr; mudroom &rarr; kitchen.</p>
+<p>Shopping is unloaded from the car and carried to the kitchen. It is the one trip in a house you make over and over with both hands full, and if the kitchen is at the far end of the plan you make it the long way every week for as long as you live there.</p>
+<p>The tool already knew the garage should be near the mudroom and near the entrance. It had never been told what that route is <em>for</em>. It now checks that the kitchen is at most two doors from the garage &mdash; which garage &rarr; mudroom &rarr; kitchen satisfies exactly.</p>
+<p>It deliberately does <strong>not</strong> ask for a door straight from the garage into the kitchen. The mudroom is there on purpose, to keep the garage's dirt, noise and exhaust fumes out of the room where food is prepared. This is a suggestion, not a fault: a house whose kitchen is far from the garage is inconvenient, not broken.</p>
+<div class="pair"><figure><svg xmlns="http://www.w3.org/2000/svg" width="280" height="208" viewBox="0 0 280 208">
+  <rect width="100%" height="100%" fill="#ffffff" />
+  <text x="12" y="18" font-size="14" font-weight="600" font-family="sans-serif" fill="#1a1a1a">Before: four doors from car to counter</text>
+  <text x="12" y="34" font-size="12" font-family="sans-serif" fill="#4a4a4a">Garage, mudroom, hall, laundry, kitchen.</text>
+  <rect x="28" y="68" width="224" height="112" fill="#f4f6f5" stroke="#8a8f8c" stroke-width="1.5" stroke-dasharray="6 4" />
+  <polygon points="28.00,68.00 84.00,68.00 84.00,152.00 28.00,152.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="56.0" y="110.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Garage</text>
+    <polygon points="84.00,68.00 112.00,68.00 112.00,110.00 84.00,110.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="98.0" y="89.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Mudroom</text>
+    <polygon points="112.00,68.00 133.00,68.00 133.00,152.00 112.00,152.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="122.5" y="110.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Hall</text>
+    <polygon points="133.00,68.00 175.00,68.00 175.00,110.00 133.00,110.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="154.0" y="89.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Laundry</text>
+    <polygon points="175.00,68.00 231.00,68.00 231.00,124.00 175.00,124.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="203.0" y="96.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Kitchen</text>
+  <line x1="79.1" y1="89.0" x2="88.9" y2="89.0" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="107.1" y1="89.0" x2="116.9" y2="89.0" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="128.1" y1="84.8" x2="137.9" y2="84.8" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="170.1" y1="89.0" x2="179.9" y2="89.0" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+</svg></figure><figure><svg xmlns="http://www.w3.org/2000/svg" width="280" height="208" viewBox="0 0 280 208">
+  <rect width="100%" height="100%" fill="#ffffff" />
+  <text x="12" y="18" font-size="14" font-weight="600" font-family="sans-serif" fill="#1a1a1a">After: garage, mudroom, kitchen</text>
+  <text x="12" y="34" font-size="12" font-family="sans-serif" fill="#4a4a4a">Two doors. Shopping goes straight in.</text>
+  <rect x="28" y="68" width="224" height="112" fill="#f4f6f5" stroke="#8a8f8c" stroke-width="1.5" stroke-dasharray="6 4" />
+  <polygon points="28.00,68.00 84.00,68.00 84.00,152.00 28.00,152.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="56.0" y="110.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Garage</text>
+    <polygon points="84.00,68.00 112.00,68.00 112.00,110.00 84.00,110.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="98.0" y="89.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Mudroom</text>
+    <polygon points="112.00,68.00 168.00,68.00 168.00,124.00 112.00,124.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="140.0" y="96.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Kitchen</text>
+  <line x1="79.1" y1="89.0" x2="88.9" y2="89.0" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="107.1" y1="89.0" x2="116.9" y2="89.0" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+</svg></figure></div>
+</div><div class="rule"><h4><span class="tag acc">ACCEPTED</span>A WC must not open directly onto a kitchen or dining room</h4>
+<p class="src">Residential building regulation (England &amp; Wales Approved Document G states it outright) and much older general practice.</p>
+<p>A room with a toilet in it gets a separating space &mdash; a small lobby, a hall, a second door &mdash; before a room where food is prepared or eaten. Opening the WC should not open it onto the food, and nobody should sit at a dining table looking at a WC door.</p>
+<p>The important half of this rule is what it does <em>not</em> say. It has no objection to a WC being <em>next to</em> a kitchen. Sharing a wall is normal and often deliberate, because it puts both rooms' plumbing on a single stack and saves money. It is specifically the <em>doorway</em> that is the defect, so the tool looks at where the doors are, not at which rooms touch.</p>
+<p>This counts as a real problem, not a suggestion. Nothing the tool already had could catch it: its privacy rules skip bathrooms on purpose, because a bathroom is allowed to open onto either a public or a private room.</p>
+<div class="pair"><figure><svg xmlns="http://www.w3.org/2000/svg" width="182" height="180" viewBox="0 0 182 180">
+  <rect width="100%" height="100%" fill="#ffffff" />
+  <text x="12" y="18" font-size="14" font-weight="600" font-family="sans-serif" fill="#1a1a1a">Before: the WC door opens onto the kitchen</text>
+  <text x="12" y="34" font-size="12" font-family="sans-serif" fill="#4a4a4a">One door, straight from the WC into the room food is prepared in.</text>
+  <rect x="28" y="68" width="126" height="84" fill="#f4f6f5" stroke="#8a8f8c" stroke-width="1.5" stroke-dasharray="6 4" />
+  <polygon points="28.00,68.00 84.00,68.00 84.00,124.00 28.00,124.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="56.0" y="96.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Kitchen</text>
+    <polygon points="84.00,68.00 112.00,68.00 112.00,103.00 84.00,103.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="98.0" y="85.5" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">WC</text>
+  <line x1="79.1" y1="84.8" x2="88.9" y2="84.8" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+</svg></figure><figure><svg xmlns="http://www.w3.org/2000/svg" width="182" height="180" viewBox="0 0 182 180">
+  <rect width="100%" height="100%" fill="#ffffff" />
+  <text x="12" y="18" font-size="14" font-weight="600" font-family="sans-serif" fill="#1a1a1a">After: a lobby in between</text>
+  <text x="12" y="34" font-size="12" font-family="sans-serif" fill="#4a4a4a">The same two rooms, one small lobby, two doors.</text>
+  <rect x="28" y="68" width="126" height="84" fill="#f4f6f5" stroke="#8a8f8c" stroke-width="1.5" stroke-dasharray="6 4" />
+  <polygon points="28.00,68.00 84.00,68.00 84.00,124.00 28.00,124.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="56.0" y="96.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Kitchen</text>
+    <polygon points="84.00,68.00 105.00,68.00 105.00,124.00 84.00,124.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="94.5" y="96.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Lobby</text>
+    <polygon points="105.00,68.00 133.00,68.00 133.00,103.00 105.00,103.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="119.0" y="85.5" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">WC</text>
+  <line x1="79.1" y1="84.8" x2="88.9" y2="84.8" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="100.1" y1="79.2" x2="109.9" y2="79.2" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+</svg></figure></div>
+</div><div class="status"><h5>Did anything else get worse?</h5><p>Nothing regressed. All 56 scenarios scored exactly what they scored before, on both rules.</p></div><div class="status"><h5>Search tuning this pass</h5><p>Search re-tuned (seed 7, 30 rounds). Average problems per scenario 21.16 &rarr; 21.13; clean rate 0% &rarr; 0%. Kept as the best config so far, but it is not a real improvement &mdash; see <em>What the numbers actually say</em> at the bottom.</p></div></section><section><h2>Pass 2</h2><p class="lede">Two rules about whether what is drawn could actually be built.</p><div class="rule"><h4><span class="tag acc">ACCEPTED</span>A door needs enough shared wall to physically exist</h4>
+<p class="src">A common interior door leaf is 762&nbsp;mm; codes put a required exit door's clear opening at 813&nbsp;mm (IRC R311.2).</p>
+<p>Two rooms can clip past each other at a corner, sharing a few centimetres of wall, and the tool would happily draw a door across that sliver &mdash; and then treat those two rooms as connected for every other purpose. Below about 0.9&nbsp;m of shared wall there is no doorway, whatever the drawing says.</p>
+<p>This matters more than it sounds, because of a promise the tool makes elsewhere: when it shows you a route through the house, it is asserting you can actually walk it. That is why two rooms sharing a wall with no door in it get no connection at all &mdash; not a faint one. A door on 12&nbsp;cm of wall is that same false claim arriving from the other direction, so it is treated as a real problem.</p>
+<p>It is scored by how far short the wall falls. A wall 5&nbsp;cm short is something a designer fixes by nudging one wall; a wall 5&nbsp;cm long is a fiction. Both are real, and they are not the same size of real.</p>
+<div class="pair"><figure><svg xmlns="http://www.w3.org/2000/svg" width="196" height="222" viewBox="0 0 196 222">
+  <rect width="100%" height="100%" fill="#ffffff" />
+  <text x="12" y="18" font-size="14" font-weight="600" font-family="sans-serif" fill="#1a1a1a">Before: a door on 30 cm of shared wall</text>
+  <text x="12" y="34" font-size="12" font-family="sans-serif" fill="#4a4a4a">The two rooms only overlap by 0.30 m. No door fits there.</text>
+  <rect x="28" y="68" width="140" height="126" fill="#f4f6f5" stroke="#8a8f8c" stroke-width="1.5" stroke-dasharray="6 4" />
+  <polygon points="28.00,68.00 84.00,68.00 84.00,124.00 28.00,124.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="56.0" y="96.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Hall</text>
+    <polygon points="84.00,119.80 140.00,119.80 140.00,175.80 84.00,175.80" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="112.0" y="147.8" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bedroom</text>
+  <line x1="79.1" y1="121.8" x2="88.9" y2="121.8" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+</svg></figure><figure><svg xmlns="http://www.w3.org/2000/svg" width="196" height="222" viewBox="0 0 196 222">
+  <rect width="100%" height="100%" fill="#ffffff" />
+  <text x="12" y="18" font-size="14" font-weight="600" font-family="sans-serif" fill="#1a1a1a">After: a full shared wall</text>
+  <text x="12" y="34" font-size="12" font-family="sans-serif" fill="#4a4a4a">4 m of wall to cut a doorway into.</text>
+  <rect x="28" y="68" width="140" height="126" fill="#f4f6f5" stroke="#8a8f8c" stroke-width="1.5" stroke-dasharray="6 4" />
+  <polygon points="28.00,68.00 84.00,68.00 84.00,124.00 28.00,124.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="56.0" y="96.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Hall</text>
+    <polygon points="84.00,68.00 140.00,68.00 140.00,124.00 84.00,124.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="112.0" y="96.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bedroom</text>
+  <line x1="79.1" y1="96.0" x2="88.9" y2="96.0" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+</svg></figure></div>
+</div><div class="rule"><h4><span class="tag acc">ACCEPTED</span>Every room with a bed in it needs a wall facing outside</h4>
+<p class="src">The emergency escape and rescue opening required in every sleeping room (IRC R310, and near-universal elsewhere).</p>
+<p>Every bedroom needs a window or door big enough to climb out of and for a firefighter to climb in through. A room with no outside wall at all cannot have one. A landlocked bedroom is not an awkward bedroom &mdash; it is not a bedroom.</p>
+<p>The tool measures outside-facing wall, not windows, and says so plainly: it has no window objects, and inventing some to answer this would be inventing the answer. What it can say for certain is that a room with no wall facing outside can have no window at all.</p>
+<div class="pair"><figure><svg xmlns="http://www.w3.org/2000/svg" width="210" height="250" viewBox="0 0 210 250">
+  <rect width="100%" height="100%" fill="#ffffff" />
+  <text x="12" y="18" font-size="14" font-weight="600" font-family="sans-serif" fill="#1a1a1a">Before: a bedroom boxed in on all four sides</text>
+  <text x="12" y="34" font-size="12" font-family="sans-serif" fill="#4a4a4a">No wall faces outside. No window, no way out in a fire.</text>
+  <rect x="28" y="68" width="154" height="154" fill="#f4f6f5" stroke="#8a8f8c" stroke-width="1.5" stroke-dasharray="6 4" />
+  <polygon points="70.00,110.00 112.00,110.00 112.00,152.00 70.00,152.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="91.0" y="131.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bedroom</text>
+    <polygon points="56.00,68.00 126.00,68.00 126.00,110.00 56.00,110.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="91.0" y="89.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Store</text>
+    <polygon points="56.00,152.00 126.00,152.00 126.00,194.00 56.00,194.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="91.0" y="173.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Store</text>
+    <polygon points="28.00,96.00 70.00,96.00 70.00,166.00 28.00,166.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="49.0" y="131.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Store</text>
+    <polygon points="112.00,96.00 154.00,96.00 154.00,166.00 112.00,166.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="133.0" y="131.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Store</text>
+  
+</svg></figure><figure><svg xmlns="http://www.w3.org/2000/svg" width="210" height="250" viewBox="0 0 210 250">
+  <rect width="100%" height="100%" fill="#ffffff" />
+  <text x="12" y="18" font-size="14" font-weight="600" font-family="sans-serif" fill="#1a1a1a">After: one side opened up</text>
+  <text x="12" y="34" font-size="12" font-family="sans-serif" fill="#4a4a4a">3 m of wall facing outside is a window.</text>
+  <rect x="28" y="68" width="154" height="154" fill="#f4f6f5" stroke="#8a8f8c" stroke-width="1.5" stroke-dasharray="6 4" />
+  <polygon points="70.00,110.00 112.00,110.00 112.00,152.00 70.00,152.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="91.0" y="131.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bedroom</text>
+    <polygon points="56.00,68.00 126.00,68.00 126.00,110.00 56.00,110.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="91.0" y="89.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Store</text>
+    <polygon points="56.00,152.00 126.00,152.00 126.00,194.00 56.00,194.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="91.0" y="173.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Store</text>
+    <polygon points="28.00,96.00 70.00,96.00 70.00,166.00 28.00,166.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="49.0" y="131.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Store</text>
+    <polygon points="147.00,96.00 189.00,96.00 189.00,166.00 147.00,166.00" fill="#f8d3ce" stroke="#c0392b" stroke-width="1.5" stroke-dasharray="3 2" />
+    <text x="168.0" y="131.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Store</text>
+  
+</svg></figure></div>
+</div><div class="rule"><h4><span class="tag rev">REVERTED</span>The same rule applied to every habitable room, not just bedrooms</h4>
+<p class="src">Natural light and ventilation for habitable rooms (IRC R303.1).</p>
+<p>This was the first version of the rule above, and it was pulled. It flagged the tool's own demonstration house &mdash; correctly, in that the dining room there genuinely has no outside wall, and wrongly, in that the code has an explicit and very commonly used exception: an inside room may take its light and air from an adjoining room through a wide enough opening. That is exactly how a dining room open to a living room is normally justified.</p>
+<p>This tool models solid walls and doors, and nothing in between. It cannot tell a wide open archway from masonry, so it would have flagged a completely ordinary arrangement as a defect. The escape-window rule has no such exception &mdash; a bedroom cannot borrow an escape route from the room next door &mdash; so the narrower version is the one this tool can honestly stand behind.</p>
+<p class="note">Reverted for the right reason and not to make a test pass: the demonstration house's dining room stops being reported because the rule no longer makes any claim about dining rooms, not because the check was weakened.</p>
+</div><div class="status"><h5>Did anything else get worse?</h5><p>Nothing regressed. All 56 scenarios unchanged.</p></div><div class="status"><h5>Search tuning this pass</h5><p>Re-tuned twice. The first attempt reused pass&nbsp;1's random seed and re-derived pass&nbsp;1's answer digit for digit &mdash; the record correctly refused it, and the seed is now varied per run. Second attempt (seed 11): average problems 21.20 &rarr; 21.14, average suggestions 18.74 &rarr; 18.46, clean rate 0%. Adopted.</p></div></section><section><h2>Pass 3</h2><p class="lede">Two rules about whether a room is pleasant and usable, rather than whether it works.</p><div class="rule"><h4><span class="tag acc">ACCEPTED</span>A room people sit in wants two sides facing out, not one</h4>
+<p class="src">Dual-aspect design; discouragement of single-aspect dwellings is written into residential design guidance, and is far older as practice in hot climates.</p>
+<p>Air only moves through a room if it has somewhere to come in and somewhere to go out. Windows on one side give a room daylight and nothing else: it takes the afternoon sun, holds the heat, and has no way to flush it out overnight. A second side &mdash; opposite for a real through draught, or round a corner for a weaker one &mdash; is what lets a room cool itself.</p>
+<p>In this climate that is the difference between a bedroom that is usable in summer without running the air conditioning all night and one that is not. It is recorded as a suggestion rather than a fault, on the same principle as everything else in that category: the room works, it is just more expensive to live in.</p>
+<div class="pair"><figure><svg xmlns="http://www.w3.org/2000/svg" width="210" height="222" viewBox="0 0 210 222">
+  <rect width="100%" height="100%" fill="#ffffff" />
+  <text x="12" y="18" font-size="14" font-weight="600" font-family="sans-serif" fill="#1a1a1a">Before: one side facing out</text>
+  <text x="12" y="34" font-size="12" font-family="sans-serif" fill="#4a4a4a">Neighbours left, right and behind. Air comes in and has nowhere to go.</text>
+  <rect x="28" y="68" width="154" height="126" fill="#f4f6f5" stroke="#8a8f8c" stroke-width="1.5" stroke-dasharray="6 4" />
+  <polygon points="70.00,110.00 112.00,110.00 112.00,152.00 70.00,152.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="91.0" y="131.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bedroom</text>
+    <polygon points="28.00,110.00 70.00,110.00 70.00,152.00 28.00,152.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="49.0" y="131.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bedroom</text>
+    <polygon points="112.00,110.00 154.00,110.00 154.00,152.00 112.00,152.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="133.0" y="131.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bedroom</text>
+    <polygon points="70.00,68.00 112.00,68.00 112.00,110.00 70.00,110.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="91.0" y="89.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Store</text>
+  
+</svg></figure><figure><svg xmlns="http://www.w3.org/2000/svg" width="210" height="222" viewBox="0 0 210 222">
+  <rect width="100%" height="100%" fill="#ffffff" />
+  <text x="12" y="18" font-size="14" font-weight="600" font-family="sans-serif" fill="#1a1a1a">After: front and back</text>
+  <text x="12" y="34" font-size="12" font-family="sans-serif" fill="#4a4a4a">The same bedroom, now open on two opposite sides.</text>
+  <rect x="28" y="68" width="154" height="126" fill="#f4f6f5" stroke="#8a8f8c" stroke-width="1.5" stroke-dasharray="6 4" />
+  <polygon points="70.00,110.00 112.00,110.00 112.00,152.00 70.00,152.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="91.0" y="131.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bedroom</text>
+    <polygon points="28.00,110.00 70.00,110.00 70.00,152.00 28.00,152.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="49.0" y="131.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bedroom</text>
+    <polygon points="112.00,110.00 154.00,110.00 154.00,152.00 112.00,152.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="133.0" y="131.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bedroom</text>
+  
+</svg></figure></div>
+</div><div class="rule"><h4><span class="tag acc">ACCEPTED</span>A room stretched past three times longer than it is wide</h4>
+<p class="src">A planning heuristic, and flagged as such &mdash; the standard literature discusses room proportion in the 1:1 to 1:2 range and treats anything past roughly 1:2.5 as awkward.</p>
+<p>Past about 1:3, a room stops being a room you can arrange furniture in and becomes a corridor with a use attached: the bed or the table has to sit at one end and the rest is left over.</p>
+<p>This is the one rule in the batch that is a rule of thumb rather than a code requirement, and it is labelled that way in the code itself, using the same wording the project already uses for its other reasoned-but-uncited rules. The threshold is set at 1:3 deliberately &mdash; past the point where anyone would argue, rather than in the middle of the range.</p>
+<p>It is also the only rule in the batch that gives the automatic search something it can steadily improve. The search resizes rooms constantly, and until now nothing priced the shape it left them in.</p>
+<div class="pair"><figure><svg xmlns="http://www.w3.org/2000/svg" width="252" height="208" viewBox="0 0 252 208">
+  <rect width="100%" height="100%" fill="#ffffff" />
+  <text x="12" y="18" font-size="14" font-weight="600" font-family="sans-serif" fill="#1a1a1a">Before: 12 m by 3 m</text>
+  <text x="12" y="34" font-size="12" font-family="sans-serif" fill="#4a4a4a">Four times longer than it is wide. The bed goes at one end; the rest is a passage.</text>
+  <rect x="28" y="68" width="196" height="112" fill="#f4f6f5" stroke="#8a8f8c" stroke-width="1.5" stroke-dasharray="6 4" />
+  <polygon points="35.00,96.00 203.00,96.00 203.00,138.00 35.00,138.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="119.0" y="117.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bedroom</text>
+  
+</svg></figure><figure><svg xmlns="http://www.w3.org/2000/svg" width="252" height="208" viewBox="0 0 252 208">
+  <rect width="100%" height="100%" fill="#ffffff" />
+  <text x="12" y="18" font-size="14" font-weight="600" font-family="sans-serif" fill="#1a1a1a">After: 6 m by 6 m</text>
+  <text x="12" y="34" font-size="12" font-family="sans-serif" fill="#4a4a4a">Same floor area, furnishable.</text>
+  <rect x="28" y="68" width="196" height="112" fill="#f4f6f5" stroke="#8a8f8c" stroke-width="1.5" stroke-dasharray="6 4" />
+  <polygon points="35.00,75.00 119.00,75.00 119.00,159.00 35.00,159.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="77.0" y="117.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bedroom</text>
+  
+</svg></figure></div>
+<p class="note">One existing test needed its fixture resized, and it is worth saying why that is not a test being bent to fit. That test used a 30&nbsp;m &times; 4&nbsp;m living room, sized that way purely to dodge an unrelated threshold &mdash; at 7.5:1 it is now also an over-long room, correctly. What the test asserts is unchanged; only the dimensions moved.</p>
+</div><div class="status"><h5>Did anything else get worse?</h5><p>Nothing regressed. All 56 scenarios unchanged &mdash; both rules are suggestions, so neither can raise a scenario's problem count.</p></div><div class="status"><h5>Search tuning this pass</h5><p>Re-tuned (seed 23). Average problems 21.23 &rarr; 21.14, average suggestions 19.37 &rarr; 18.96, clean rate 0%. Adopted &mdash; and the first run where the suggestion number moved for a reason other than noise, because room shape is now something the search can act on.</p></div></section><section><h2>Pass 4</h2><p class="lede">Two rules about construction: what pipes cost, and what fits in a wall.</p><div class="rule"><h4><span class="tag acc">ACCEPTED</span>An upstairs wet room should sit over a wet room below</h4>
+<p class="src">Plumbing stack sharing &mdash; one of the oldest cost rules in residential construction.</p>
+<p>Bathrooms, kitchens and laundries all need water in, waste out and a vent up. Stack them and those pipes run together in one service void. Scatter them and each one needs its own boxed-in stack, dropped through whatever room happens to be underneath and boxed in there too.</p>
+<p>It is a maintenance rule as much as a cost one: a stack you can reach in one place is a stack you can fix in one place. Recorded as a suggestion &mdash; a house with scattered bathrooms works perfectly well and simply costs more to build.</p>
+<p>Ground-floor wet rooms are never flagged: there is nothing below them, and a single-storey house should not be told its plumbing is badly arranged.</p>
+<div class="pair"><figure><svg xmlns="http://www.w3.org/2000/svg" width="210" height="180" viewBox="0 0 210 180">
+  <rect width="100%" height="100%" fill="#ffffff" />
+  <text x="12" y="18" font-size="14" font-weight="600" font-family="sans-serif" fill="#1a1a1a">Before: the upstairs bathroom sits over a bedroom</text>
+  <text x="12" y="34" font-size="12" font-family="sans-serif" fill="#4a4a4a">Both floors drawn over each other. Its pipes need a stack of their own, dropped through the bedroom below.</text>
+  <rect x="28" y="68" width="154" height="84" fill="#f4f6f5" stroke="#8a8f8c" stroke-width="1.5" stroke-dasharray="6 4" />
+  <polygon points="35.00,75.00 77.00,75.00 77.00,117.00 35.00,117.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="56.0" y="96.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">bathroom</text>
+    <polygon points="98.00,75.00 154.00,75.00 154.00,131.00 98.00,131.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="126.0" y="103.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bedroom (ground)</text>
+    <polygon points="98.00,75.00 140.00,75.00 140.00,117.00 98.00,117.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="119.0" y="96.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bathroom (above)</text>
+  
+</svg></figure><figure><svg xmlns="http://www.w3.org/2000/svg" width="210" height="180" viewBox="0 0 210 180">
+  <rect width="100%" height="100%" fill="#ffffff" />
+  <text x="12" y="18" font-size="14" font-weight="600" font-family="sans-serif" fill="#1a1a1a">After: it sits over the bathroom below</text>
+  <text x="12" y="34" font-size="12" font-family="sans-serif" fill="#4a4a4a">One shared stack, reachable in one place.</text>
+  <rect x="28" y="68" width="154" height="84" fill="#f4f6f5" stroke="#8a8f8c" stroke-width="1.5" stroke-dasharray="6 4" />
+  <polygon points="35.00,75.00 77.00,75.00 77.00,117.00 35.00,117.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="56.0" y="96.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">bathroom</text>
+    <polygon points="98.00,75.00 154.00,75.00 154.00,131.00 98.00,131.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="126.0" y="103.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bedroom (ground)</text>
+    <polygon points="35.00,75.00 77.00,75.00 77.00,117.00 35.00,117.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="56.0" y="96.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bathroom (above)</text>
+  
+</svg></figure></div>
+</div><div class="rule"><h4><span class="tag acc">ACCEPTED</span>Two doorways cannot be cut into the same stretch of wall</h4>
+<p class="src">Door width and clearance &mdash; the most basic dimensional discipline in laying out a room.</p>
+<p>Two openings less than a door's width apart in one wall are not two doors. Their frames overlap and the leaves foul each other, so one of them has to move before either can be built or used.</p>
+<p>The tool restricts this to two doors in the <em>same</em> wall. Two doors 0.6&nbsp;m apart around a corner also interfere in practice, but how badly depends on which way each door is hung and which way it swings &mdash; and this tool records where a doorway is, not which side its hinges are on. Rather than guess a hinge, it reports only the case that is true however the doors are hung.</p>
+<div class="pair"><figure><svg xmlns="http://www.w3.org/2000/svg" width="168" height="236" viewBox="0 0 168 236">
+  <rect width="100%" height="100%" fill="#ffffff" />
+  <text x="12" y="18" font-size="14" font-weight="600" font-family="sans-serif" fill="#1a1a1a">Before: two doors 0.48 m apart in one wall</text>
+  <text x="12" y="34" font-size="12" font-family="sans-serif" fill="#4a4a4a">Their frames overlap. Only one of them can actually be cut.</text>
+  <rect x="28" y="68" width="112" height="140" fill="#f4f6f5" stroke="#8a8f8c" stroke-width="1.5" stroke-dasharray="6 4" />
+  <polygon points="28.00,68.00 56.00,68.00 56.00,180.00 28.00,180.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="42.0" y="124.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Hall</text>
+    <polygon points="56.00,68.00 112.00,68.00 112.00,124.00 56.00,124.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="84.0" y="96.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bedroom</text>
+    <polygon points="56.00,124.00 112.00,124.00 112.00,180.00 56.00,180.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="84.0" y="152.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bedroom</text>
+  <line x1="51.1" y1="120.6" x2="60.9" y2="120.6" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="51.1" y1="127.4" x2="60.9" y2="127.4" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+</svg></figure><figure><svg xmlns="http://www.w3.org/2000/svg" width="168" height="236" viewBox="0 0 168 236">
+  <rect width="100%" height="100%" fill="#ffffff" />
+  <text x="12" y="18" font-size="14" font-weight="600" font-family="sans-serif" fill="#1a1a1a">After: one door to each room, properly spaced</text>
+  <text x="12" y="34" font-size="12" font-family="sans-serif" fill="#4a4a4a">2 m between them.</text>
+  <rect x="28" y="68" width="112" height="140" fill="#f4f6f5" stroke="#8a8f8c" stroke-width="1.5" stroke-dasharray="6 4" />
+  <polygon points="28.00,68.00 56.00,68.00 56.00,180.00 28.00,180.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="42.0" y="124.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Hall</text>
+    <polygon points="56.00,68.00 112.00,68.00 112.00,124.00 56.00,124.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="84.0" y="96.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bedroom</text>
+    <polygon points="56.00,124.00 112.00,124.00 112.00,180.00 56.00,180.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="84.0" y="152.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bedroom</text>
+  <line x1="51.1" y1="96.0" x2="60.9" y2="96.0" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="51.1" y1="152.0" x2="60.9" y2="152.0" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+</svg></figure></div>
+</div><div class="status"><h5>Did anything else get worse?</h5><p>Nothing regressed. All 56 scenarios unchanged. The wet-room rule could not possibly move them &mdash; every scenario in the suite is single-storey.</p></div><div class="status"><h5>Search tuning this pass</h5><p>Re-tuned (seed 41) and the result was <strong>rejected</strong>: it tied on problems (21.00) and was worse on suggestions (19.07 against the sitting config's 18.71), so the stored config did not move. The record now keeps every run, won or lost &mdash; a search direction that was tried and found wanting is more useful to the next person than one nobody ever tried.</p></div></section><section><h2>Pass 5</h2><p class="lede">Two rules about receiving guests &mdash; the part of this brief the tool understood least.</p><div class="rule"><h4><span class="tag acc">ACCEPTED</span>A diwaniya is entered from the street, not through the house</h4>
+<p class="src">The institution itself &mdash; and a convention this project had already written down in its own notes without ever checking it.</p>
+<p>A diwaniya receives visitors who have no relationship with the family, at hours the family is not entertaining. The entire point of the room is that a guest gets in and out without ever crossing the household's private life. That only works if the room has its own door onto the street.</p>
+<p>The project's own notes said exactly this &mdash; that the diwaniya's street door is what keeps a guest's movement out of the household's, and that the room type only marks the destination. That was true in an unhelpful way: the type marked the destination and nothing ever verified the door.</p>
+<p>This is a real fault, not a matter of degree. A diwaniya you reach through the family's hallway is not a slightly compromised diwaniya; it is a second sitting room, and the household has lost the separation it built the room for. None of the tool's existing checks could see it: the room is reachable, its doors skip no privacy step, and the existing diwaniya rules only talk about shared walls.</p>
+<p>It is set as a flag on the room type rather than a hard-coded check for one room name, so a project with no diwaniya has nothing flagged, and a project whose guest house or home surgery wants the same treatment gets it by setting one field.</p>
+<div class="pair"><figure><svg xmlns="http://www.w3.org/2000/svg" width="431.2" height="425.59999999999997" viewBox="0 0 431.2 425.59999999999997">
+  <rect width="100%" height="100%" fill="#ffffff" />
+  <text x="12" y="18" font-size="14" font-weight="600" font-family="sans-serif" fill="#1a1a1a">Before: the Extended Gulf scenario as the search leaves it</text>
+  <text x="12" y="34" font-size="12" font-family="sans-serif" fill="#4a4a4a">One exterior door (orange), on the Entry. The Diwaniya has none.</text>
+  <text x="12" y="50" font-size="12" font-family="sans-serif" fill="#4a4a4a">1 room flagged: guests can only reach it through the family's front door.</text>
+  <rect x="28" y="84" width="375.2" height="313.59999999999997" fill="#f4f6f5" stroke="#8a8f8c" stroke-width="1.5" stroke-dasharray="6 4" />
+  <polygon points="152.54,271.09 169.32,270.33 170.13,288.25 153.34,289.01" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="161.3" y="279.7" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Entry / Foyer 1</text>
+    <polygon points="132.41,277.59 149.21,277.38 149.59,307.77 132.79,307.98" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="141.0" y="292.7" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Hallway 2</text>
+    <polygon points="214.80,87.87 277.76,90.24 274.86,167.19 211.90,164.82" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="244.8" y="127.5" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Living Room 3</text>
+    <polygon points="92.51,204.15 146.88,204.44 146.59,257.36 92.23,257.07" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="119.6" y="230.8" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Dining Room 4</text>
+    <polygon points="147.41,203.99 197.70,202.95 198.84,257.90 148.56,258.95" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="173.1" y="230.9" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Kitchen 5</text>
+    <polygon points="29.02,211.13 80.58,210.31 81.41,262.66 29.85,263.48" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="55.2" y="236.9" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Master Bedroom 6</text>
+    <polygon points="199.54,203.09 245.33,200.78 247.92,252.29 202.14,254.59" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="223.7" y="227.7" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bedroom 7</text>
+    <polygon points="28.45,339.88 70.87,327.92 84.78,377.22 42.36,389.18" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="56.6" y="358.6" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bedroom 8</text>
+    <polygon points="362.24,276.14 400.73,276.37 400.45,323.41 361.96,323.18" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="381.3" y="299.8" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bedroom 9</text>
+    <polygon points="87.01,275.56 112.24,274.13 113.76,301.09 88.54,302.51" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="100.4" y="288.3" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bathroom 10</text>
+    <polygon points="183.26,273.37 208.74,273.37 208.74,303.43 183.26,303.43" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="196.0" y="288.4" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bathroom 11</text>
+    <polygon points="209.16,275.97 235.38,270.55 241.64,300.83 215.42,306.25" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="225.4" y="288.4" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bathroom 12</text>
+    <polygon points="274.57,285.32 295.56,285.70 294.89,322.41 273.90,322.02" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="284.7" y="303.9" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bathroom 13</text>
+    <polygon points="242.40,271.45 267.60,271.75 267.20,305.35 242.00,305.05" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="254.8" y="288.4" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Laundry 14</text>
+    <polygon points="301.01,187.99 333.94,188.97 333.04,218.79 300.12,217.80" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="317.0" y="203.4" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Mudroom 15</text>
+    <polygon points="293.86,84.02 371.41,89.40 365.20,178.88 287.65,173.50" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="329.5" y="131.4" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Double Garage 16</text>
+    <polygon points="39.29,84.38 126.39,92.40 116.11,204.02 29.01,196.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="77.7" y="144.2" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Diwaniya 17</text>
+    <polygon points="131.48,89.48 187.81,90.16 187.02,155.41 130.69,154.73" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="159.3" y="122.4" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Reception 18</text>
+    <polygon points="247.21,206.79 286.29,198.96 296.48,249.78 257.39,257.61" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="271.8" y="228.3" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Driver Room 19</text>
+    <polygon points="301.48,280.23 322.47,280.94 321.47,310.10 300.48,309.38" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="311.5" y="295.2" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">driver_bathroom</text>
+    <polygon points="32.24,269.67 72.52,268.44 73.98,316.19 33.70,317.42" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="53.1" y="292.9" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Nanny Room 21</text>
+    <polygon points="331.66,268.49 355.35,269.29 354.09,306.27 330.41,305.47" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="342.9" y="287.4" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">nanny_bathroom</text>
+  <line x1="157.8" y1="279.8" x2="148.0" y2="280.3" stroke="#b35c00" stroke-width="3" stroke-linecap="round" />
+</svg></figure><figure><svg xmlns="http://www.w3.org/2000/svg" width="431.2" height="409.59999999999997" viewBox="0 0 431.2 409.59999999999997">
+  <rect width="100%" height="100%" fill="#ffffff" />
+  <text x="12" y="18" font-size="14" font-weight="600" font-family="sans-serif" fill="#1a1a1a">After: the same plan with a street door on the Diwaniya</text>
+  <text x="12" y="34" font-size="12" font-family="sans-serif" fill="#4a4a4a">One added exterior door and the finding clears. Nothing else moved.</text>
+  <rect x="28" y="68" width="375.2" height="313.59999999999997" fill="#f4f6f5" stroke="#8a8f8c" stroke-width="1.5" stroke-dasharray="6 4" />
+  <polygon points="152.54,255.09 169.32,254.33 170.13,272.25 153.34,273.01" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="161.3" y="263.7" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Entry / Foyer 1</text>
+    <polygon points="132.41,261.59 149.21,261.38 149.59,291.77 132.79,291.98" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="141.0" y="276.7" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Hallway 2</text>
+    <polygon points="214.80,71.87 277.76,74.24 274.86,151.19 211.90,148.82" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="244.8" y="111.5" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Living Room 3</text>
+    <polygon points="92.51,188.15 146.88,188.44 146.59,241.36 92.23,241.07" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="119.6" y="214.8" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Dining Room 4</text>
+    <polygon points="147.41,187.99 197.70,186.95 198.84,241.90 148.56,242.95" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="173.1" y="214.9" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Kitchen 5</text>
+    <polygon points="29.02,195.13 80.58,194.31 81.41,246.66 29.85,247.48" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="55.2" y="220.9" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Master Bedroom 6</text>
+    <polygon points="199.54,187.09 245.33,184.78 247.92,236.29 202.14,238.59" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="223.7" y="211.7" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bedroom 7</text>
+    <polygon points="28.45,323.88 70.87,311.92 84.78,361.22 42.36,373.18" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="56.6" y="342.6" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bedroom 8</text>
+    <polygon points="362.24,260.14 400.73,260.37 400.45,307.41 361.96,307.18" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="381.3" y="283.8" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bedroom 9</text>
+    <polygon points="87.01,259.56 112.24,258.13 113.76,285.09 88.54,286.51" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="100.4" y="272.3" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bathroom 10</text>
+    <polygon points="183.26,257.37 208.74,257.37 208.74,287.43 183.26,287.43" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="196.0" y="272.4" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bathroom 11</text>
+    <polygon points="209.16,259.97 235.38,254.55 241.64,284.83 215.42,290.25" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="225.4" y="272.4" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bathroom 12</text>
+    <polygon points="274.57,269.32 295.56,269.70 294.89,306.41 273.90,306.02" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="284.7" y="287.9" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bathroom 13</text>
+    <polygon points="242.40,255.45 267.60,255.75 267.20,289.35 242.00,289.05" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="254.8" y="272.4" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Laundry 14</text>
+    <polygon points="301.01,171.99 333.94,172.97 333.04,202.79 300.12,201.80" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="317.0" y="187.4" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Mudroom 15</text>
+    <polygon points="293.86,68.02 371.41,73.40 365.20,162.88 287.65,157.50" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="329.5" y="115.4" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Double Garage 16</text>
+    <polygon points="39.29,68.38 126.39,76.40 116.11,188.02 29.01,180.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="77.7" y="128.2" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Diwaniya 17</text>
+    <polygon points="131.48,73.48 187.81,74.16 187.02,139.41 130.69,138.73" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="159.3" y="106.4" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Reception 18</text>
+    <polygon points="247.21,190.79 286.29,182.96 296.48,233.78 257.39,241.61" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="271.8" y="212.3" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Driver Room 19</text>
+    <polygon points="301.48,264.23 322.47,264.94 321.47,294.10 300.48,293.38" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="311.5" y="279.2" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">driver_bathroom</text>
+    <polygon points="32.24,253.67 72.52,252.44 73.98,300.19 33.70,301.42" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="53.1" y="276.9" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Nanny Room 21</text>
+    <polygon points="331.66,252.49 355.35,253.29 354.09,290.27 330.41,289.47" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="342.9" y="271.4" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">nanny_bathroom</text>
+  <line x1="157.8" y1="263.8" x2="148.0" y2="264.3" stroke="#b35c00" stroke-width="3" stroke-linecap="round" />
+    <line x1="73.0" y1="179.1" x2="72.1" y2="188.9" stroke="#b35c00" stroke-width="3" stroke-linecap="round" />
+</svg></figure></div>
+<p class="note">This is the one rule in the whole batch that changed the recorded numbers &mdash; see the regression note below.</p>
+</div><div class="rule"><h4><span class="tag acc">ACCEPTED</span>A guest-receiving room should have a guest WC near it</h4>
+<p class="src">The guest WC: a visitor should not need the family's own bathroom.</p>
+<p>A room built for receiving people who are not family needs a WC those people can use without walking into the household's private wing. Without one, the separation the diwaniya or reception room exists to create holds right up until a visitor needs the bathroom, and then it does not.</p>
+<p>It asks specifically for a powder room, not a full family bathroom: a family bathroom near the diwaniya is not the same provision, it is the family's bathroom with guests in it. And it asks for it within two doors, not directly off the room &mdash; a small lobby in between is the normal and better arrangement.</p>
+<p>One honest limit, worth stating: the tool can only say <em>the powder room you have is in the wrong place</em>. It cannot say <em>you should have one</em>, because it never penalises a house for lacking a room type entirely &mdash; the same reason it never criticises a house for having no garage.</p>
+<div class="pair"><figure><svg xmlns="http://www.w3.org/2000/svg" width="266" height="236" viewBox="0 0 266 236">
+  <rect width="100%" height="100%" fill="#ffffff" />
+  <text x="12" y="18" font-size="14" font-weight="600" font-family="sans-serif" fill="#1a1a1a">Before: the only powder room is past a bedroom</text>
+  <text x="12" y="34" font-size="12" font-family="sans-serif" fill="#4a4a4a">Four doors from the diwaniya, through the family's own wing.</text>
+  <rect x="28" y="68" width="210" height="140" fill="#f4f6f5" stroke="#8a8f8c" stroke-width="1.5" stroke-dasharray="6 4" />
+  <polygon points="28.00,68.00 119.00,68.00 119.00,180.00 28.00,180.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="73.5" y="124.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Diwaniya</text>
+    <polygon points="119.00,68.00 140.00,68.00 140.00,180.00 119.00,180.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="129.5" y="124.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Lobby</text>
+    <polygon points="140.00,68.00 161.00,68.00 161.00,180.00 140.00,180.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="150.5" y="124.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Hall</text>
+    <polygon points="161.00,68.00 207.20,68.00 207.20,118.40 161.00,118.40" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="184.1" y="93.2" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Bedroom</text>
+    <polygon points="207.20,68.00 222.60,68.00 222.60,90.40 207.20,90.40" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="214.9" y="79.2" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">WC</text>
+  <line x1="114.1" y1="90.4" x2="123.9" y2="90.4" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="135.1" y1="90.4" x2="144.9" y2="90.4" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="156.1" y1="90.4" x2="165.9" y2="90.4" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="202.3" y1="78.1" x2="212.1" y2="78.1" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+</svg></figure><figure><svg xmlns="http://www.w3.org/2000/svg" width="266" height="236" viewBox="0 0 266 236">
+  <rect width="100%" height="100%" fill="#ffffff" />
+  <text x="12" y="18" font-size="14" font-weight="600" font-family="sans-serif" fill="#1a1a1a">After: a powder room off the diwaniya's own lobby</text>
+  <text x="12" y="34" font-size="12" font-family="sans-serif" fill="#4a4a4a">Two doors, and a guest never enters the family's wing.</text>
+  <rect x="28" y="68" width="210" height="140" fill="#f4f6f5" stroke="#8a8f8c" stroke-width="1.5" stroke-dasharray="6 4" />
+  <polygon points="28.00,68.00 119.00,68.00 119.00,180.00 28.00,180.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="73.5" y="124.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Diwaniya</text>
+    <polygon points="119.00,68.00 140.00,68.00 140.00,180.00 119.00,180.00" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="129.5" y="124.0" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">Lobby</text>
+    <polygon points="140.00,68.00 155.40,68.00 155.40,90.40 140.00,90.40" fill="#cfe0e8" stroke="#3d5a66" stroke-width="1.5"  />
+    <text x="147.7" y="79.2" font-size="9" text-anchor="middle" fill="#20302f" font-family="sans-serif">WC</text>
+  <line x1="114.1" y1="90.4" x2="123.9" y2="90.4" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+    <line x1="135.1" y1="79.2" x2="144.9" y2="79.2" stroke="#1f6f4a" stroke-width="3" stroke-linecap="round" />
+</svg></figure></div>
+<p class="note">Proven by a hand-built example only. None of the tool's five stress-test household programs includes a powder room, so these rules are silent across the whole suite. The next batch could reasonably add one to the programs.</p>
+</div><div class="status"><h5>Did anything else get worse?</h5><p>The diwaniya rule moved the recorded baseline, and this is the one place in the batch where a number went up. 28 of the 56 scenarios gained exactly 1 problem, and they are exactly the 28 that contain a diwaniya &mdash; the Extended Gulf and Multigenerational programs, on all 14 plot shapes. The scenario builder gives every plan one exterior door, on the entrance, and nothing else, so every one of those 28 plans really does have a diwaniya you can only reach through the family's front door. The number went up because the tool can now see a fault that was always there. The other 28 scenarios did not move at all, and no scenario moved by anything other than that +1. The frozen record was rewritten to match, deliberately and with the reason recorded &mdash; the wrong move would have been to quietly give the scenario builder a diwaniya door, which is editing the evidence rather than fixing the plan.</p></div><div class="status"><h5>Search tuning this pass</h5><p>Re-tuned (seed 59). Average problems 21.70 &rarr; 21.61, average suggestions 19.48 &rarr; 19.56, clean rate 0%. Adopted, because problems always decide before suggestions. The absolute figures are higher than earlier passes only because the diwaniya rule now finds a real fault in half the scenarios &mdash; nothing about the search got worse.</p></div></section>
+
+<section>
+<h2>What the numbers actually say</h2>
+<p>The honest headline of this batch is not the ten rules. It is this: <strong>across all 56 test scenarios, before and after everything above, the search has never once produced a plan with zero problems.</strong> That was already true when this batch started and it is still true now, and no amount of tuning moved it.</p>
+<p>That is worth being blunt about, because five rounds of re-tuning could easily be presented as five small wins. They were not. Across six training runs the average problem count moved by well under one percent each time, and the clean rate stayed at zero throughout. The tuning is not broken &mdash; it is correctly reporting that there is almost nothing there to win.</p>
+<p>The reason is specific and fixable. Every test scenario starts as rooms laid out in simple rows with a fixed 0.3&nbsp;m gap between each one. The search improves a plan by nudging rooms &mdash; a little to the left, a little bigger, a few degrees round &mdash; and keeping whatever scores better. But for two rooms to be <em>connected</em>, their walls have to meet within 4&nbsp;cm. A search that moves rooms by random amounts essentially never hits a 4&nbsp;cm target, so rooms almost never end up touching, so doors almost never become possible, so nearly every room in nearly every scenario ends up unreachable. That single mechanical fact accounts for the overwhelming majority of the problem count in every scenario in the suite.</p>
+<p>No setting of step size, temperature or move preference fixes that, which is exactly what six training runs found. What fixes it is a new <em>kind</em> of move: one that slides a room until it is flush against a neighbour's wall, instead of hoping to land there. That is a change to the search's repertoire rather than its dials, and it is the single most valuable thing the next batch could do.</p>
+<h5 style="margin-top:22px">Where the recorded numbers stand</h5>
+<div class="scroll"><table>
+<tr><th>Measure</th><th class="num">Before this batch</th><th class="num">After</th></tr>
+<tr><td>Scenarios with zero problems</td><td class="num">0 of 56</td><td class="num">0 of 56</td></tr>
+<tr><td>Average problems per scenario</td><td class="num">21.16</td><td class="num">21.64</td></tr>
+<tr><td>Average suggestions per scenario</td><td class="num">15.27</td><td class="num">16.02</td></tr>
+<tr><td>Rules in the set</td><td class="num">&mdash;</td><td class="num">+10</td></tr>
+</table></div>
+<p style="margin-top:12px">The average problem count went <em>up</em>, and that is the intended direction. Nine of the ten new rules found nothing at all in these 56 scenarios &mdash; almost all of them are about doors, and these scenarios have practically no doors for the rules to examine. The tenth, the diwaniya's street entrance, found a genuine fault in 28 of them. Nothing got worse; the tool got better at noticing.</p>
+<h5 style="margin-top:22px">What is guarding this from here on</h5>
+<p>Two things now exist that did not before. Every scenario's problem count is frozen in a file under version control and checked automatically on every test run, so a future change that quietly makes a plan worse fails immediately instead of showing up as a number in a table nobody diffs. And every search-tuning run is logged &mdash; including the ones that lost &mdash; so the next person can tell a direction that was tried and rejected from one nobody has tried.</p>
+<h5 style="margin-top:22px">Honest limits of this batch</h5>
+<ul>
+<li><strong>Six of the ten rules are proven by hand-built examples only.</strong> They are correct and tested, but the 56 stress-test scenarios contain nothing for them to find &mdash; no interior doors to speak of, no second storey, no powder rooms. That is a gap in the scenarios, not in the rules.</li>
+<li><strong>The tool measures walls, not windows.</strong> It has no window objects. It can be certain that a room with no outside wall has no window; it cannot check a window that could exist but was never drawn.</li>
+<li><strong>The tool does not know which way a door swings.</strong> It records where a doorway is, not which side its hinges are on, which is why the door-clearance rule stops at two doors in one wall rather than guessing about doors around a corner.</li>
+<li><strong>One rule is a rule of thumb, and is labelled so.</strong> Room proportion at 1:3 is a planning convention, not a code requirement, and the threshold was set past the point of argument rather than in the middle of the range.</li>
+</ul>
+</section>
+
+</div>
+</body>
+</html>

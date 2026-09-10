@@ -184,6 +184,56 @@ export type ActorRole = "served" | "guest" | "servant" | "exterior" | "diwaniya_
  * category but Private by tier). */
 export type PrivacyTier = "public" | "semi-public" | "private";
 
+/**
+ * Everything the checks need to know about a *room type*, handed in
+ * rather than looked up: nothing under `geometry/` imports `rooms.ts`, so
+ * that the rule machinery stays independent of one particular house's
+ * room catalogue and can be pointed at another one. That is not new --
+ * `passableOf`, `tierOf`, `auxiliaryOf` and `circulationOf` were already
+ * passed one by one for exactly this reason.
+ *
+ * What is new is that they arrive as one object. Each individual check
+ * still takes only the predicates it actually reads (`tierViolations`
+ * takes `tierOf` and nothing else, and is unit-tested that way); this
+ * bundle exists for the two aggregating entry points, `collectFindings`
+ * and `scoreCandidate`, and for `generateLayout` which only passes them
+ * through. Those had reached four positional predicates before this and
+ * gain one every time a rule needs a new fact about a room type -- which
+ * meant every caller in the tool, the editor's own status bar included,
+ * had to be edited to add a rule that has nothing to do with it. One
+ * object closes that: `rooms.ts` exports `ROOM_FACTS` once, and a new
+ * fact is a new field there and in the check that reads it, nowhere else.
+ */
+export interface RoomFacts {
+  /** Can this room type be walked *through* to reach somewhere else. */
+  passable: (roomType: string) => boolean;
+  /** How private it is, or `undefined` for a type exempt from the
+   * public-to-private gradient. */
+  tier: (roomType: string) => PrivacyTier | undefined;
+  /** Always entered through exactly one owning room -- a bathroom, a
+   * closet -- rather than being an independent stop in circulation. */
+  auxiliary: (roomType: string) => boolean;
+  /** A dedicated movement space (Entry, Hallway, Mudroom, Stair) rather
+   * than a destination that merely happens to be walkable through. */
+  circulation: (roomType: string) => boolean;
+  /** Contains a WC. */
+  sanitary: (roomType: string) => boolean;
+  /** Food is prepared or eaten here. */
+  food: (roomType: string) => boolean;
+  /** Entered from the street on its own rather than through the
+   * household's front door -- a diwaniya. */
+  ownEntrance: (roomType: string) => boolean;
+  /** Needs supply, waste and vent pipes -- a bathroom, a kitchen, a
+   * laundry. Wider than `sanitary`. */
+  wet: (roomType: string) => boolean;
+  /** A room people occupy for long stretches -- the set whose comfort
+   * and usability is worth judging (cross-ventilation, proportion). */
+  habitable: (roomType: string) => boolean;
+  /** Someone sleeps here -- the set that needs an emergency escape and
+   * rescue opening straight to the outside. */
+  sleeping: (roomType: string) => boolean;
+}
+
 /** Someone who walks through the building, and the rooms they visit, in
  * order. The walk between each pair of waypoints is never stored -- it is
  * the shortest crossing of the touching graph (geometry/circulation.ts),

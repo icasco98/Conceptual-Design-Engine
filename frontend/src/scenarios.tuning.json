@@ -1,0 +1,181 @@
+{
+  "pass": "batch-002",
+  "generations": 40,
+  "iterationsPerEval": 150,
+  "seed": 101,
+  "scenarioCount": 56,
+  "baseline": {
+    "scenarioCount": 56,
+    "meanHardProblems": 16.852379435637744,
+    "meanSoftRecommendations": 22.101254889761016,
+    "cleanRate": 0
+  },
+  "best": {
+    "scenarioCount": 56,
+    "meanHardProblems": 15.563818849113714,
+    "meanSoftRecommendations": 24.170675238877124,
+    "cleanRate": 0
+  },
+  "config": {
+    "tStart": 3,
+    "tEnd": 0.00193591751724213,
+    "hardProblemWeight": 1000,
+    "stepFloorM": 0.11882830428555625,
+    "stepScaleM": 2.68502329855423,
+    "rotFloorDeg": 0.8353083686079257,
+    "rotScaleDeg": 23.100637522454445,
+    "moveWeights": {
+      "translate": 0.9170506490466113,
+      "resize": 1,
+      "rotate": 0.8468292106659366,
+      "swap": 1,
+      "snap": 1
+    }
+  },
+  "history": [
+    {
+      "pass": "pass-1",
+      "seed": 7,
+      "generations": 30,
+      "iterationsPerEval": 150,
+      "defaults": {
+        "meanHardProblems": 21.160714285714285,
+        "meanSoftRecommendations": 19.275927139744606,
+        "cleanRate": 0
+      },
+      "trained": {
+        "meanHardProblems": 21.125,
+        "meanSoftRecommendations": 19.354446737017042,
+        "cleanRate": 0
+      },
+      "incumbent": null,
+      "adopted": true
+    },
+    {
+      "pass": "pass-2",
+      "seed": 7,
+      "generations": 30,
+      "iterationsPerEval": 150,
+      "defaults": {
+        "meanHardProblems": 21.160714285714285,
+        "meanSoftRecommendations": 19.276,
+        "cleanRate": 0
+      },
+      "trained": {
+        "meanHardProblems": 21.142857142857142,
+        "meanSoftRecommendations": 19.352,
+        "cleanRate": 0
+      },
+      "incumbent": {
+        "meanHardProblems": 21.142857142857142,
+        "meanSoftRecommendations": 19.352
+      },
+      "adopted": false
+    },
+    {
+      "pass": "pass-2",
+      "seed": 11,
+      "generations": 30,
+      "iterationsPerEval": 150,
+      "defaults": {
+        "meanHardProblems": 21.196428571428573,
+        "meanSoftRecommendations": 18.744385458031804,
+        "cleanRate": 0
+      },
+      "trained": {
+        "meanHardProblems": 21.142857142857142,
+        "meanSoftRecommendations": 18.462595021928678,
+        "cleanRate": 0
+      },
+      "incumbent": {
+        "meanHardProblems": 21.196428571428573,
+        "meanSoftRecommendations": 18.612
+      },
+      "adopted": true
+    },
+    {
+      "pass": "pass-3",
+      "seed": 23,
+      "generations": 30,
+      "iterationsPerEval": 150,
+      "defaults": {
+        "meanHardProblems": 21.232142857142858,
+        "meanSoftRecommendations": 19.372,
+        "cleanRate": 0
+      },
+      "trained": {
+        "meanHardProblems": 21.142857142857142,
+        "meanSoftRecommendations": 18.955,
+        "cleanRate": 0
+      },
+      "incumbent": {
+        "meanHardProblems": 21.196428571428573,
+        "meanSoftRecommendations": 19.371
+      },
+      "adopted": true
+    },
+    {
+      "pass": "pass-4",
+      "seed": 41,
+      "generations": 30,
+      "iterationsPerEval": 150,
+      "defaults": {
+        "meanHardProblems": 21.089285714285715,
+        "meanSoftRecommendations": 18.888,
+        "cleanRate": 0
+      },
+      "trained": {
+        "meanHardProblems": 21,
+        "meanSoftRecommendations": 19.074,
+        "cleanRate": 0
+      },
+      "incumbent": {
+        "meanHardProblems": 21,
+        "meanSoftRecommendations": 18.705
+      },
+      "adopted": false
+    },
+    {
+      "pass": "pass-5",
+      "seed": 59,
+      "generations": 30,
+      "iterationsPerEval": 150,
+      "defaults": {
+        "meanHardProblems": 21.696428571428573,
+        "meanSoftRecommendations": 19.475541225306436,
+        "cleanRate": 0
+      },
+      "trained": {
+        "meanHardProblems": 21.610643463629025,
+        "meanSoftRecommendations": 19.558312278884294,
+        "cleanRate": 0
+      },
+      "incumbent": {
+        "meanHardProblems": 21.732142857142858,
+        "meanSoftRecommendations": 19.31749126848837
+      },
+      "adopted": true
+    },
+    {
+      "pass": "batch-002",
+      "seed": 101,
+      "generations": 40,
+      "iterationsPerEval": 150,
+      "defaults": {
+        "meanHardProblems": 16.852379435637744,
+        "meanSoftRecommendations": 22.101254889761016,
+        "cleanRate": 0
+      },
+      "trained": {
+        "meanHardProblems": 15.563818849113714,
+        "meanSoftRecommendations": 24.170675238877124,
+        "cleanRate": 0
+      },
+      "incumbent": {
+        "meanHardProblems": 16.947213003334824,
+        "meanSoftRecommendations": 21.89518303672083
+      },
+      "adopted": true
+    }
+  ]
+}

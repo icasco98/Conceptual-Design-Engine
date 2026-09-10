@@ -5,8 +5,8 @@
  * deliberate exception (`deadEndHallways`' own life-safety finding, see
  * its own doc comment for why that one is not cost at all).
  *
- * `unnecessaryGaps`, `circulationRatio`, `overhangs` and `corridorWaste`
- * are the missing cost axis for `scoreCandidate` -- without them,
+ * `unnecessaryGaps`, `circulationRatio`, `overhangs`, `corridorWaste` and
+ * `unstackedWetRooms` are the missing cost axis for `scoreCandidate` -- without them,
  * nothing stops an optimizer (a person taking a shortcut, or a future
  * generator, Task 8/9) from satisfying every `desired` hop<=2 pairing the
  * cheapest possible way: one hallway everything hangs off, with gaps
@@ -18,7 +18,7 @@
  * never hard problems, the same severity `desired` already has.
  */
 import { buildCirculationGraphMemo, displayShapesForLevelMemo, levelTouchDataMemo } from "./memo";
-import { polyArea } from "./poly";
+import { polyArea, polyOverlapArea } from "./poly";
 import { rectOf } from "./rect";
 import { polyGap } from "./touch";
 import { liveBoxes } from "./snap";
@@ -163,9 +163,12 @@ export interface OverhangFinding {
 }
 
 /** [lo, hi) intervals merged into their total covered length -- the one
- * piece of interval math both `overhangs` (per wall) and `corridorWaste`
- * (per corridor) need, so it exists once rather than twice. */
-function unionLength(intervals: [number, number][]): number {
+ * piece of interval math `overhangs` (per wall), `corridorWaste` (per
+ * corridor) and `habitability.ts`'s `exteriorWallLength` (per edge of a
+ * room's outline) all need, so it exists once rather than three times.
+ * Merging first is the whole point: two neighbours meeting the same
+ * stretch of wall must not have that stretch subtracted twice. */
+export function unionLength(intervals: [number, number][]): number {
   if (!intervals.length) return 0;
   const sorted = [...intervals].sort((a, b) => a[0] - b[0]);
   let total = 0;
@@ -505,6 +508,73 @@ export function deadEndHallways(boxes: Box[], storeys: number, arrows: Arrow[], 
     }
     if (farId && farD > DEAD_END_LIMIT_M) {
       out.push({ hallwayId: gatekeeper, farRoomId: farId, distanceM: farD, level: gate.level });
+    }
+  }
+  return out;
+}
+
+/** Below this much shared plan area, two wet rooms on consecutive floors
+ * are not sitting on one another in any useful sense -- a corner
+ * clipping past a corner does not put two soil pipes on the same line.
+ * Roughly the footprint of a single fitting, deliberately small: the
+ * question is whether the *stack* can be shared, which needs the two
+ * rooms' service walls near each other, not whether the rooms match. */
+export const WET_STACK_OVERLAP_M2 = 1.0;
+
+export interface WetStackFinding {
+  roomId: string;
+  /** How much plan area this room shares with any wet room on the floor
+   * below, square metres -- 0 when it sits over dry rooms entirely. */
+  overlapM2: number;
+  level: number;
+}
+
+/**
+ * Every wet room on an upper floor that does not sit over a wet room
+ * below it. Bathrooms, kitchens and laundries all need supply, waste and
+ * vent pipes run vertically; stacking them puts those runs in one shared
+ * service void, and scattering them means a separate boxed-in stack for
+ * each, dropped through whatever room happens to be underneath. It is one
+ * of the oldest cost rules in residential construction and it is also a
+ * maintenance one -- a stack you can reach in one place is a stack you
+ * can fix in one place.
+ *
+ * A soft recommendation, squarely in this file's own category: a house
+ * with unstacked bathrooms works perfectly well and costs more to build.
+ * It is not `deadEndHallways`, and it is not trying to be.
+ *
+ * Ground-floor wet rooms are never reported -- there is nothing below
+ * them to stack onto, and a single-storey house should not be told its
+ * plumbing is badly arranged. Which room types count as wet is handed in,
+ * like every other room-type fact this layer reads.
+ */
+export function unstackedWetRooms(
+  boxes: Box[],
+  storeys: number,
+  autoCarve: boolean,
+  wetOf: (roomType: string) => boolean,
+): WetStackFinding[] {
+  const out: WetStackFinding[] = [];
+  for (let level = 1; level < storeys; level++) {
+    const live = liveBoxes(boxes, level);
+    const shapes = displayShapesForLevelMemo(boxes, level, autoCarve);
+    const belowLive = liveBoxes(boxes, level - 1);
+    const belowShapes = displayShapesForLevelMemo(boxes, level - 1, autoCarve);
+    const belowWet = belowLive.map((b, i) => ({ box: b, page: belowShapes[i].page })).filter((e) => wetOf(e.box.roomType));
+    for (let i = 0; i < live.length; i++) {
+      const room = live[i];
+      // Rooted on this floor, not merely reaching up into it: a tall
+      // zone spanning two storeys is its own stack and is judged once,
+      // on the floor it starts from.
+      if (room.level !== level || !wetOf(room.roomType)) continue;
+      let overlapM2 = 0;
+      for (const other of belowWet) {
+        // A tall wet room reaching up from below into this storey is the
+        // same room, not something to stack onto itself.
+        if (other.box.id === room.id) continue;
+        overlapM2 += polyOverlapArea(shapes[i].page, other.page);
+      }
+      if (overlapM2 < WET_STACK_OVERLAP_M2) out.push({ roomId: room.id, overlapM2, level });
     }
   }
   return out;

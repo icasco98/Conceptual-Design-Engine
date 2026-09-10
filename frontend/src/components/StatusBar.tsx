@@ -13,14 +13,26 @@
 import { useMemo } from "react";
 
 import { actorRoute, sharedSegments, type ReachabilityProblem } from "../geometry/circulation";
-import type { CirculationRatioFinding, CorridorWasteFinding, DeadEndFinding, GapFinding, OverhangFinding } from "../geometry/efficiency";
+import type { CirculationRatioFinding, CorridorWasteFinding, DeadEndFinding, GapFinding, OverhangFinding, WetStackFinding } from "../geometry/efficiency";
 import { footprintCoverage } from "../geometry/footprint";
+import { MIN_EXTERIOR_WALL_M, type ProportionFinding, type SingleAspectFinding, type WindowlessFinding } from "../geometry/habitability";
 import { buildCirculationGraphMemo, displayShapesForLevelMemo } from "../geometry/memo";
 import { outsidePlot } from "../geometry/plot";
 import { polyArea } from "../geometry/poly";
-import { adjacencySeverity, collectFindings, TIER_ORDER, type AdjacencyStatus, type StairConnectionProblem, type TierViolation } from "../geometry/relationships";
+import {
+  adjacencySeverity,
+  collectFindings,
+  TIER_ORDER,
+  type AdjacencyStatus,
+  type DoorClearanceFinding,
+  type OwnEntranceProblem,
+  type SanitaryDoorProblem,
+  type UndersizedDoorwayFinding,
+  type StairConnectionProblem,
+  type TierViolation,
+} from "../geometry/relationships";
 import { liveBoxes } from "../geometry/snap";
-import { auxiliaryOf, circulationOf, floorLabel, passableOf, roomTypeInfo, tierOf } from "../rooms";
+import { floorLabel, ROOM_FACTS, roomTypeInfo } from "../rooms";
 import type { Box } from "../geometry/types";
 import { IconFootprints, IconTick, IconWarn } from "./icons";
 import { useStore } from "../state/store";
@@ -68,6 +80,108 @@ function stairConnectionFindings(problems: StairConnectionProblem[], boxesById: 
     if (!stair || !other) return [];
     return [{ level: s.level, text: `${stair.name} opens straight into ${other.name} instead of a hallway or other circulation space` }];
   });
+}
+
+/** Two doorways cut into one wall with less than a door's width between
+ * them (`doorClearanceProblems`) -- their frames overlap, so one has to
+ * move before either can be built. */
+function doorClearanceFindings(problems: DoorClearanceFinding[], boxesById: Map<string, Box>): Finding[] {
+  return problems.flatMap((p) => {
+    const room = boxesById.get(p.roomId);
+    const a = boxesById.get(p.throughIdA);
+    const b = boxesById.get(p.throughIdB);
+    if (!room || !a || !b) return [];
+    return [
+      {
+        level: p.level,
+        text: `${room.name}'s doors to ${a.name} and ${b.name} are ${p.separationM.toFixed(2)} m apart in the same wall -- too close for both to be cut`,
+      },
+    ];
+  });
+}
+
+/** A room that should open onto the street on its own and does not
+ * (`ownEntranceProblems`) -- today, a diwaniya reached only through the
+ * family's own front door and hallway. */
+function ownEntranceFindings(problems: OwnEntranceProblem[], boxesById: Map<string, Box>): Finding[] {
+  return problems.flatMap((p) => {
+    const room = boxesById.get(p.roomId);
+    if (!room) return [];
+    return [{ level: p.level, text: `${room.name} has no street door of its own -- guests can only reach it through the family's own entrance` }];
+  });
+}
+
+/** A WC opening straight onto a kitchen or dining room
+ * (`sanitaryDoorProblems`). Named here as well as counted by
+ * `scoreCandidate` on purpose: a hard problem the generator counts but
+ * the status bar never mentions would have the tool telling someone
+ * their plan is fine while the search says it is not. */
+function sanitaryDoorFindings(problems: SanitaryDoorProblem[], boxesById: Map<string, Box>): Finding[] {
+  return problems.flatMap((p) => {
+    const wc = boxesById.get(p.sanitaryId);
+    const room = boxesById.get(p.foodRoomId);
+    if (!wc || !room) return [];
+    return [{ level: p.level, text: `${wc.name} opens straight into ${room.name} -- a WC needs a hall or lobby between it and a room used for food` }];
+  });
+}
+
+/** A door drawn across a stretch of shared wall too short to cut a
+ * doorway into (`undersizedDoorways`). Worth naming rather than only
+ * counting: every other finding downstream treats the two rooms as
+ * connected on the strength of this door, so "the plan is fine" and
+ * "these rooms do not actually connect" are the same sentence until
+ * someone is told which wall it is. */
+function undersizedDoorwayFindings(problems: UndersizedDoorwayFinding[], boxesById: Map<string, Box>): Finding[] {
+  return problems.flatMap((p) => {
+    const a = boxesById.get(p.roomAId);
+    const b = boxesById.get(p.roomBId);
+    if (!a || !b) return [];
+    return [{ level: p.level, text: `${a.name} and ${b.name} share only ${p.wallM.toFixed(2)} m of wall -- too little to fit the door drawn between them` }];
+  });
+}
+
+/** A sleeping room with effectively no wall facing outside
+ * (`habitability.ts`'s `windowlessSleepingRooms`) -- no window is
+ * possible there, so no way out of it in a fire. */
+function windowlessFindings(problems: WindowlessFinding[], boxesById: Map<string, Box>): Finding[] {
+  return problems.flatMap((p) => {
+    const room = boxesById.get(p.roomId);
+    if (!room) return [];
+    const how = p.exteriorM < 0.01 ? "no wall facing outside at all" : `only ${p.exteriorM.toFixed(2)} m of wall facing outside`;
+    return [{ level: p.level, text: `${room.name} has ${how} -- a room slept in needs at least ${MIN_EXTERIOR_WALL_M.toFixed(1)} m for a window to escape through` }];
+  });
+}
+
+/** A wet room on an upper floor with no wet room under it
+ * (`efficiency.ts`'s `unstackedWetRooms`) -- its own boxed-in stack to
+ * build and to reach later, rather than a share of one. Cost, so a
+ * recommendation. */
+function wetStackFindings(problems: WetStackFinding[], boxesById: Map<string, Box>): Finding[] {
+  return problems.flatMap((p) => {
+    const room = boxesById.get(p.roomId);
+    return room ? [{ level: p.level, text: `${room.name} sits over dry rooms -- its pipes need a stack of their own instead of sharing one below` }] : [];
+  });
+}
+
+/** Comfort and usability, not code (`habitability.ts`) -- always a
+ * recommendation, never a problem, the same severity a `desired` miss and
+ * every efficiency.ts finding already has: the room works, it is just
+ * worse to be in than it needs to be. */
+function habitabilityRecommendationFindings(
+  aspect: SingleAspectFinding[],
+  proportion: ProportionFinding[],
+  boxesById: Map<string, Box>,
+): Finding[] {
+  return [
+    ...aspect.flatMap((p) => {
+      const room = boxesById.get(p.roomId);
+      return room ? [{ level: p.level, text: `${room.name} faces outside on one side only -- no through draught, so it holds its heat` }] : [];
+    }),
+    ...proportion.flatMap((p) => {
+      const room = boxesById.get(p.roomId);
+      return room ? [{ level: p.level, text: `${room.name} is ${p.aspect.toFixed(1)} times longer than it is wide -- hard to furnish as anything but a corridor` }] : [];
+    }),
+  ];
 }
 
 /** `required` and `undesired` are hard problems: a real requirement
@@ -220,12 +334,17 @@ export function StatusBar() {
   // checks happened to produce them in.
   const { problems, recommendations } = useMemo(() => {
     const boxesById = new Map(boxes.map((b) => [b.id, b]));
-    const findings = collectFindings(boxes, storeys, arrows, autoCarve, passableOf, tierOf, auxiliaryOf, circulationOf);
+    const findings = collectFindings(boxes, storeys, arrows, autoCarve, ROOM_FACTS);
     const hard = [
       ...tierFindings(findings.tier, boxesById),
       ...reachabilityFindings(findings.reachability, boxesById),
       ...stairConnectionFindings(findings.stairConnection, boxesById),
       ...adjacencyProblemFindings(findings.adjacency),
+      ...sanitaryDoorFindings(findings.sanitaryDoors, boxesById),
+      ...ownEntranceFindings(findings.ownEntrance, boxesById),
+      ...undersizedDoorwayFindings(findings.undersizedDoorways, boxesById),
+      ...doorClearanceFindings(findings.doorClearance, boxesById),
+      ...windowlessFindings(findings.windowless, boxesById),
       ...deadEndFindings(findings.deadEndHallways, boxesById),
     ];
     const soft = [
@@ -234,6 +353,8 @@ export function StatusBar() {
       ...circulationRatioFindings(findings.circulationRatio),
       ...overhangFindings(findings.overhangs, boxesById),
       ...corridorWasteFindings(findings.corridorWaste, boxesById),
+      ...wetStackFindings(findings.wetStacks, boxesById),
+      ...habitabilityRecommendationFindings(findings.singleAspect, findings.proportion, boxesById),
     ];
     return { problems: organizeByFloor(hard), recommendations: organizeByFloor(soft) };
   }, [boxes, storeys, arrows, autoCarve]);

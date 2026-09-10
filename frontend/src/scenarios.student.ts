@@ -45,7 +45,7 @@ function jitter(v: number, rng: () => number, spread = 1.3): number {
   return v * factor;
 }
 
-const MOVE_KEYS = ["translate", "resize", "rotate", "swap"] as const;
+const MOVE_KEYS = ["translate", "resize", "rotate", "swap", "snap"] as const;
 
 /** One field of `config`, nudged -- never producing a nonsensical config
  * (`tEnd` always stays below `tStart`, every size/weight stays

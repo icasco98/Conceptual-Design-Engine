@@ -34,7 +34,8 @@
  * steer the search.
  *
  * Search: simulated annealing over single-candidate perturbations
- * (nudge one room's position/rotation/size, or swap two rooms), not a
+ * (nudge one room's position/rotation/size, swap two rooms, or snap one
+ * room flush against its nearest neighbour -- see `MoveKind`), not a
  * genetic algorithm -- there is no sane way to "cross over" two spatial
  * arrangements into a third valid one, and a single evolving candidate
  * is the standard approach for continuous spatial layout. Every
@@ -75,8 +76,8 @@ import { suggestArrows } from "./arrows";
 import { pointOnPolyBoundary, polyOfBox } from "./poly";
 import { boxesTrulyIntersect } from "./rect";
 import { compareScores, scoreCandidate, type RelationRow, type Score } from "./relationships";
-import { liveBoxes } from "./snap";
-import type { Arrow, Box, Point, Poly, PrivacyTier } from "./types";
+import { liveBoxes, snapToNearbyNeighbors } from "./snap";
+import type { Arrow, Box, Point, Poly, RoomFacts } from "./types";
 
 /** A millimetre -- the same generosity `plot.ts`'s own boundary test
  * gives a zone sitting right on the line. */
@@ -150,8 +151,11 @@ export interface SearchConfig {
   rotFloorDeg: number;
   rotScaleDeg: number;
   /** Relative odds of each move kind being tried on a given iteration
-   * (need not sum to 1 -- normalized when picked). */
-  moveWeights: { translate: number; resize: number; rotate: number; swap: number };
+   * (need not sum to 1 -- normalized when picked). `snap` is the one move
+   * that closes a gap deliberately rather than by lucky random landing --
+   * see `propose` below -- which is why it gets its own weight here for
+   * `scenarios.student.ts` to tune, exactly like every other move kind. */
+  moveWeights: { translate: number; resize: number; rotate: number; swap: number; snap: number };
 }
 
 export const DEFAULT_SEARCH_CONFIG: SearchConfig = {
@@ -162,7 +166,12 @@ export const DEFAULT_SEARCH_CONFIG: SearchConfig = {
   stepScaleM: 2.5,
   rotFloorDeg: 1,
   rotScaleDeg: 20,
-  moveWeights: { translate: 1, resize: 1, rotate: 1, swap: 1 },
+  // snap starts at a modest weight relative to the four continuous moves:
+  // it is the one move that can make a room touch a neighbour outright,
+  // so even a modest share of iterations spent on it should matter far
+  // more than its frequency alone suggests. scenarios.student.ts is free
+  // to retune this once the mechanism is in place.
+  moveWeights: { translate: 1, resize: 1, rotate: 1, swap: 1, snap: 1 },
 };
 
 export interface GenerateOptions {
@@ -179,12 +188,13 @@ export interface GenerateOptions {
 
 const DEFAULT_ITERATIONS = 600;
 
-type MoveKind = "translate" | "resize" | "rotate" | "swap";
+type MoveKind = "translate" | "resize" | "rotate" | "swap" | "snap";
 
-/** `box`, nudged by one of four move kinds, sized to `stepM`/`rotStepDeg`
- * for translate/resize/rotate -- shrinking as the search cools -- and
- * always kept at or above its own `minWidth`/`minHeight` by construction,
- * never rejected for it afterwards. */
+/** `box`, nudged by one of the three continuous move kinds, sized to
+ * `stepM`/`rotStepDeg` -- shrinking as the search cools -- and always kept
+ * at or above its own `minWidth`/`minHeight` by construction, never
+ * rejected for it afterwards. `swap` and `snap` are not continuous
+ * perturbations and are handled directly in `propose`, not here. */
 function perturbOne(box: Box, kind: "translate" | "resize" | "rotate", rng: () => number, stepM: number, rotStepDeg: number): Box {
   if (kind === "translate") {
     return { ...box, left: box.left + (rng() - 0.5) * 2 * stepM, top: box.top + (rng() - 0.5) * 2 * stepM };
@@ -206,7 +216,7 @@ function perturbOne(box: Box, kind: "translate" | "resize" | "rotate", rng: () =
  * `translate` roughly twice as often as each of the others. A weight of
  * 0 means "never try this move" without needing a separate on/off flag. */
 function pickMoveKind(rng: () => number, weights: SearchConfig["moveWeights"]): MoveKind {
-  const kinds: MoveKind[] = ["translate", "resize", "rotate", "swap"];
+  const kinds: MoveKind[] = ["translate", "resize", "rotate", "swap", "snap"];
   const total = kinds.reduce((s, k) => s + Math.max(0, weights[k]), 0);
   if (total <= 0) return "translate";
   let r = rng() * total;
@@ -218,10 +228,15 @@ function pickMoveKind(rng: () => number, weights: SearchConfig["moveWeights"]): 
 }
 
 /** One perturbed candidate array, and which movable ids it touched (so
- * the cheap-reject step only re-checks those, not every live pair). */
+ * the cheap-reject step only re-checks those, not every live pair).
+ * `level` is only needed for `snap`, which has to know which other boxes
+ * are actually live on this storey to find a neighbour to close a gap
+ * against -- every other move kind never looks past the one box it
+ * perturbs. */
 function propose(
   current: Box[],
   movableIds: string[],
+  level: number,
   rng: () => number,
   stepM: number,
   rotStepDeg: number,
@@ -241,6 +256,24 @@ function propose(
       candidate: current.map((box) => (box.id === swappedA.id ? swappedA : box.id === swappedB.id ? swappedB : box)),
       touchedIds: [a.id, b.id],
     };
+  }
+  if (kind === "snap") {
+    const id = movableIds[Math.floor(rng() * movableIds.length)];
+    const box = byId.get(id)!;
+    // Axis-aligned only for now (see the file doc comment): `snap.ts`'s
+    // gap-closing reads left/top/width/height directly and does not
+    // account for a turned outline, exactly like the editor's own magnet
+    // button that it's shared with. A rotated room just sits this
+    // iteration out as a no-op rather than being pushed somewhere wrong
+    // by a snap that can't see its true footprint -- the cheap filter and
+    // scorer see no change and move on, same as any other move kind that
+    // happens to find nothing to do.
+    if (box.rotation !== 0) {
+      return { candidate: current, touchedIds: [id] };
+    }
+    const live = liveBoxes(current, level);
+    const snapped = snapToNearbyNeighbors(box, live);
+    return { candidate: current.map((b) => (b.id === id ? snapped : b)), touchedIds: [id] };
   }
   const id = movableIds[Math.floor(rng() * movableIds.length)];
   const box = byId.get(id)!;
@@ -286,10 +319,7 @@ export function generateLayout(
   arrows: Arrow[],
   autoCarve: boolean,
   boundary: Poly | null,
-  passableOf: (roomType: string) => boolean,
-  tierOf: (roomType: string) => PrivacyTier | undefined,
-  auxiliaryOf: (roomType: string) => boolean,
-  circulationOf: (roomType: string) => boolean,
+  facts: RoomFacts,
   rules?: RelationRow[],
   options: GenerateOptions = {},
 ): Box[] {
@@ -308,17 +338,31 @@ export function generateLayout(
   // happened to start with. This storey's arrows are re-suggested fresh
   // against each candidate's actual geometry (`arrows.ts`'s own
   // `suggestArrows`, the same one-click "Suggest" a person uses by hand);
-  // every other storey's doors are carried through unchanged. Costs one
-  // extra touch-graph walk per candidate on top of `scoreCandidate`
-  // itself, but a search that can't see whether a move made a room
-  // reachable can't actually improve reachability -- only rearrange
-  // positions around a reachability picture that never changes.
+  // every other storey's doors are carried through unchanged.
+  //
+  // "Fresh" has to mean fresh, not "whatever was suggested once at the
+  // start, plus new ones bolted on": `startingLevelArrows` can itself
+  // already contain auto-suggested doors (`Arrow.targetId` set) computed
+  // against the ARRANGEMENT THE SEARCH STARTED FROM, and once a move
+  // separates a pair that used to touch, that stale entry does not
+  // magically stop being true just because nobody removed it -- carrying
+  // it into every later candidate's `candidateArrows` unconditionally
+  // would score reachability and adjacency against a door set that no
+  // longer matches the candidate's own geometry, exactly the "optimizing
+  // around a picture that never changes" failure this design already
+  // rejects for a *fixed* door set (see the file doc comment). A hand-
+  // placed door never carries a `targetId` (`store.ts`'s `addArrow`/
+  // `moveArrow` never set one, and clear it on a manual move) and an
+  // exterior door never has one either, so filtering on it is exactly
+  // "keep what a person or the caller actually placed, re-derive
+  // everything `suggestArrows` itself produced" -- not a heuristic, the
+  // same distinction `Arrow.targetId`'s own doc comment already draws.
   const otherLevelArrows = arrows.filter((a) => a.level !== level);
-  const startingLevelArrows = arrows.filter((a) => a.level === level);
+  const fixedLevelArrows = arrows.filter((a) => a.level === level && a.targetId === undefined);
   const score = (candidate: Box[]) => {
-    const suggested = suggestArrows(liveBoxes(candidate, level), startingLevelArrows, level, autoCarve);
-    const candidateArrows = [...otherLevelArrows, ...startingLevelArrows, ...suggested];
-    return scoreCandidate(candidate, storeys, candidateArrows, autoCarve, passableOf, tierOf, auxiliaryOf, circulationOf, rules);
+    const suggested = suggestArrows(liveBoxes(candidate, level), fixedLevelArrows, level, autoCarve);
+    const candidateArrows = [...otherLevelArrows, ...fixedLevelArrows, ...suggested];
+    return scoreCandidate(candidate, storeys, candidateArrows, autoCarve, facts, rules);
   };
 
   let current = boxes;
@@ -331,7 +375,7 @@ export function generateLayout(
     const frac = temperature / config.tStart;
     const stepM = config.stepFloorM + config.stepScaleM * frac;
     const rotStepDeg = config.rotFloorDeg + config.rotScaleDeg * frac;
-    const { candidate, touchedIds } = propose(current, movableIds, rng, stepM, rotStepDeg, config.moveWeights);
+    const { candidate, touchedIds } = propose(current, movableIds, level, rng, stepM, rotStepDeg, config.moveWeights);
     if (passesCheapFilter(candidate, level, touchedIds, boundary)) {
       const candidateScore = score(candidate);
       const delta = combinedDelta(candidateScore, currentScore, config.hardProblemWeight);
