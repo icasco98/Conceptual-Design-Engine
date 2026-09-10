@@ -119,7 +119,7 @@ import {
   type OverhangFinding,
 } from "./efficiency";
 import { liveBoxes } from "./snap";
-import type { Arrow, Box, PrivacyTier, RoomFacts } from "./types";
+import type { Arrow, Box, Point, PrivacyTier, RoomFacts } from "./types";
 
 export type Relation = "required" | "desired" | "undesired";
 
@@ -516,6 +516,96 @@ export function sanitaryDoorProblems(
   return out;
 }
 
+/** The shortest run of shared wall a real doorway can be cut into. A
+ * common interior leaf is 762 mm (30"), and the frame, stops and reveals
+ * either side of it need the rest; residential codes put the *required*
+ * egress door's clear opening at 813 mm (32", e.g. IRC R311.2), which
+ * lands in the same place. Below this there is no doorway, whatever the
+ * plan draws.
+ *
+ * Nothing to do with `DOOR_INSET_M` (types.ts), which is how far an
+ * arrow's two ends are drawn either side of a wall -- that is a drawing
+ * length, this is a building one. */
+export const MIN_DOORWAY_WALL_M = 0.9;
+
+export interface UndersizedDoorwayFinding {
+  roomAId: string;
+  roomBId: string;
+  /** How long the shared wall run the door sits on actually is, meters. */
+  wallM: number;
+  level: number;
+}
+
+/** Distance from `p` to the segment `a`-`b` -- needed to work out which
+ * of several shared wall runs between one pair of rooms a given door
+ * actually sits on. */
+function distanceToSegment(p: Point, a: Point, b: Point): number {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq < 1e-12) return Math.hypot(p[0] - a[0], p[1] - a[1]);
+  const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / lenSq));
+  return Math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy));
+}
+
+/**
+ * Every door the plan claims, sitting on a stretch of shared wall too
+ * short to cut a doorway into -- two rooms clipping past each other at a
+ * corner, or overlapping by a hand's breadth, with a door drawn across
+ * the sliver where they meet.
+ *
+ * This is not a cost finding and not a preference. `circulation.ts` opens
+ * by stating the rule the whole tool is built on: a route the tool shows
+ * is the tool asserting that route is walkable, and it must never assert
+ * something it does not know to be true. A door on 12 cm of shared wall
+ * is exactly such an assertion -- every check downstream (reachability,
+ * required adjacency, dead ends, an actor's route) then treats those two
+ * rooms as connected, on the strength of a doorway that cannot be built.
+ * So it is a hard problem, and it is the honest counterpart of the "no
+ * door, no edge" rule already there: a door that cannot exist should not
+ * make an edge either.
+ *
+ * Weighted by how far short the wall falls rather than counted flat, the
+ * same shape `deadEndHallways` uses: a run of 0.85 m is a detail a
+ * designer settles by moving one wall 5 cm, and a run of 0.05 m is a
+ * fiction. Both are real, and they are not the same size of real.
+ *
+ * A pair sharing several runs (which a carve can produce) is judged on
+ * the run the door is actually on -- found by distance from the door's
+ * own recorded position -- not on the longest one, which would excuse a
+ * door on the sliver because a usable wall exists elsewhere.
+ */
+export function undersizedDoorways(boxes: Box[], storeys: number, arrows: Arrow[], autoCarve: boolean): UndersizedDoorwayFinding[] {
+  const graph = buildCirculationGraphMemo(boxes, storeys, arrows, autoCarve);
+  const out: UndersizedDoorwayFinding[] = [];
+  const seen = new Set<string>();
+  for (let level = 0; level < storeys; level++) {
+    const { touchGraph } = levelTouchDataMemo(boxes, level, autoCarve);
+    for (const [fromId, edges] of graph) {
+      for (const edge of edges) {
+        if (edge.level !== level) continue;
+        const pairKey = fromId < edge.to ? `${level}|${fromId}|${edge.to}` : `${level}|${edge.to}|${fromId}`;
+        if (seen.has(pairKey)) continue;
+        const runs = (touchGraph.get(fromId) ?? []).filter((t) => t.to === edge.to);
+        if (!runs.length) continue; // a stair's cross-storey edge, or a pair whose wall has since gone
+        seen.add(pairKey);
+        let best = runs[0].touch;
+        let bestD = distanceToSegment(edge.mid, best.p1, best.p2);
+        for (const run of runs.slice(1)) {
+          const d = distanceToSegment(edge.mid, run.touch.p1, run.touch.p2);
+          if (d < bestD) {
+            bestD = d;
+            best = run.touch;
+          }
+        }
+        const wallM = Math.hypot(best.p2[0] - best.p1[0], best.p2[1] - best.p1[1]);
+        if (wallM < MIN_DOORWAY_WALL_M) out.push({ roomAId: fromId, roomBId: edge.to, wallM, level });
+      }
+    }
+  }
+  return out;
+}
+
 export type Severity = "problem" | "recommendation";
 
 /** `required` and `undesired` are hard problems: a real requirement
@@ -533,6 +623,7 @@ export interface Findings {
   tier: TierViolation[];
   stairConnection: StairConnectionProblem[];
   sanitaryDoors: SanitaryDoorProblem[];
+  undersizedDoorways: UndersizedDoorwayFinding[];
   gaps: GapFinding[];
   circulationRatio: CirculationRatioFinding[];
   overhangs: OverhangFinding[];
@@ -580,6 +671,7 @@ export function collectFindings(
     tier: tierViolations(boxes, storeys, arrows, autoCarve, facts.tier),
     stairConnection: stairConnectionProblems(boxes, storeys, arrows, autoCarve, facts.circulation),
     sanitaryDoors: sanitaryDoorProblems(boxes, storeys, arrows, autoCarve, facts.sanitary, facts.food),
+    undersizedDoorways: undersizedDoorways(boxes, storeys, arrows, autoCarve),
     gaps: unnecessaryGaps(boxes, storeys, autoCarve, (a, b) => isUndesiredPair(a, b, rules)),
     circulationRatio: circulationRatio(boxes, storeys, autoCarve, facts.circulation),
     overhangs: overhangs(boxes, storeys, autoCarve),
@@ -656,6 +748,14 @@ function deadEndWeight(f: DeadEndFinding): number {
   return Math.max(0, f.distanceM - DEAD_END_LIMIT_M);
 }
 
+/** How far short of `MIN_DOORWAY_WALL_M` the shared wall a door sits on
+ * actually falls -- the same "weight it by its own magnitude" shape
+ * `deadEndWeight` uses, and for the same reason: a wall 5 cm short is a
+ * detail, a wall 5 cm long is a fiction, and both are real. */
+function undersizedDoorwayWeight(f: UndersizedDoorwayFinding): number {
+  return Math.max(0, MIN_DOORWAY_WALL_M - f.wallM);
+}
+
 /**
  * The intended entry point for anything that needs to judge a candidate
  * room arrangement -- a future generator (Task 8/9), or anything else
@@ -690,6 +790,7 @@ export function scoreCandidate(
     findings.stairConnection.length +
     findings.sanitaryDoors.length +
     sumWeights(findings.deadEndHallways, deadEndWeight) +
+    sumWeights(findings.undersizedDoorways, undersizedDoorwayWeight) +
     unmetAdjacency.filter((r) => adjacencySeverity(r) === "problem").length;
   const softRecommendations =
     unmetAdjacency.filter((r) => adjacencySeverity(r) === "recommendation").length +

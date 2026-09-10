@@ -24,6 +24,7 @@ import {
   TIER_ORDER,
   type AdjacencyStatus,
   type SanitaryDoorProblem,
+  type UndersizedDoorwayFinding,
   type StairConnectionProblem,
   type TierViolation,
 } from "../geometry/relationships";
@@ -89,6 +90,21 @@ function sanitaryDoorFindings(problems: SanitaryDoorProblem[], boxesById: Map<st
     const room = boxesById.get(p.foodRoomId);
     if (!wc || !room) return [];
     return [{ level: p.level, text: `${wc.name} opens straight into ${room.name} -- a WC needs a hall or lobby between it and a room used for food` }];
+  });
+}
+
+/** A door drawn across a stretch of shared wall too short to cut a
+ * doorway into (`undersizedDoorways`). Worth naming rather than only
+ * counting: every other finding downstream treats the two rooms as
+ * connected on the strength of this door, so "the plan is fine" and
+ * "these rooms do not actually connect" are the same sentence until
+ * someone is told which wall it is. */
+function undersizedDoorwayFindings(problems: UndersizedDoorwayFinding[], boxesById: Map<string, Box>): Finding[] {
+  return problems.flatMap((p) => {
+    const a = boxesById.get(p.roomAId);
+    const b = boxesById.get(p.roomBId);
+    if (!a || !b) return [];
+    return [{ level: p.level, text: `${a.name} and ${b.name} share only ${p.wallM.toFixed(2)} m of wall -- too little to fit the door drawn between them` }];
   });
 }
 
@@ -249,6 +265,7 @@ export function StatusBar() {
       ...stairConnectionFindings(findings.stairConnection, boxesById),
       ...adjacencyProblemFindings(findings.adjacency),
       ...sanitaryDoorFindings(findings.sanitaryDoors, boxesById),
+      ...undersizedDoorwayFindings(findings.undersizedDoorways, boxesById),
       ...deadEndFindings(findings.deadEndHallways, boxesById),
     ];
     const soft = [

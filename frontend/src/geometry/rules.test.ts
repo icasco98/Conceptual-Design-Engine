@@ -13,7 +13,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { checkAdjacency, sanitaryDoorProblems, scoreCandidate, type RelationRow } from "./relationships";
+import { checkAdjacency, sanitaryDoorProblems, scoreCandidate, undersizedDoorways, type RelationRow } from "./relationships";
 import type { Arrow, Box } from "./types";
 import { foodOf, ROOM_FACTS, sanitaryOf } from "../rooms";
 
@@ -158,5 +158,61 @@ describe("garage to kitchen: the service route shopping is carried along", () =>
     const withoutRow = scoreCandidate(rooms, 1, arrows, false, ROOM_FACTS, []);
     expect(withRow.hardProblems).toBe(withoutRow.hardProblems);
     expect(withRow.softRecommendations).toBeCloseTo(withoutRow.softRecommendations + 1, 6);
+  });
+});
+
+describe("undersizedDoorways: a door needs enough shared wall to exist", () => {
+  it("reports a door drawn across a sliver of shared wall", () => {
+    // Two rooms overlapping by 30 cm at their corners: real shared wall,
+    // far too little of it to cut a 762 mm leaf plus frame into.
+    const a = box({ id: "a", left: 0, top: 0, width: 4, height: 4, roomType: "hallway", kind: "corridor" });
+    const b = box({ id: "b", left: 4, top: 3.7, width: 4, height: 4, roomType: "bedroom" });
+    const found = undersizedDoorways([a, b], 1, [door("d", "a", 1, 0.96)], false);
+    expect(found).toHaveLength(1);
+    expect(found[0].wallM).toBeCloseTo(0.3, 3);
+  });
+
+  it("reports nothing when the two rooms share a full wall", () => {
+    const a = box({ id: "a", left: 0, top: 0, width: 4, height: 4, roomType: "hallway", kind: "corridor" });
+    const b = box({ id: "b", left: 4, top: 0, width: 4, height: 4, roomType: "bedroom" });
+    expect(undersizedDoorways([a, b], 1, [door("d", "a", 1, 0.5)], false)).toEqual([]);
+  });
+
+  it("reports nothing when the sliver has no door drawn on it", () => {
+    // Same geometry as the first case, no door: two rooms clipping past
+    // each other is not a defect on its own. Only the claimed doorway is.
+    const a = box({ id: "a", left: 0, top: 0, width: 4, height: 4, roomType: "hallway", kind: "corridor" });
+    const b = box({ id: "b", left: 4, top: 3.7, width: 4, height: 4, roomType: "bedroom" });
+    expect(undersizedDoorways([a, b], 1, [], false)).toEqual([]);
+  });
+
+  it("weights the shortfall: a wall barely short counts for far less than a sliver", () => {
+    const wide = box({ id: "a", left: 0, top: 0, width: 4, height: 4, roomType: "hallway", kind: "corridor" });
+    const nearlyEnough = box({ id: "b", left: 4, top: 3.15, width: 4, height: 4, roomType: "bedroom" });
+    const sliver = box({ id: "b", left: 4, top: 3.9, width: 4, height: 4, roomType: "bedroom" });
+    const arrows = [door("d", "a", 1, 0.96)];
+    const near = scoreCandidate([wide, nearlyEnough], 1, arrows, false, ROOM_FACTS, []);
+    const thin = scoreCandidate([wide, sliver], 1, arrows, false, ROOM_FACTS, []);
+    expect(near.findings.undersizedDoorways).toHaveLength(1);
+    expect(thin.findings.undersizedDoorways).toHaveLength(1);
+    expect(thin.hardProblems).toBeGreaterThan(near.hardProblems);
+  });
+
+  it("counts as a hard problem, weighted by how far short the wall falls", () => {
+    const a = box({ id: "a", left: 0, top: 0, width: 4, height: 4, roomType: "hallway", kind: "corridor", isEntry: true });
+    const b = box({ id: "b", left: 4, top: 3.7, width: 4, height: 4, roomType: "bedroom" });
+    const arrows: Arrow[] = [
+      { id: "ext", level: 0, hostId: "a", kind: "exterior-main", side: 3, t: 0.5, dir: 1 },
+      door("d", "a", 1, 0.96),
+    ];
+    const score = scoreCandidate([a, b], 1, arrows, false, ROOM_FACTS, []);
+    // Two effects, both real, measured against the same plan with the
+    // door taken away: adding it costs 0.6 of a hard problem (0.9 m of
+    // wall required, 0.3 m present) and saves the whole 1 the bedroom
+    // was costing as an unreachable room. A door on too little wall is
+    // still better than no door -- it is just not free, which is exactly
+    // what the search needs to be able to see.
+    const without = scoreCandidate([a, b], 1, [arrows[0]], false, ROOM_FACTS, []);
+    expect(score.hardProblems - without.hardProblems).toBeCloseTo(0.6 - 1, 3);
   });
 });
