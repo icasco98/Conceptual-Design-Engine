@@ -15,9 +15,17 @@ import { describe, expect, it } from "vitest";
 
 import { unstackedWetRooms } from "./efficiency";
 import { awkwardProportions, exteriorWallLength, singleAspectRooms, windowlessSleepingRooms } from "./habitability";
-import { checkAdjacency, doorClearanceProblems, sanitaryDoorProblems, scoreCandidate, undersizedDoorways, type RelationRow } from "./relationships";
+import {
+  checkAdjacency,
+  doorClearanceProblems,
+  ownEntranceProblems,
+  sanitaryDoorProblems,
+  scoreCandidate,
+  undersizedDoorways,
+  type RelationRow,
+} from "./relationships";
 import type { Arrow, Box } from "./types";
-import { foodOf, habitableOf, ROOM_FACTS, sanitaryOf, sleepingOf, wetOf } from "../rooms";
+import { foodOf, habitableOf, ownEntranceOf, ROOM_FACTS, sanitaryOf, sleepingOf, wetOf } from "../rooms";
 
 function box(partial: Partial<Box> & { id: string; left: number; top: number; width: number; height: number }): Box {
   return {
@@ -470,5 +478,46 @@ describe("doorClearanceProblems: two doorways cannot share the same stretch of w
     // 0.9 m wanted, 0.48 m there: 0.42 of a hard problem, and nothing
     // else about the plan differs between the two.
     expect(tight.hardProblems - clear.hardProblems).toBeCloseTo(0.42, 6);
+  });
+});
+
+describe("ownEntranceProblems: a diwaniya is entered from the street, not through the house", () => {
+  const entry = box({ id: "entry", left: 0, top: 0, width: 3, height: 4, roomType: "entry", isEntry: true });
+  const hall = box({ id: "hall", left: 3, top: 0, width: 1.5, height: 8, roomType: "hallway", kind: "corridor" });
+  const diwaniya = box({ id: "diw", left: 4.5, top: 0, width: 6.5, height: 8, roomType: "diwaniya" });
+  const frontDoor: Arrow = { id: "ext", level: 0, hostId: "entry", kind: "exterior-main", side: 3, t: 0.5, dir: 1 };
+  const diwaniyaDoor: Arrow = { id: "ext2", level: 0, hostId: "diw", kind: "exterior-side", side: 1, t: 0.5, dir: 1 };
+
+  it("reports a diwaniya reachable only through the family's own front door", () => {
+    const arrows = [frontDoor, door("d1", "entry", 1, 0.5), door("d2", "hall", 1, 0.3)];
+    expect(ownEntranceProblems([entry, hall, diwaniya], 1, arrows, false, ownEntranceOf)).toEqual([
+      { roomId: "diw", roomType: "diwaniya", level: 0 },
+    ]);
+  });
+
+  it("reports nothing once the diwaniya has its own street door", () => {
+    const arrows = [frontDoor, diwaniyaDoor, door("d1", "entry", 1, 0.5), door("d2", "hall", 1, 0.3)];
+    expect(ownEntranceProblems([entry, hall, diwaniya], 1, arrows, false, ownEntranceOf)).toEqual([]);
+  });
+
+  it("says nothing about any other room type, however it is reached", () => {
+    // A house with no diwaniya has nothing to answer for here -- and a
+    // living room reached only through the front door is simply a living
+    // room.
+    const living = { ...diwaniya, roomType: "living_room" };
+    expect(ownEntranceProblems([entry, hall, living], 1, [frontDoor], false, ownEntranceOf)).toEqual([]);
+  });
+
+  it("is a hard problem no other check already catches", () => {
+    const arrows = [frontDoor, door("d1", "entry", 1, 0.5), door("d2", "hall", 1, 0.3)];
+    const withoutOwnDoor = scoreCandidate([entry, hall, diwaniya], 1, arrows, false, ROOM_FACTS, []);
+    const withOwnDoor = scoreCandidate([entry, hall, diwaniya], 1, [...arrows, diwaniyaDoor], false, ROOM_FACTS, []);
+    // Reachability is satisfied either way (the diwaniya can be walked
+    // to), no tier is skipped (public to semi-public is fine), and the
+    // diwaniya/entry `undesired` row speaks only to a shared wall -- so
+    // the whole of the difference is this rule.
+    expect(withoutOwnDoor.findings.reachability).toEqual([]);
+    expect(withoutOwnDoor.findings.tier).toEqual([]);
+    expect(withoutOwnDoor.hardProblems).toBe(withOwnDoor.hardProblems + 1);
   });
 });

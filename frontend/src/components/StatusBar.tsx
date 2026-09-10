@@ -25,6 +25,7 @@ import {
   TIER_ORDER,
   type AdjacencyStatus,
   type DoorClearanceFinding,
+  type OwnEntranceProblem,
   type SanitaryDoorProblem,
   type UndersizedDoorwayFinding,
   type StairConnectionProblem,
@@ -96,6 +97,17 @@ function doorClearanceFindings(problems: DoorClearanceFinding[], boxesById: Map<
         text: `${room.name}'s doors to ${a.name} and ${b.name} are ${p.separationM.toFixed(2)} m apart in the same wall -- too close for both to be cut`,
       },
     ];
+  });
+}
+
+/** A room that should open onto the street on its own and does not
+ * (`ownEntranceProblems`) -- today, a diwaniya reached only through the
+ * family's own front door and hallway. */
+function ownEntranceFindings(problems: OwnEntranceProblem[], boxesById: Map<string, Box>): Finding[] {
+  return problems.flatMap((p) => {
+    const room = boxesById.get(p.roomId);
+    if (!room) return [];
+    return [{ level: p.level, text: `${room.name} has no street door of its own -- guests can only reach it through the family's own entrance` }];
   });
 }
 
@@ -329,6 +341,7 @@ export function StatusBar() {
       ...stairConnectionFindings(findings.stairConnection, boxesById),
       ...adjacencyProblemFindings(findings.adjacency),
       ...sanitaryDoorFindings(findings.sanitaryDoors, boxesById),
+      ...ownEntranceFindings(findings.ownEntrance, boxesById),
       ...undersizedDoorwayFindings(findings.undersizedDoorways, boxesById),
       ...doorClearanceFindings(findings.doorClearance, boxesById),
       ...windowlessFindings(findings.windowless, boxesById),

@@ -698,6 +698,65 @@ function sameWallLine(poly: Poly, p: Point, q: Point): boolean {
  * disagree about which wall a given door belongs to. */
 const WALL_LINE_TOL_M = 0.15;
 
+export interface OwnEntranceProblem {
+  roomId: string;
+  roomType: string;
+  level: number;
+}
+
+/**
+ * Every room whose type is supposed to be entered from the street on its
+ * own, and is not -- it has no exterior door of its own, so the only way
+ * in is through the household's own front door and the household's own
+ * rooms.
+ *
+ * This is the one convention `rooms.ts` already states in prose and
+ * nothing ever checked. A diwaniya is a Gulf household's public room: it
+ * receives visitors who have no relationship with the family at all, at
+ * hours the family is not entertaining, and its whole institutional point
+ * is that a guest gets in and out without ever crossing the household's
+ * private life. `rooms.ts`'s own comment says as much -- "its own
+ * street-facing door is what actually keeps a diwaniya guest's
+ * circulation out of the household's -- the room type only marks the
+ * destination" -- and until now that was true in the unhelpful sense: the
+ * type marked the destination and nothing verified the door.
+ *
+ * Hard, because it is not a matter of degree. A diwaniya reached through
+ * the family's hallway is not a slightly compromised diwaniya; it is a
+ * second sitting room, and the household loses the separation it built
+ * the room for. Note that no other check catches it: reachability is
+ * satisfied (the room *is* reachable, through the house), the tier
+ * gradient is satisfied (a diwaniya is Public, and public-to-public or
+ * public-to-semi-public doors are exactly what it would have), and the
+ * `diwaniya`/`entry` `undesired` row only speaks to a shared wall.
+ *
+ * `ownEntranceOf` is handed in like every other room-type fact, which
+ * also keeps this from being hardcoded to one culture's room: a project
+ * with no diwaniya has nothing flagged, and a project whose own
+ * guest-house or surgery or shop wants the same treatment gets it by
+ * setting one flag.
+ */
+export function ownEntranceProblems(
+  boxes: Box[],
+  storeys: number,
+  arrows: Arrow[],
+  autoCarve: boolean,
+  ownEntranceOf: (roomType: string) => boolean,
+): OwnEntranceProblem[] {
+  void autoCarve; // carving cannot add or remove a door's host, only its position
+  const hostsWithExteriorDoor = new Set(arrows.filter((a) => a.kind === "exterior-main" || a.kind === "exterior-side").map((a) => a.hostId));
+  const out: OwnEntranceProblem[] = [];
+  for (let level = 0; level < storeys; level++) {
+    for (const room of liveBoxes(boxes, level)) {
+      // Rooted on this storey, so a tall room is judged once.
+      if (room.level !== level || !ownEntranceOf(room.roomType)) continue;
+      if (hostsWithExteriorDoor.has(room.id)) continue;
+      out.push({ roomId: room.id, roomType: room.roomType, level });
+    }
+  }
+  return out;
+}
+
 export type Severity = "problem" | "recommendation";
 
 /** `required` and `undesired` are hard problems: a real requirement
@@ -717,6 +776,7 @@ export interface Findings {
   sanitaryDoors: SanitaryDoorProblem[];
   undersizedDoorways: UndersizedDoorwayFinding[];
   doorClearance: DoorClearanceFinding[];
+  ownEntrance: OwnEntranceProblem[];
   /** Code, not cost -- see habitability.ts for why a sleeping room with
    * no wall facing outside is a hard problem and not an expensive room. */
   windowless: WindowlessFinding[];
@@ -776,6 +836,7 @@ export function collectFindings(
     sanitaryDoors: sanitaryDoorProblems(boxes, storeys, arrows, autoCarve, facts.sanitary, facts.food),
     undersizedDoorways: undersizedDoorways(boxes, storeys, arrows, autoCarve),
     doorClearance: doorClearanceProblems(boxes, storeys, arrows, autoCarve),
+    ownEntrance: ownEntranceProblems(boxes, storeys, arrows, autoCarve, facts.ownEntrance),
     windowless: windowlessSleepingRooms(boxes, storeys, autoCarve, facts.sleeping),
     singleAspect: singleAspectRooms(boxes, storeys, autoCarve, facts.habitable),
     proportion: awkwardProportions(boxes, storeys, facts.habitable),
@@ -913,6 +974,7 @@ export function scoreCandidate(
     findings.reachability.length +
     findings.stairConnection.length +
     findings.sanitaryDoors.length +
+    findings.ownEntrance.length +
     sumWeights(findings.deadEndHallways, deadEndWeight) +
     sumWeights(findings.undersizedDoorways, undersizedDoorwayWeight) +
     sumWeights(findings.doorClearance, doorClearanceWeight) +

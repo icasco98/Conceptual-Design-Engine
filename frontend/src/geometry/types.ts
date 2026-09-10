@@ -220,6 +220,9 @@ export interface RoomFacts {
   sanitary: (roomType: string) => boolean;
   /** Food is prepared or eaten here. */
   food: (roomType: string) => boolean;
+  /** Entered from the street on its own rather than through the
+   * household's front door -- a diwaniya. */
+  ownEntrance: (roomType: string) => boolean;
   /** Needs supply, waste and vent pipes -- a bathroom, a kitchen, a
    * laundry. Wider than `sanitary`. */
   wet: (roomType: string) => boolean;

@@ -68,6 +68,14 @@ interface RoomTypeInfo {
    * a bedroom, kitchen, or any other room that has to serve everyone
    * using the stairs as an involuntary through-route. */
   circulation?: boolean;
+  /** Entered from the street on its own, not through the household's
+   * front door. Today only the Diwaniya, whose separation from the
+   * family's own circulation is its entire institutional point -- see
+   * that type's own comment. A flag rather than a hardcoded room type so
+   * that a project with no diwaniya has nothing flagged, and a project
+   * whose guest house or home surgery wants the same treatment gets it
+   * by setting one field. */
+  ownEntrance?: boolean;
   /** Needs supply, waste and vent pipes -- a bathroom, a kitchen, a
    * laundry. Used only by `efficiency.ts`'s `unstackedWetRooms`, and
    * wider than `sanitary`: a kitchen and a laundry have no WC in them
@@ -119,7 +127,7 @@ export const ROOM_TYPES: Record<string, RoomTypeInfo> = {
   // household's -- the room type only marks the destination. Public tier:
   // a diwaniya is open to visitors with no prior relationship to the
   // household, which is its whole cultural function.
-  diwaniya: { label: "Diwaniya", minWidth: 4.5, minHeight: 5.5, typicalWidth: 6.5, typicalHeight: 8.0, zone: "category_d", passable: false, tier: "public", habitable: true },
+  diwaniya: { label: "Diwaniya", minWidth: 4.5, minHeight: 5.5, typicalWidth: 6.5, typicalHeight: 8.0, zone: "category_d", passable: false, tier: "public", habitable: true, ownEntrance: true },
   // The general (non-Gulf) equivalent: a room for receiving guests who
   // are female or close family, reached through the main/family entrance
   // rather than a separate door -- unlike the diwaniya, not structurally
@@ -206,6 +214,10 @@ export function foodOf(roomType: string): boolean {
   return !!roomTypeInfo(roomType).food;
 }
 
+export function ownEntranceOf(roomType: string): boolean {
+  return !!roomTypeInfo(roomType).ownEntrance;
+}
+
 export function wetOf(roomType: string): boolean {
   return !!roomTypeInfo(roomType).wet;
 }
@@ -231,6 +243,7 @@ export const ROOM_FACTS: RoomFacts = {
   circulation: circulationOf,
   sanitary: sanitaryOf,
   food: foodOf,
+  ownEntrance: ownEntranceOf,
   wet: wetOf,
   habitable: habitableOf,
   sleeping: sleepingOf,
