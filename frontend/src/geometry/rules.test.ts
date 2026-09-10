@@ -15,7 +15,7 @@ import { describe, expect, it } from "vitest";
 
 import { unstackedWetRooms } from "./efficiency";
 import { awkwardProportions, exteriorWallLength, singleAspectRooms, windowlessSleepingRooms } from "./habitability";
-import { checkAdjacency, sanitaryDoorProblems, scoreCandidate, undersizedDoorways, type RelationRow } from "./relationships";
+import { checkAdjacency, doorClearanceProblems, sanitaryDoorProblems, scoreCandidate, undersizedDoorways, type RelationRow } from "./relationships";
 import type { Arrow, Box } from "./types";
 import { foodOf, habitableOf, ROOM_FACTS, sanitaryOf, sleepingOf, wetOf } from "../rooms";
 
@@ -424,5 +424,51 @@ describe("unstackedWetRooms: pipes want to run in one line, not four", () => {
     expect(good.findings.wetStacks).toHaveLength(0);
     expect(bad.hardProblems).toBe(good.hardProblems);
     expect(bad.softRecommendations).toBeCloseTo(good.softRecommendations + 1, 6);
+  });
+});
+
+describe("doorClearanceProblems: two doorways cannot share the same stretch of wall", () => {
+  // A hall with two rooms stacked along its right-hand wall, so both
+  // their doors are cut into that one wall.
+  const hall = box({ id: "hall", left: 0, top: 0, width: 2, height: 8, roomType: "hallway", kind: "corridor" });
+  const upper = box({ id: "up", left: 2, top: 0, width: 4, height: 4, roomType: "bedroom" });
+  const lower = box({ id: "low", left: 2, top: 4, width: 4, height: 4, roomType: "bedroom" });
+
+  it("reports two doors in one wall drawn closer than a door's width apart", () => {
+    // Doors at t = 0.47 and t = 0.53 of the hall's 8 m right wall: 3.76
+    // and 4.24, less than half a metre apart.
+    const arrows = [door("d1", "hall", 1, 0.47), door("d2", "hall", 1, 0.53)];
+    const found = doorClearanceProblems([hall, upper, lower], 1, arrows, false);
+    expect(found).toHaveLength(1);
+    expect(found[0].roomId).toBe("hall");
+    expect(found[0].separationM).toBeCloseTo(0.48, 6);
+  });
+
+  it("reports nothing once the two are a proper distance apart", () => {
+    const arrows = [door("d1", "hall", 1, 0.25), door("d2", "hall", 1, 0.75)];
+    expect(doorClearanceProblems([hall, upper, lower], 1, arrows, false)).toEqual([]);
+  });
+
+  it("reports nothing for two doors the same distance apart in different walls", () => {
+    // A room with a neighbour on its right and another below it, doors
+    // near the shared corner. They are close, and how badly they
+    // interfere depends on which way each leaf is hung -- which this tool
+    // does not model, so it does not pretend to know.
+    const room = box({ id: "room", left: 0, top: 0, width: 4, height: 4, roomType: "living_room" });
+    const right = box({ id: "right", left: 4, top: 0, width: 3, height: 4, roomType: "bedroom" });
+    const below = box({ id: "below", left: 0, top: 4, width: 4, height: 3, roomType: "bedroom" });
+    const arrows = [door("d1", "room", 1, 0.94), door("d2", "room", 2, 0.94)];
+    expect(doorClearanceProblems([room, right, below], 1, arrows, false)).toEqual([]);
+  });
+
+  it("counts as a hard problem, weighted by how far short of clear they are", () => {
+    const near = [door("d1", "hall", 1, 0.47), door("d2", "hall", 1, 0.53)];
+    const far = [door("d1", "hall", 1, 0.25), door("d2", "hall", 1, 0.75)];
+    const rooms = [hall, upper, lower];
+    const tight = scoreCandidate(rooms, 1, near, false, ROOM_FACTS, []);
+    const clear = scoreCandidate(rooms, 1, far, false, ROOM_FACTS, []);
+    // 0.9 m wanted, 0.48 m there: 0.42 of a hard problem, and nothing
+    // else about the plan differs between the two.
+    expect(tight.hardProblems - clear.hardProblems).toBeCloseTo(0.42, 6);
   });
 });

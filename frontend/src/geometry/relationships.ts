@@ -99,7 +99,7 @@
  * this tool.
  */
 import { minHopCount, reachabilityProblems, type ReachabilityProblem } from "./circulation";
-import { buildCirculationGraphMemo, levelTouchDataMemo } from "./memo";
+import { buildCirculationGraphMemo, displayShapesForLevelMemo, levelTouchDataMemo } from "./memo";
 import {
   circulationRatio,
   corridorWaste,
@@ -130,7 +130,7 @@ import {
   type WindowlessFinding,
 } from "./habitability";
 import { liveBoxes } from "./snap";
-import type { Arrow, Box, Point, PrivacyTier, RoomFacts } from "./types";
+import type { Arrow, Box, Point, Poly, PrivacyTier, RoomFacts } from "./types";
 
 export type Relation = "required" | "desired" | "undesired";
 
@@ -617,6 +617,87 @@ export function undersizedDoorways(boxes: Box[], storeys: number, arrows: Arrow[
   return out;
 }
 
+export interface DoorClearanceFinding {
+  roomId: string;
+  /** The two rooms whose doors into `roomId` are fighting for the same
+   * stretch of wall. */
+  throughIdA: string;
+  throughIdB: string;
+  /** How far apart the two doorways actually are, centre to centre,
+   * meters. */
+  separationM: number;
+  level: number;
+}
+
+/**
+ * Every pair of doorways cut into the same wall of the same room with
+ * less than a door's width of wall between their centres. Two openings
+ * that close together do not read as two doors: their frames overlap and
+ * the leaves foul each other, so one of them has to move before either
+ * can be built or used. Door width and the clearance around it is the
+ * most basic dimensional discipline in planning a room, and this is its
+ * simplest case -- the same `MIN_DOORWAY_WALL_M` a single doorway needs
+ * of wall, now measured between two of them.
+ *
+ * Deliberately restricted to doorways on *one wall line* of one room,
+ * checked against the room's own outline. Two doors 0.6 m apart around a
+ * corner also interfere in practice, but how badly depends on which way
+ * each leaf is hung and swings, which this tool does not model -- an
+ * arrow records a doorway's position, not its hinge side. Rather than
+ * guess a hinge, this reports only the case that is true regardless of
+ * how either door is hung: two openings in the same wall, too close for
+ * both to exist.
+ *
+ * Hard, for the same reason `undersizedDoorways` is: the plan is
+ * asserting two connections that cannot both be built as drawn, and
+ * every check downstream believes it. Weighted by the shortfall, so two
+ * doors nearly far enough apart cost far less than two drawn practically
+ * on top of each other.
+ */
+export function doorClearanceProblems(boxes: Box[], storeys: number, arrows: Arrow[], autoCarve: boolean): DoorClearanceFinding[] {
+  const graph = buildCirculationGraphMemo(boxes, storeys, arrows, autoCarve);
+  const out: DoorClearanceFinding[] = [];
+  for (let level = 0; level < storeys; level++) {
+    const live = liveBoxes(boxes, level);
+    const shapes = displayShapesForLevelMemo(boxes, level, autoCarve);
+    for (let i = 0; i < live.length; i++) {
+      const room = live[i];
+      const doors = (graph.get(room.id) ?? []).filter((e) => e.level === level);
+      if (doors.length < 2) continue;
+      const poly = shapes[i].page;
+      for (let a = 0; a < doors.length; a++) {
+        for (let b = a + 1; b < doors.length; b++) {
+          const separationM = Math.hypot(doors[a].mid[0] - doors[b].mid[0], doors[a].mid[1] - doors[b].mid[1]);
+          if (separationM >= MIN_DOORWAY_WALL_M) continue;
+          // Same wall line, or this is a corner case whose severity
+          // depends on hinge sides this tool does not model.
+          if (!sameWallLine(poly, doors[a].mid, doors[b].mid)) continue;
+          out.push({ roomId: room.id, throughIdA: doors[a].to, throughIdB: doors[b].to, separationM, level });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/** Whether both points sit on one and the same edge of `poly` -- the
+ * test for "these two doorways are cut into the same wall," as opposed to
+ * two walls that happen to meet near each other. */
+function sameWallLine(poly: Poly, p: Point, q: Point): boolean {
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % poly.length];
+    if (distanceToSegment(p, a, b) <= WALL_LINE_TOL_M && distanceToSegment(q, a, b) <= WALL_LINE_TOL_M) return true;
+  }
+  return false;
+}
+
+/** How far off a wall line a door's own recorded midpoint may sit and
+ * still be counted as on it -- the same tolerance `circulation.ts` uses
+ * to decide whether a door is on a wall at all, so the two never
+ * disagree about which wall a given door belongs to. */
+const WALL_LINE_TOL_M = 0.15;
+
 export type Severity = "problem" | "recommendation";
 
 /** `required` and `undesired` are hard problems: a real requirement
@@ -635,6 +716,7 @@ export interface Findings {
   stairConnection: StairConnectionProblem[];
   sanitaryDoors: SanitaryDoorProblem[];
   undersizedDoorways: UndersizedDoorwayFinding[];
+  doorClearance: DoorClearanceFinding[];
   /** Code, not cost -- see habitability.ts for why a sleeping room with
    * no wall facing outside is a hard problem and not an expensive room. */
   windowless: WindowlessFinding[];
@@ -693,6 +775,7 @@ export function collectFindings(
     stairConnection: stairConnectionProblems(boxes, storeys, arrows, autoCarve, facts.circulation),
     sanitaryDoors: sanitaryDoorProblems(boxes, storeys, arrows, autoCarve, facts.sanitary, facts.food),
     undersizedDoorways: undersizedDoorways(boxes, storeys, arrows, autoCarve),
+    doorClearance: doorClearanceProblems(boxes, storeys, arrows, autoCarve),
     windowless: windowlessSleepingRooms(boxes, storeys, autoCarve, facts.sleeping),
     singleAspect: singleAspectRooms(boxes, storeys, autoCarve, facts.habitable),
     proportion: awkwardProportions(boxes, storeys, facts.habitable),
@@ -782,6 +865,13 @@ function proportionWeight(f: ProportionFinding): number {
   return Math.max(0, f.aspect - MAX_ROOM_ASPECT);
 }
 
+/** How far short of `MIN_DOORWAY_WALL_M` two doorways in one wall fall of
+ * being far enough apart to both exist -- same shape, same reason, as the
+ * weight just below. */
+function doorClearanceWeight(f: DoorClearanceFinding): number {
+  return Math.max(0, MIN_DOORWAY_WALL_M - f.separationM);
+}
+
 /** How far short of `MIN_DOORWAY_WALL_M` the shared wall a door sits on
  * actually falls -- the same "weight it by its own magnitude" shape
  * `deadEndWeight` uses, and for the same reason: a wall 5 cm short is a
@@ -825,6 +915,7 @@ export function scoreCandidate(
     findings.sanitaryDoors.length +
     sumWeights(findings.deadEndHallways, deadEndWeight) +
     sumWeights(findings.undersizedDoorways, undersizedDoorwayWeight) +
+    sumWeights(findings.doorClearance, doorClearanceWeight) +
     findings.windowless.length +
     unmetAdjacency.filter((r) => adjacencySeverity(r) === "problem").length;
   const softRecommendations =

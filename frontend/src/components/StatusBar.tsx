@@ -24,6 +24,7 @@ import {
   collectFindings,
   TIER_ORDER,
   type AdjacencyStatus,
+  type DoorClearanceFinding,
   type SanitaryDoorProblem,
   type UndersizedDoorwayFinding,
   type StairConnectionProblem,
@@ -77,6 +78,24 @@ function stairConnectionFindings(problems: StairConnectionProblem[], boxesById: 
     const other = boxesById.get(s.otherRoomId);
     if (!stair || !other) return [];
     return [{ level: s.level, text: `${stair.name} opens straight into ${other.name} instead of a hallway or other circulation space` }];
+  });
+}
+
+/** Two doorways cut into one wall with less than a door's width between
+ * them (`doorClearanceProblems`) -- their frames overlap, so one has to
+ * move before either can be built. */
+function doorClearanceFindings(problems: DoorClearanceFinding[], boxesById: Map<string, Box>): Finding[] {
+  return problems.flatMap((p) => {
+    const room = boxesById.get(p.roomId);
+    const a = boxesById.get(p.throughIdA);
+    const b = boxesById.get(p.throughIdB);
+    if (!room || !a || !b) return [];
+    return [
+      {
+        level: p.level,
+        text: `${room.name}'s doors to ${a.name} and ${b.name} are ${p.separationM.toFixed(2)} m apart in the same wall -- too close for both to be cut`,
+      },
+    ];
   });
 }
 
@@ -311,6 +330,7 @@ export function StatusBar() {
       ...adjacencyProblemFindings(findings.adjacency),
       ...sanitaryDoorFindings(findings.sanitaryDoors, boxesById),
       ...undersizedDoorwayFindings(findings.undersizedDoorways, boxesById),
+      ...doorClearanceFindings(findings.doorClearance, boxesById),
       ...windowlessFindings(findings.windowless, boxesById),
       ...deadEndFindings(findings.deadEndHallways, boxesById),
     ];
