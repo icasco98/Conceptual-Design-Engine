@@ -1,34 +1,34 @@
 {
-  "pass": "pass-3",
+  "pass": "pass-5",
   "generations": 30,
   "iterationsPerEval": 150,
-  "seed": 23,
+  "seed": 59,
   "scenarioCount": 56,
   "baseline": {
     "scenarioCount": 56,
-    "meanHardProblems": 21.232142857142858,
-    "meanSoftRecommendations": 19.371965545182977,
+    "meanHardProblems": 21.696428571428573,
+    "meanSoftRecommendations": 19.475541225306436,
     "cleanRate": 0
   },
   "best": {
     "scenarioCount": 56,
-    "meanHardProblems": 21.142857142857142,
-    "meanSoftRecommendations": 18.95466626613123,
+    "meanHardProblems": 21.610643463629025,
+    "meanSoftRecommendations": 19.558312278884294,
     "cleanRate": 0
   },
   "config": {
-    "tStart": 2.416465857662619,
-    "tEnd": 0.0016300155416095199,
+    "tStart": 3.135909702108842,
+    "tEnd": 0.0016091020416226687,
     "hardProblemWeight": 1000,
-    "stepFloorM": 0.12752841764093878,
-    "stepScaleM": 2.3284116970966213,
-    "rotFloorDeg": 0.8526647328381212,
-    "rotScaleDeg": 22.977634853934156,
+    "stepFloorM": 0.1,
+    "stepScaleM": 2.630015428751134,
+    "rotFloorDeg": 1,
+    "rotScaleDeg": 20,
     "moveWeights": {
       "translate": 1,
       "resize": 1,
       "rotate": 1,
-      "swap": 1.019881160963828
+      "swap": 1
     }
   },
   "history": [
@@ -124,15 +124,36 @@
         "cleanRate": 0
       },
       "trained": {
-        "meanHardProblems": 21.0,
+        "meanHardProblems": 21,
         "meanSoftRecommendations": 19.074,
         "cleanRate": 0
       },
       "incumbent": {
-        "meanHardProblems": 21.0,
+        "meanHardProblems": 21,
         "meanSoftRecommendations": 18.705
       },
       "adopted": false
+    },
+    {
+      "pass": "pass-5",
+      "seed": 59,
+      "generations": 30,
+      "iterationsPerEval": 150,
+      "defaults": {
+        "meanHardProblems": 21.696428571428573,
+        "meanSoftRecommendations": 19.475541225306436,
+        "cleanRate": 0
+      },
+      "trained": {
+        "meanHardProblems": 21.610643463629025,
+        "meanSoftRecommendations": 19.558312278884294,
+        "cleanRate": 0
+      },
+      "incumbent": {
+        "meanHardProblems": 21.732142857142858,
+        "meanSoftRecommendations": 19.31749126848837
+      },
+      "adopted": true
     }
   ]
 }
