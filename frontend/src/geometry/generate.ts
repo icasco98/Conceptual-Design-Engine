@@ -116,6 +116,55 @@ function mulberry32(seed: number): () => number {
   };
 }
 
+/**
+ * Every number that shapes *how* the search walks -- never what counts
+ * as a good layout (that stays `relationships.ts`'s rule set, untouched
+ * by this file) -- pulled out into one object so `scenarios.student.ts`
+ * can propose and evaluate different configurations without duplicating
+ * the search loop itself. `DEFAULT_SEARCH_CONFIG` is today's
+ * hand-picked baseline; every existing caller that doesn't pass its own
+ * config gets exactly that, unchanged.
+ */
+export interface SearchConfig {
+  /** Where the annealing schedule starts and (asymptotically) ends --
+   * chosen so a hard-problem difference (`hardProblemWeight`) is very
+   * unlikely to be accepted even at the start, while a small soft-
+   * recommendation difference still can be, and by the final iteration
+   * essentially nothing worse is ever accepted. */
+  tStart: number;
+  tEnd: number;
+  /** How much one hard problem outweighs the entire soft-recommendation
+   * total in the acceptance test -- large enough that no plausible soft
+   * improvement ever makes accepting a worse hard-problem count look
+   * attractive, matching `compareScores`' own "hard problems always
+   * decide first." Only shapes the stochastic walk; the *returned*
+   * candidate is never worse than the start regardless (see the file
+   * doc comment). */
+  hardProblemWeight: number;
+  /** Translate/resize step size in meters is `stepFloorM +
+   * stepScaleM * (temperature / tStart)` -- large early on, shrinking
+   * to `stepFloorM` as the search cools. Same shape for rotation, in
+   * degrees. */
+  stepFloorM: number;
+  stepScaleM: number;
+  rotFloorDeg: number;
+  rotScaleDeg: number;
+  /** Relative odds of each move kind being tried on a given iteration
+   * (need not sum to 1 -- normalized when picked). */
+  moveWeights: { translate: number; resize: number; rotate: number; swap: number };
+}
+
+export const DEFAULT_SEARCH_CONFIG: SearchConfig = {
+  tStart: 3,
+  tEnd: 0.002,
+  hardProblemWeight: 1000,
+  stepFloorM: 0.1,
+  stepScaleM: 2.5,
+  rotFloorDeg: 1,
+  rotScaleDeg: 20,
+  moveWeights: { translate: 1, resize: 1, rotate: 1, swap: 1 },
+};
+
 export interface GenerateOptions {
   /** How many perturbations to try. More finds a better arrangement at
    * the cost of time; the default is tuned for a house-sized room count
@@ -124,23 +173,11 @@ export interface GenerateOptions {
   /** Fixed seed for a reproducible run. Omit for a fresh random search
    * each call. */
   seed?: number;
+  /** How the search walks -- defaults to `DEFAULT_SEARCH_CONFIG`. */
+  config?: SearchConfig;
 }
 
 const DEFAULT_ITERATIONS = 600;
-/** Where the annealing schedule starts and (asymptotically) ends --
- * chosen so a hard-problem difference (weight 1000, below) is very
- * unlikely to be accepted even at the start, while a small soft-
- * recommendation difference still can be, and by the final iteration
- * essentially nothing worse is ever accepted. */
-const T_START = 3;
-const T_END = 0.002;
-/** How much one hard problem outweighs the entire soft-recommendation
- * total in the acceptance test -- large enough that no plausible soft
- * improvement ever makes accepting a worse hard-problem count look
- * attractive, matching `compareScores`' own "hard problems always decide
- * first." Only shapes the stochastic walk; the *returned* candidate is
- * never worse than the start regardless (see the file doc comment). */
-const HARD_PROBLEM_WEIGHT = 1000;
 
 type MoveKind = "translate" | "resize" | "rotate" | "swap";
 
@@ -164,6 +201,22 @@ function perturbOne(box: Box, kind: "translate" | "resize" | "rotate", rng: () =
   return { ...box, left: box.left - (width - box.width) / 2, top: box.top - (height - box.height) / 2, width, height };
 }
 
+/** One of `weights`' kinds, chosen with odds proportional to its own
+ * weight -- e.g. `{translate: 2, resize: 1, rotate: 1, swap: 1}` tries
+ * `translate` roughly twice as often as each of the others. A weight of
+ * 0 means "never try this move" without needing a separate on/off flag. */
+function pickMoveKind(rng: () => number, weights: SearchConfig["moveWeights"]): MoveKind {
+  const kinds: MoveKind[] = ["translate", "resize", "rotate", "swap"];
+  const total = kinds.reduce((s, k) => s + Math.max(0, weights[k]), 0);
+  if (total <= 0) return "translate";
+  let r = rng() * total;
+  for (const k of kinds) {
+    r -= Math.max(0, weights[k]);
+    if (r <= 0) return k;
+  }
+  return kinds[kinds.length - 1];
+}
+
 /** One perturbed candidate array, and which movable ids it touched (so
  * the cheap-reject step only re-checks those, not every live pair). */
 function propose(
@@ -172,10 +225,10 @@ function propose(
   rng: () => number,
   stepM: number,
   rotStepDeg: number,
+  moveWeights: SearchConfig["moveWeights"],
 ): { candidate: Box[]; touchedIds: string[] } {
   const byId = new Map(current.map((b) => [b.id, b]));
-  const kinds: MoveKind[] = ["translate", "resize", "rotate", "swap"];
-  const kind = kinds[Math.floor(rng() * kinds.length)];
+  const kind = pickMoveKind(rng, moveWeights);
   if (kind === "swap" && movableIds.length >= 2) {
     const i = Math.floor(rng() * movableIds.length);
     let j = Math.floor(rng() * movableIds.length);
@@ -214,8 +267,8 @@ function passesCheapFilter(candidate: Box[], level: number, touchedIds: string[]
   return true;
 }
 
-function combinedDelta(a: Score, b: Score): number {
-  return (a.hardProblems - b.hardProblems) * HARD_PROBLEM_WEIGHT + (a.softRecommendations - b.softRecommendations);
+function combinedDelta(a: Score, b: Score, hardProblemWeight: number): number {
+  return (a.hardProblems - b.hardProblems) * hardProblemWeight + (a.softRecommendations - b.softRecommendations);
 }
 
 /**
@@ -246,8 +299,9 @@ export function generateLayout(
   if (movableIds.length === 0) return boxes;
 
   const iterations = options.iterations ?? DEFAULT_ITERATIONS;
+  const config = options.config ?? DEFAULT_SEARCH_CONFIG;
   const rng = mulberry32(options.seed ?? Date.now());
-  const cooling = Math.pow(T_END / T_START, 1 / Math.max(1, iterations));
+  const cooling = Math.pow(config.tEnd / config.tStart, 1 / Math.max(1, iterations));
   // Doors are not a separate, later step -- they're part of what makes a
   // candidate good or bad (reachability, required adjacency), so every
   // candidate is scored with its OWN doors, not the doors the arrangement
@@ -272,15 +326,15 @@ export function generateLayout(
   let best = current;
   let bestScore = currentScore;
 
-  let temperature = T_START;
+  let temperature = config.tStart;
   for (let iter = 0; iter < iterations; iter++) {
-    const frac = temperature / T_START;
-    const stepM = 0.1 + 2.5 * frac;
-    const rotStepDeg = 1 + 20 * frac;
-    const { candidate, touchedIds } = propose(current, movableIds, rng, stepM, rotStepDeg);
+    const frac = temperature / config.tStart;
+    const stepM = config.stepFloorM + config.stepScaleM * frac;
+    const rotStepDeg = config.rotFloorDeg + config.rotScaleDeg * frac;
+    const { candidate, touchedIds } = propose(current, movableIds, rng, stepM, rotStepDeg, config.moveWeights);
     if (passesCheapFilter(candidate, level, touchedIds, boundary)) {
       const candidateScore = score(candidate);
-      const delta = combinedDelta(candidateScore, currentScore);
+      const delta = combinedDelta(candidateScore, currentScore, config.hardProblemWeight);
       if (delta <= 0 || rng() < Math.exp(-delta / temperature)) {
         current = candidate;
         currentScore = candidateScore;
