@@ -158,6 +158,18 @@ export const BASE_ROOM_RELATIONSHIPS: RelationRow[] = [
   { a: "garage_double", b: "mudroom", relation: "desired" },
   { a: "garage_single", b: "entry", relation: "desired" },
   { a: "garage_double", b: "entry", relation: "desired" },
+  // -- Sourced (the service-entry sequence: car -> mudroom -> kitchen) --
+  // Shopping is unloaded from the car and carried to the kitchen, and it
+  // is the one trip in a house made repeatedly with both hands full. The
+  // standard residential answer is a short service route from the garage
+  // through a mudroom into the kitchen, which is why this is `desired`
+  // (at most `EASY_ACCESS_HOPS` doors) and not `required`: garage ->
+  // mudroom -> kitchen is exactly the arrangement this is asking for, and
+  // demanding a direct garage-to-kitchen door would ask for the wrong
+  // thing -- the mudroom is there on purpose, to keep the garage's dirt,
+  // noise and fumes out of the room food is prepared in.
+  { a: "garage_single", b: "kitchen", relation: "desired" },
+  { a: "garage_double", b: "kitchen", relation: "desired" },
   { a: "bedroom", b: "kitchen", relation: "undesired" },
   { a: "master_bedroom", b: "kitchen", relation: "undesired" },
   // -- Sourced (generic principle: a quiet office kept from noisy/service space) --
