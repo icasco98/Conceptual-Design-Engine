@@ -205,6 +205,20 @@ export const CULTURAL_ROOM_RELATIONSHIPS: RelationRow[] = [
   { a: "diwaniya", b: "master_bedroom", relation: "undesired" },
   // -- Sourced (Al-Razouki, "The Diwaniya: A Uniquely Kuwaiti Institution") --
   { a: "driver_room", b: "diwaniya", relation: "desired" },
+  // -- Sourced (the guest WC: a visitor should not need the family's own
+  // bathroom). A room built to receive people who are not family needs a
+  // WC those people can use without walking into the household's private
+  // wing -- which is what a Half Bath / powder room is for, and why it
+  // is that type here rather than `bathroom`: a full family bathroom
+  // sitting near the diwaniya is not the same provision, it is the
+  // family's bathroom with guests in it. `desired`, at most two doors
+  // away, because a lobby between the two is the normal and better
+  // arrangement, not a failure. A house with no half bath at all is
+  // never penalised -- `checkAdjacency` skips any row whose room type is
+  // absent, the same way it never penalises a house for having no
+  // garage. --
+  { a: "diwaniya", b: "half_bath", relation: "desired" },
+  { a: "reception", b: "half_bath", relation: "desired" },
   // -- User-specified (this household's own layout logic) --
   { a: "diwaniya", b: "entry", relation: "undesired" },
   { a: "reception", b: "entry", relation: "required" },

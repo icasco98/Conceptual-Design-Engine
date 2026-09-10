@@ -521,3 +521,35 @@ describe("ownEntranceProblems: a diwaniya is entered from the street, not throug
     expect(withoutOwnDoor.hardProblems).toBe(withOwnDoor.hardProblems + 1);
   });
 });
+
+describe("the guest WC: a visitor should not need the family's own bathroom", () => {
+  const rules: RelationRow[] = [{ a: "diwaniya", b: "half_bath", relation: "desired" }];
+  const diwaniya = box({ id: "diw", left: 0, top: 0, width: 6.5, height: 8, roomType: "diwaniya" });
+
+  it("is satisfied by a powder room off a lobby the diwaniya opens onto", () => {
+    const lobby = box({ id: "lobby", left: 6.5, top: 0, width: 1.5, height: 4, roomType: "hallway", kind: "corridor" });
+    const wc = box({ id: "wc", left: 8, top: 0, width: 1.1, height: 1.6, roomType: "half_bath" });
+    const arrows = [door("d1", "diw", 1, 0.2), door("d2", "lobby", 1, 0.2)];
+    const row = checkAdjacency([diwaniya, lobby, wc], 1, arrows, false, rules)[0];
+    expect(row.ok).toBe(true);
+  });
+
+  it("fails when the only WC near the diwaniya is deep in the house", () => {
+    const lobby = box({ id: "lobby", left: 6.5, top: 0, width: 1.5, height: 8, roomType: "hallway", kind: "corridor" });
+    const hall = box({ id: "hall", left: 8, top: 0, width: 1.5, height: 8, roomType: "hallway", kind: "corridor" });
+    const bed = box({ id: "bed", left: 9.5, top: 0, width: 3.3, height: 3.6, roomType: "bedroom" });
+    const wc = box({ id: "wc", left: 12.8, top: 0, width: 1.1, height: 1.6, roomType: "half_bath" });
+    const arrows = [door("d1", "diw", 1, 0.2), door("d2", "lobby", 1, 0.2), door("d3", "hall", 1, 0.2), door("d4", "bed", 1, 0.2)];
+    const row = checkAdjacency([diwaniya, lobby, hall, bed, wc], 1, arrows, false, rules)[0];
+    expect(row.ok).toBe(false);
+  });
+
+  it("says nothing at all about a house with no half bath in it", () => {
+    // The family's own full bathroom near the diwaniya is not the same
+    // provision, and a house that simply has no powder room is not
+    // penalised for it -- the row is skipped, not failed, exactly as a
+    // house with no garage is never penalised for having none.
+    const bathroom = box({ id: "bath", left: 6.5, top: 0, width: 1.8, height: 2.4, roomType: "bathroom" });
+    expect(checkAdjacency([diwaniya, bathroom], 1, [door("d1", "diw", 1, 0.15)], false, rules)).toEqual([]);
+  });
+});
