@@ -20,7 +20,7 @@ import { outsidePlot } from "../geometry/plot";
 import { polyArea } from "../geometry/poly";
 import { adjacencySeverity, collectFindings, TIER_ORDER, type AdjacencyStatus, type StairConnectionProblem, type TierViolation } from "../geometry/relationships";
 import { liveBoxes } from "../geometry/snap";
-import { auxiliaryOf, circulationOf, floorLabel, passableOf, roomTypeInfo, tierOf } from "../rooms";
+import { floorLabel, ROOM_FACTS, roomTypeInfo } from "../rooms";
 import type { Box } from "../geometry/types";
 import { IconFootprints, IconTick, IconWarn } from "./icons";
 import { useStore } from "../state/store";
@@ -220,7 +220,7 @@ export function StatusBar() {
   // checks happened to produce them in.
   const { problems, recommendations } = useMemo(() => {
     const boxesById = new Map(boxes.map((b) => [b.id, b]));
-    const findings = collectFindings(boxes, storeys, arrows, autoCarve, passableOf, tierOf, auxiliaryOf, circulationOf);
+    const findings = collectFindings(boxes, storeys, arrows, autoCarve, ROOM_FACTS);
     const hard = [
       ...tierFindings(findings.tier, boxesById),
       ...reachabilityFindings(findings.reachability, boxesById),

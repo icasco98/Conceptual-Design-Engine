@@ -110,7 +110,7 @@ import {
   type OverhangFinding,
 } from "./efficiency";
 import { liveBoxes } from "./snap";
-import type { Arrow, Box, PrivacyTier } from "./types";
+import type { Arrow, Box, PrivacyTier, RoomFacts } from "./types";
 
 export type Relation = "required" | "desired" | "undesired";
 
@@ -483,19 +483,16 @@ export function collectFindings(
   storeys: number,
   arrows: Arrow[],
   autoCarve: boolean,
-  passableOf: (roomType: string) => boolean,
-  tierOf: (roomType: string) => PrivacyTier | undefined,
-  auxiliaryOf: (roomType: string) => boolean,
-  circulationOf: (roomType: string) => boolean,
+  facts: RoomFacts,
   rules: RelationRow[] = ROOM_RELATIONSHIPS,
 ): Findings {
   return {
-    reachability: reachabilityProblems(boxes, storeys, arrows, autoCarve, passableOf, auxiliaryOf, tierOf),
+    reachability: reachabilityProblems(boxes, storeys, arrows, autoCarve, facts.passable, facts.auxiliary, facts.tier),
     adjacency: checkAdjacency(boxes, storeys, arrows, autoCarve, rules),
-    tier: tierViolations(boxes, storeys, arrows, autoCarve, tierOf),
-    stairConnection: stairConnectionProblems(boxes, storeys, arrows, autoCarve, circulationOf),
+    tier: tierViolations(boxes, storeys, arrows, autoCarve, facts.tier),
+    stairConnection: stairConnectionProblems(boxes, storeys, arrows, autoCarve, facts.circulation),
     gaps: unnecessaryGaps(boxes, storeys, autoCarve, (a, b) => isUndesiredPair(a, b, rules)),
-    circulationRatio: circulationRatio(boxes, storeys, autoCarve, circulationOf),
+    circulationRatio: circulationRatio(boxes, storeys, autoCarve, facts.circulation),
     overhangs: overhangs(boxes, storeys, autoCarve),
     corridorWaste: corridorWaste(boxes, storeys, arrows, autoCarve),
     deadEndHallways: deadEndHallways(boxes, storeys, arrows, autoCarve),
@@ -504,8 +501,7 @@ export function collectFindings(
 
 export interface Score {
   /** A weighted total, not a raw count: every tier violation,
-   * reachability problem, stair-connection problem and unmet
-   * `required`/`undesired` adjacency row counts as 1 (they carry no
+   * reachability problem, stair-connection problem and unmet `required`/`undesired` adjacency row counts as 1 (they carry no
    * continuous magnitude of their own), but each dead-end hallway past
    * the code limit (efficiency.ts's `deadEndHallways`) is weighted by how
    * far past that limit it runs -- a corridor barely over the limit
@@ -588,13 +584,10 @@ export function scoreCandidate(
   storeys: number,
   arrows: Arrow[],
   autoCarve: boolean,
-  passableOf: (roomType: string) => boolean,
-  tierOf: (roomType: string) => PrivacyTier | undefined,
-  auxiliaryOf: (roomType: string) => boolean,
-  circulationOf: (roomType: string) => boolean,
+  facts: RoomFacts,
   rules: RelationRow[] = ROOM_RELATIONSHIPS,
 ): Score {
-  const findings = collectFindings(boxes, storeys, arrows, autoCarve, passableOf, tierOf, auxiliaryOf, circulationOf, rules);
+  const findings = collectFindings(boxes, storeys, arrows, autoCarve, facts, rules);
   const unmetAdjacency = findings.adjacency.filter((r) => !r.ok);
   // Tier violations, reachability problems, stair-connection problems and
   // unmet required/undesired adjacency rows carry no continuous magnitude

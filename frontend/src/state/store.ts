@@ -20,7 +20,7 @@ import { BASE_ROOM_RELATIONSHIPS, CULTURAL_ROOM_RELATIONSHIPS, type RelationRow 
 import { isOpenToBelow, liveBoxes } from "../geometry/snap";
 import { touchSelected } from "../geometry/touch";
 import type { Actor, ActorRole, Arrow, Box, BoxShape, Plot, Point } from "../geometry/types";
-import { auxiliaryOf, circulationOf, passableOf, roomTypeInfo, tierOf } from "../rooms";
+import { ROOM_FACTS, roomTypeInfo } from "../rooms";
 import { DEFAULT_PLOT, DEFAULT_PRIORITY, SAMPLE_STOREYS, STOREY_HEIGHT_M, sampleArrows, sampleBoxes, storeysSpanned } from "../sample";
 
 /** A fixed rotation, not a colour per role: two actors of the same role
@@ -630,7 +630,7 @@ export const useStore = create<State>((set, get) => ({
     // else here needing to change.
     const boundary = plot.on ? rectPolyOf({ left: plot.left, top: plot.top, width: plot.width, height: plot.depth }) : null;
     const rules = [...BASE_ROOM_RELATIONSHIPS, ...ruleOverlay];
-    const result = searchLayout(boxes, level, storeys, arrows, autoCarve, boundary, passableOf, tierOf, auxiliaryOf, circulationOf, rules);
+    const result = searchLayout(boxes, level, storeys, arrows, autoCarve, boundary, ROOM_FACTS, rules);
     set({ boxes: result });
   },
 

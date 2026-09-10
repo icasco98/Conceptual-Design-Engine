@@ -8,7 +8,7 @@ import { compareScores, scoreCandidate } from "./relationships";
 import { liveBoxes } from "./snap";
 import type { Box, Plot } from "./types";
 import { SAMPLE_STOREYS, sampleArrows, sampleBoxes } from "../sample";
-import { auxiliaryOf, circulationOf, passableOf, tierOf } from "../rooms";
+import { ROOM_FACTS } from "../rooms";
 
 function box(partial: Partial<Box> & { id: string; left: number; top: number; width: number; height: number }): Box {
   return {
@@ -51,10 +51,7 @@ describe("generateLayout: searches placement, never room program, never worse th
       arrows,
       false,
       null,
-      passableOf,
-      tierOf,
-      auxiliaryOf,
-      circulationOf,
+      ROOM_FACTS,
       undefined,
       { iterations: 150, seed: 1 },
     );
@@ -64,7 +61,7 @@ describe("generateLayout: searches placement, never room program, never worse th
   it("never scores worse than the arrangement it started from", () => {
     const boxes = sampleBoxes();
     const arrows = sampleArrows(boxes);
-    const startScore = scoreCandidate(boxes, SAMPLE_STOREYS, arrows, false, passableOf, tierOf, auxiliaryOf, circulationOf);
+    const startScore = scoreCandidate(boxes, SAMPLE_STOREYS, arrows, false, ROOM_FACTS);
     const result = generateLayout(
       boxes,
       0,
@@ -72,14 +69,11 @@ describe("generateLayout: searches placement, never room program, never worse th
       arrows,
       false,
       null,
-      passableOf,
-      tierOf,
-      auxiliaryOf,
-      circulationOf,
+      ROOM_FACTS,
       undefined,
       { iterations: 150, seed: 2 },
     );
-    const resultScore = scoreCandidate(result, SAMPLE_STOREYS, arrows, false, passableOf, tierOf, auxiliaryOf, circulationOf);
+    const resultScore = scoreCandidate(result, SAMPLE_STOREYS, arrows, false, ROOM_FACTS);
     expect(compareScores(resultScore, startScore)).toBeLessThanOrEqual(0);
     // The sample house already has zero hard problems -- the search must
     // never regress a known-good layout below that floor.
@@ -96,10 +90,7 @@ describe("generateLayout: searches placement, never room program, never worse th
       arrows,
       false,
       null,
-      passableOf,
-      tierOf,
-      auxiliaryOf,
-      circulationOf,
+      ROOM_FACTS,
       undefined,
       { iterations: 100, seed: 3 },
     );
@@ -118,7 +109,7 @@ describe("generateLayout: searches placement, never room program, never worse th
     const boxes = sampleBoxes();
     const arrows = sampleArrows(boxes);
     const run = () =>
-      generateLayout(boxes, 0, SAMPLE_STOREYS, arrows, false, null, passableOf, tierOf, auxiliaryOf, circulationOf, undefined, {
+      generateLayout(boxes, 0, SAMPLE_STOREYS, arrows, false, null, ROOM_FACTS, undefined, {
         iterations: 120,
         seed: 42,
       });
@@ -141,10 +132,7 @@ describe("generateLayout: searches placement, never room program, never worse th
       [],
       false,
       boundary,
-      passableOf,
-      tierOf,
-      auxiliaryOf,
-      circulationOf,
+      ROOM_FACTS,
       undefined,
       { iterations: 300, seed: 7 },
     );
@@ -155,7 +143,7 @@ describe("generateLayout: searches placement, never room program, never worse th
 
   it("leaves boxes unchanged when nothing is rooted on the requested level", () => {
     const boxes = sampleBoxes().filter((b) => b.level === 0);
-    const result = generateLayout(boxes, 5, 6, [], false, null, passableOf, tierOf, auxiliaryOf, circulationOf);
+    const result = generateLayout(boxes, 5, 6, [], false, null, ROOM_FACTS);
     expect(result).toBe(boxes);
   });
 });

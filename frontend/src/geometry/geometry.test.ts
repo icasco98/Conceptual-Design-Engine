@@ -24,7 +24,7 @@ import { isOpenToBelow, liveBoxes, nearestNeighborPoint, snapToGrid, snapToNearb
 import { touchDelta, touchSelected, polyGap } from "./touch";
 import type { Arrow, Box, Plot, Point, Poly } from "./types";
 import { SAMPLE_STOREYS, sampleArrows, sampleBoxes } from "../sample";
-import { auxiliaryOf, circulationOf, passableOf, tierOf, zoneOf } from "../rooms";
+import { auxiliaryOf, circulationOf, passableOf, ROOM_FACTS, tierOf, zoneOf } from "../rooms";
 
 function box(partial: Partial<Box> & { id: string; left: number; top: number; width: number; height: number }): Box {
   return {
@@ -1109,7 +1109,7 @@ describe("circulation: a route is the shortest walk of real doors", () => {
     });
 
     it("scores the sample house with zero hard problems", () => {
-      const score = scoreCandidate(boxes, SAMPLE_STOREYS, arrows, false, passableOf, tierOf, auxiliaryOf, circulationOf);
+      const score = scoreCandidate(boxes, SAMPLE_STOREYS, arrows, false, ROOM_FACTS);
       expect(score.hardProblems).toBe(0);
     });
   });
@@ -1366,7 +1366,7 @@ describe("BASE_ROOM_RELATIONSHIPS / CULTURAL_ROOM_RELATIONSHIPS: split, not drop
   it("scoreCandidate called with no explicit rules list still scores the sample house with zero hard problems", () => {
     const boxes = sampleBoxes();
     const arrows = sampleArrows(boxes);
-    const score = scoreCandidate(boxes, SAMPLE_STOREYS, arrows, false, passableOf, tierOf, auxiliaryOf, circulationOf);
+    const score = scoreCandidate(boxes, SAMPLE_STOREYS, arrows, false, ROOM_FACTS);
     expect(score.hardProblems).toBe(0);
   });
 });
@@ -1567,7 +1567,7 @@ describe("collectFindings: the one call that ties all the checks together", () =
     const bed = box({ id: "bed", left: 4, top: 0, width: 4, height: 4, roomType: "bedroom" });
     const ext: Arrow = { id: "ext", level: 0, hostId: "entry", kind: "exterior-main", side: 3, t: 0.5, dir: 1 };
     const door: Arrow = { id: "d", level: 0, hostId: "entry", kind: "interior", side: 1, t: 0.5, dir: 1 };
-    const findings = collectFindings([entry, bed], 1, [ext, door], false, passableOf, tierOf, auxiliaryOf, circulationOf);
+    const findings = collectFindings([entry, bed], 1, [ext, door], false, ROOM_FACTS);
     // Same door, evaluated three different ways: it does connect the
     // household to the entry (no reachability problem), it is not a
     // room-type pair the adjacency table has an opinion on, and it does
@@ -1790,7 +1790,7 @@ describe("deadEndHallways: a corridor that is the only way out, past a real code
 
 describe("scoreCandidate and compareScores: hard problems always decide first", () => {
   const score = (boxes: Box[], arrows: Arrow[] = []) =>
-    scoreCandidate(boxes, 1, arrows, false, passableOf, tierOf, auxiliaryOf, circulationOf);
+    scoreCandidate(boxes, 1, arrows, false, ROOM_FACTS);
 
   it("scores a genuinely clean candidate 0 and 0", () => {
     // A single, non-circulation room (not "entry"): a lone foyer would

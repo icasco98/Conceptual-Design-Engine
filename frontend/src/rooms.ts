@@ -25,7 +25,7 @@
  * of the privacy conversation at all.
  */
 import type { CategoryKey } from "./api/types";
-import type { PrivacyTier } from "./geometry/types";
+import type { PrivacyTier, RoomFacts } from "./geometry/types";
 
 interface RoomTypeInfo {
   label: string;
@@ -161,3 +161,17 @@ export function auxiliaryOf(roomType: string): boolean {
 export function circulationOf(roomType: string): boolean {
   return !!roomTypeInfo(roomType).circulation;
 }
+
+
+/** The whole set, as one object -- what `collectFindings`, `scoreCandidate`
+ * and `generateLayout` take. The individual functions above stay exported
+ * because the narrower checks still take exactly the one or two they read
+ * (`tierViolations` takes `tierOf` alone), and because a caller wanting to
+ * answer one question about one room type should not have to assemble a
+ * bundle to do it. */
+export const ROOM_FACTS: RoomFacts = {
+  passable: passableOf,
+  tier: tierOf,
+  auxiliary: auxiliaryOf,
+  circulation: circulationOf,
+};

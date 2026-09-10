@@ -18,7 +18,7 @@
 import { suggestArrows } from "./geometry/arrows";
 import { DEFAULT_SEARCH_CONFIG, generateLayout, type SearchConfig } from "./geometry/generate";
 import { scoreCandidate } from "./geometry/relationships";
-import { auxiliaryOf, circulationOf, passableOf, roomTypeInfo, tierOf } from "./rooms";
+import { ROOM_FACTS, roomTypeInfo } from "./rooms";
 import { boundaryOf, buildScenario, flattenProgram, type PlotTemplate, type RoomProgram } from "./scenarios";
 
 /** A generous lower bound: could this program ever fit this plot at
@@ -70,13 +70,13 @@ export function evaluateConfig(config: SearchConfig, scenarios: EvalScenario[], 
     const { plot, boxes, arrows } = buildScenario(plotTemplate, program);
     const startArrows = [...arrows, ...suggestArrows(boxes, arrows, 0, false)];
     const boundary = boundaryOf(plot);
-    const result = generateLayout(boxes, 0, 1, startArrows, false, boundary, passableOf, tierOf, auxiliaryOf, circulationOf, undefined, {
+    const result = generateLayout(boxes, 0, 1, startArrows, false, boundary, ROOM_FACTS, undefined, {
       iterations,
       seed,
       config,
     });
     const resultArrows = [...arrows, ...suggestArrows(result, arrows, 0, false)];
-    const resultScore = scoreCandidate(result, 1, resultArrows, false, passableOf, tierOf, auxiliaryOf, circulationOf);
+    const resultScore = scoreCandidate(result, 1, resultArrows, false, ROOM_FACTS);
     hardTotal += resultScore.hardProblems;
     softTotal += resultScore.softRecommendations;
     if (resultScore.hardProblems === 0) clean++;

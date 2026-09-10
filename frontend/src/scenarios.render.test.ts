@@ -24,7 +24,7 @@ import { suggestArrows } from "./geometry/arrows";
 import { generateLayout } from "./geometry/generate";
 import { footprintCoverage } from "./geometry/footprint";
 import { scoreCandidate } from "./geometry/relationships";
-import { auxiliaryOf, circulationOf, passableOf, tierOf } from "./rooms";
+import { ROOM_FACTS } from "./rooms";
 import { renderScenarioSVG, scenarioPageHTML } from "./scenarios.render";
 import { boundaryOf, buildScenario, EXAMPLE_PROGRAMS, PLOT_TEMPLATES } from "./scenarios";
 
@@ -46,7 +46,7 @@ describe("scenario visual confirmation", () => {
       const { plot, boxes, arrows } = buildScenario(plotTemplate, program);
 
       const startArrows = [...arrows, ...suggestArrows(boxes, arrows, 0, false)];
-      const startScore = scoreCandidate(boxes, 1, startArrows, false, passableOf, tierOf, auxiliaryOf, circulationOf);
+      const startScore = scoreCandidate(boxes, 1, startArrows, false, ROOM_FACTS);
       const startCoverage = footprintCoverage(boxes, 0, false, plot);
 
       const startSvg = renderScenarioSVG(plot, boxes, {
@@ -59,12 +59,12 @@ describe("scenario visual confirmation", () => {
       });
 
       const boundary = boundaryOf(plot);
-      const result = generateLayout(boxes, 0, 1, startArrows, false, boundary, passableOf, tierOf, auxiliaryOf, circulationOf, undefined, {
+      const result = generateLayout(boxes, 0, 1, startArrows, false, boundary, ROOM_FACTS, undefined, {
         iterations: 800,
         seed: 11,
       });
       const resultArrows = [...arrows, ...suggestArrows(result, arrows, 0, false)];
-      const resultScore = scoreCandidate(result, 1, resultArrows, false, passableOf, tierOf, auxiliaryOf, circulationOf);
+      const resultScore = scoreCandidate(result, 1, resultArrows, false, ROOM_FACTS);
       const resultCoverage = footprintCoverage(result, 0, false, plot);
 
       const resultSvg = renderScenarioSVG(plot, result, {

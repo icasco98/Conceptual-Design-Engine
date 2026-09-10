@@ -17,7 +17,7 @@ import { generateLayout } from "./geometry/generate";
 import { footprintCoverage } from "./geometry/footprint";
 import { compareScores, scoreCandidate, type Score } from "./geometry/relationships";
 import type { Arrow, Box } from "./geometry/types";
-import { auxiliaryOf, circulationOf, passableOf, tierOf } from "./rooms";
+import { ROOM_FACTS } from "./rooms";
 import { boundaryOf, buildScenario, EXAMPLE_PROGRAMS, PLOT_TEMPLATES, type PlotTemplate, type RoomProgram } from "./scenarios";
 
 /** A short, stable seed from a scenario id -- deterministic across runs
@@ -42,7 +42,7 @@ export interface ScenarioResult {
 }
 
 function score(boxes: Box[], arrows: Arrow[]): Score {
-  return scoreCandidate(boxes, 1, arrows, false, passableOf, tierOf, auxiliaryOf, circulationOf);
+  return scoreCandidate(boxes, 1, arrows, false, ROOM_FACTS);
 }
 
 export function runScenario(plotTemplate: PlotTemplate, program: RoomProgram, iterations = 600): ScenarioResult {
@@ -51,7 +51,7 @@ export function runScenario(plotTemplate: PlotTemplate, program: RoomProgram, it
   const startScore = score(boxes, startArrows);
 
   const boundary = boundaryOf(plot);
-  const placed = generateLayout(boxes, 0, 1, startArrows, false, boundary, passableOf, tierOf, auxiliaryOf, circulationOf, undefined, {
+  const placed = generateLayout(boxes, 0, 1, startArrows, false, boundary, ROOM_FACTS, undefined, {
     iterations,
     seed: seedFor(id),
   });

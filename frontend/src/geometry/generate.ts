@@ -76,7 +76,7 @@ import { pointOnPolyBoundary, polyOfBox } from "./poly";
 import { boxesTrulyIntersect } from "./rect";
 import { compareScores, scoreCandidate, type RelationRow, type Score } from "./relationships";
 import { liveBoxes } from "./snap";
-import type { Arrow, Box, Point, Poly, PrivacyTier } from "./types";
+import type { Arrow, Box, Point, Poly, RoomFacts } from "./types";
 
 /** A millimetre -- the same generosity `plot.ts`'s own boundary test
  * gives a zone sitting right on the line. */
@@ -286,10 +286,7 @@ export function generateLayout(
   arrows: Arrow[],
   autoCarve: boolean,
   boundary: Poly | null,
-  passableOf: (roomType: string) => boolean,
-  tierOf: (roomType: string) => PrivacyTier | undefined,
-  auxiliaryOf: (roomType: string) => boolean,
-  circulationOf: (roomType: string) => boolean,
+  facts: RoomFacts,
   rules?: RelationRow[],
   options: GenerateOptions = {},
 ): Box[] {
@@ -318,7 +315,7 @@ export function generateLayout(
   const score = (candidate: Box[]) => {
     const suggested = suggestArrows(liveBoxes(candidate, level), startingLevelArrows, level, autoCarve);
     const candidateArrows = [...otherLevelArrows, ...startingLevelArrows, ...suggested];
-    return scoreCandidate(candidate, storeys, candidateArrows, autoCarve, passableOf, tierOf, auxiliaryOf, circulationOf, rules);
+    return scoreCandidate(candidate, storeys, candidateArrows, autoCarve, facts, rules);
   };
 
   let current = boxes;
