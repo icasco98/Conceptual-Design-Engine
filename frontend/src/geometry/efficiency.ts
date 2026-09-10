@@ -163,9 +163,12 @@ export interface OverhangFinding {
 }
 
 /** [lo, hi) intervals merged into their total covered length -- the one
- * piece of interval math both `overhangs` (per wall) and `corridorWaste`
- * (per corridor) need, so it exists once rather than twice. */
-function unionLength(intervals: [number, number][]): number {
+ * piece of interval math `overhangs` (per wall), `corridorWaste` (per
+ * corridor) and `habitability.ts`'s `exteriorWallLength` (per edge of a
+ * room's outline) all need, so it exists once rather than three times.
+ * Merging first is the whole point: two neighbours meeting the same
+ * stretch of wall must not have that stretch subtracted twice. */
+export function unionLength(intervals: [number, number][]): number {
   if (!intervals.length) return 0;
   const sorted = [...intervals].sort((a, b) => a[0] - b[0]);
   let total = 0;

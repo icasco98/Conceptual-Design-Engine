@@ -13,9 +13,10 @@
  */
 import { describe, expect, it } from "vitest";
 
+import { exteriorWallLength, windowlessSleepingRooms } from "./habitability";
 import { checkAdjacency, sanitaryDoorProblems, scoreCandidate, undersizedDoorways, type RelationRow } from "./relationships";
 import type { Arrow, Box } from "./types";
-import { foodOf, ROOM_FACTS, sanitaryOf } from "../rooms";
+import { foodOf, ROOM_FACTS, sanitaryOf, sleepingOf } from "../rooms";
 
 function box(partial: Partial<Box> & { id: string; left: number; top: number; width: number; height: number }): Box {
   return {
@@ -214,5 +215,67 @@ describe("undersizedDoorways: a door needs enough shared wall to exist", () => {
     // what the search needs to be able to see.
     const without = scoreCandidate([a, b], 1, [arrows[0]], false, ROOM_FACTS, []);
     expect(score.hardProblems - without.hardProblems).toBeCloseTo(0.6 - 1, 3);
+  });
+});
+
+describe("windowlessSleepingRooms: a room slept in needs a way out of it", () => {
+  /** A bedroom completely boxed in by four neighbours: 3x3, with a room
+   * hard against each of its four sides, each one overhanging it, so no
+   * stretch of its outline faces outside at all. */
+  const sealed = (): Box[] => [
+    box({ id: "core", left: 3, top: 3, width: 3, height: 3, roomType: "bedroom" }),
+    box({ id: "n", left: 2, top: 0, width: 5, height: 3, roomType: "storage" }),
+    box({ id: "s", left: 2, top: 6, width: 5, height: 3, roomType: "storage" }),
+    box({ id: "w", left: 0, top: 2, width: 3, height: 5, roomType: "storage" }),
+    box({ id: "e", left: 6, top: 2, width: 3, height: 5, roomType: "storage" }),
+  ];
+
+  it("reports a sleeping room with every side covered by a neighbour", () => {
+    const found = windowlessSleepingRooms(sealed(), 1, false, sleepingOf);
+    expect(found).toHaveLength(1);
+    expect(found[0].roomId).toBe("core");
+    expect(found[0].exteriorM).toBeCloseTo(0, 6);
+  });
+
+  it("reports nothing once one side is opened up", () => {
+    // The same plan with the neighbour to the east pulled clear: the
+    // bedroom now has a 3 m wall facing outside, which is a window.
+    const rooms = sealed().map((b) => (b.id === "e" ? { ...b, left: 12 } : b));
+    expect(windowlessSleepingRooms(rooms, 1, false, sleepingOf)).toEqual([]);
+  });
+
+  it("reports nothing for a bathroom, hall, garage, or a room that borrows its light", () => {
+    // The first group is legitimately internal and always has been. The
+    // dining room and office are the deliberate narrowing: both are
+    // habitable and both may lawfully take their light and air from an
+    // adjoining room through a wide opening this tool cannot see, so
+    // holding them to the escape-opening rule would flag an ordinary
+    // arrangement as a defect. See habitability.ts's doc comment.
+    for (const roomType of ["bathroom", "closet", "hallway", "garage_single", "storage", "laundry", "dining_room", "office"]) {
+      const rooms = sealed().map((b) => (b.id === "core" ? { ...b, roomType } : b));
+      expect(windowlessSleepingRooms(rooms, 1, false, sleepingOf)).toEqual([]);
+    }
+  });
+
+  it("does not double-count a stretch of wall two neighbours both meet", () => {
+    // Two 1.5 m neighbours meeting the bedroom's whole 3 m north wall,
+    // and nothing anywhere else. Naive perimeter-minus-touches would
+    // subtract 3 m twice and report 6 m of a 12 m perimeter gone; the
+    // truth is 3, leaving 9 m outside-facing.
+    const core = box({ id: "core", left: 3, top: 3, width: 3, height: 3, roomType: "bedroom" });
+    const n1 = box({ id: "n1", left: 3, top: 0, width: 3, height: 3, roomType: "storage" });
+    const n2 = box({ id: "n2", left: 3, top: 0, width: 3, height: 3, roomType: "storage" });
+    expect(exteriorWallLength([core, n1, n2], 0, false, "core")).toBeCloseTo(9, 6);
+    expect(windowlessSleepingRooms([core, n1, n2], 1, false, sleepingOf)).toEqual([]);
+  });
+
+  it("counts as a hard problem, one per sealed room", () => {
+    const rooms = sealed();
+    const withRule = scoreCandidate(rooms, 1, [], false, ROOM_FACTS, []);
+    const opened = rooms.map((b) => (b.id === "e" ? { ...b, left: 12 } : b));
+    const withoutIt = scoreCandidate(opened, 1, [], false, ROOM_FACTS, []);
+    expect(withRule.findings.windowless).toHaveLength(1);
+    expect(withoutIt.findings.windowless).toHaveLength(0);
+    expect(withRule.hardProblems).toBe(withoutIt.hardProblems + 1);
   });
 });

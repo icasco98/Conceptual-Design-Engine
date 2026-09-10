@@ -15,6 +15,7 @@ import { useMemo } from "react";
 import { actorRoute, sharedSegments, type ReachabilityProblem } from "../geometry/circulation";
 import type { CirculationRatioFinding, CorridorWasteFinding, DeadEndFinding, GapFinding, OverhangFinding } from "../geometry/efficiency";
 import { footprintCoverage } from "../geometry/footprint";
+import { MIN_EXTERIOR_WALL_M, type WindowlessFinding } from "../geometry/habitability";
 import { buildCirculationGraphMemo, displayShapesForLevelMemo } from "../geometry/memo";
 import { outsidePlot } from "../geometry/plot";
 import { polyArea } from "../geometry/poly";
@@ -105,6 +106,18 @@ function undersizedDoorwayFindings(problems: UndersizedDoorwayFinding[], boxesBy
     const b = boxesById.get(p.roomBId);
     if (!a || !b) return [];
     return [{ level: p.level, text: `${a.name} and ${b.name} share only ${p.wallM.toFixed(2)} m of wall -- too little to fit the door drawn between them` }];
+  });
+}
+
+/** A sleeping room with effectively no wall facing outside
+ * (`habitability.ts`'s `windowlessSleepingRooms`) -- no window is
+ * possible there, so no way out of it in a fire. */
+function windowlessFindings(problems: WindowlessFinding[], boxesById: Map<string, Box>): Finding[] {
+  return problems.flatMap((p) => {
+    const room = boxesById.get(p.roomId);
+    if (!room) return [];
+    const how = p.exteriorM < 0.01 ? "no wall facing outside at all" : `only ${p.exteriorM.toFixed(2)} m of wall facing outside`;
+    return [{ level: p.level, text: `${room.name} has ${how} -- a room slept in needs at least ${MIN_EXTERIOR_WALL_M.toFixed(1)} m for a window to escape through` }];
   });
 }
 
@@ -266,6 +279,7 @@ export function StatusBar() {
       ...adjacencyProblemFindings(findings.adjacency),
       ...sanitaryDoorFindings(findings.sanitaryDoors, boxesById),
       ...undersizedDoorwayFindings(findings.undersizedDoorways, boxesById),
+      ...windowlessFindings(findings.windowless, boxesById),
       ...deadEndFindings(findings.deadEndHallways, boxesById),
     ];
     const soft = [

@@ -118,6 +118,7 @@ import {
   type GapFinding,
   type OverhangFinding,
 } from "./efficiency";
+import { windowlessSleepingRooms, type WindowlessFinding } from "./habitability";
 import { liveBoxes } from "./snap";
 import type { Arrow, Box, Point, PrivacyTier, RoomFacts } from "./types";
 
@@ -624,6 +625,9 @@ export interface Findings {
   stairConnection: StairConnectionProblem[];
   sanitaryDoors: SanitaryDoorProblem[];
   undersizedDoorways: UndersizedDoorwayFinding[];
+  /** Code, not cost -- see habitability.ts for why a sleeping room with
+   * no wall facing outside is a hard problem and not an expensive room. */
+  windowless: WindowlessFinding[];
   gaps: GapFinding[];
   circulationRatio: CirculationRatioFinding[];
   overhangs: OverhangFinding[];
@@ -672,6 +676,7 @@ export function collectFindings(
     stairConnection: stairConnectionProblems(boxes, storeys, arrows, autoCarve, facts.circulation),
     sanitaryDoors: sanitaryDoorProblems(boxes, storeys, arrows, autoCarve, facts.sanitary, facts.food),
     undersizedDoorways: undersizedDoorways(boxes, storeys, arrows, autoCarve),
+    windowless: windowlessSleepingRooms(boxes, storeys, autoCarve, facts.sleeping),
     gaps: unnecessaryGaps(boxes, storeys, autoCarve, (a, b) => isUndesiredPair(a, b, rules)),
     circulationRatio: circulationRatio(boxes, storeys, autoCarve, facts.circulation),
     overhangs: overhangs(boxes, storeys, autoCarve),
@@ -791,6 +796,7 @@ export function scoreCandidate(
     findings.sanitaryDoors.length +
     sumWeights(findings.deadEndHallways, deadEndWeight) +
     sumWeights(findings.undersizedDoorways, undersizedDoorwayWeight) +
+    findings.windowless.length +
     unmetAdjacency.filter((r) => adjacencySeverity(r) === "problem").length;
   const softRecommendations =
     unmetAdjacency.filter((r) => adjacencySeverity(r) === "recommendation").length +

@@ -75,6 +75,16 @@ interface RoomTypeInfo {
    * question this answers is narrow and physical: is there a toilet on
    * the other side of this door. */
   sanitary?: boolean;
+  /** Someone sleeps here. The set residential codes require an
+   * emergency escape and rescue opening in -- a window or door straight
+   * to the outside -- which is what `habitability.ts` checks is even
+   * possible. Deliberately narrower than "habitable": an office or a
+   * dining room is habitable and may legitimately borrow its light and
+   * air from an adjoining room, which this tool cannot see; a bedroom
+   * cannot borrow an escape route from anywhere. Staff bedrooms count,
+   * for the obvious reason that the person sleeping in one has to be
+   * able to get out of it. */
+  sleeping?: boolean;
   /** Food is prepared or eaten here. The other half of
    * `sanitaryDoorProblems`' question. A living room is not on this list
    * even though people eat in front of the television: this is about the
@@ -106,8 +116,8 @@ export const ROOM_TYPES: Record<string, RoomTypeInfo> = {
   living_room: { label: "Living Room", minWidth: 3.5, minHeight: 4.0, typicalWidth: 4.5, typicalHeight: 5.5, zone: "category_b", passable: true, tier: "private" },
   dining_room: { label: "Dining Room", minWidth: 3.0, minHeight: 3.3, typicalWidth: 3.6, typicalHeight: 4.2, zone: "category_b", passable: true, tier: "semi-public", food: true },
   kitchen: { label: "Kitchen", minWidth: 2.7, minHeight: 3.0, typicalWidth: 3.6, typicalHeight: 4.2, zone: "category_b", passable: false, tier: "private", food: true },
-  master_bedroom: { label: "Master Bedroom", minWidth: 3.3, minHeight: 3.6, typicalWidth: 4.0, typicalHeight: 4.5, zone: "category_a", passable: false, tier: "private" },
-  bedroom: { label: "Bedroom", minWidth: 2.7, minHeight: 3.0, typicalWidth: 3.3, typicalHeight: 3.6, zone: "category_a", passable: false, tier: "private" },
+  master_bedroom: { label: "Master Bedroom", minWidth: 3.3, minHeight: 3.6, typicalWidth: 4.0, typicalHeight: 4.5, zone: "category_a", passable: false, tier: "private", sleeping: true },
+  bedroom: { label: "Bedroom", minWidth: 2.7, minHeight: 3.0, typicalWidth: 3.3, typicalHeight: 3.6, zone: "category_a", passable: false, tier: "private", sleeping: true },
   // Bathrooms are exempt from the gradient check on purpose -- see the
   // file doc comment above.
   bathroom: { label: "Bathroom", minWidth: 1.5, minHeight: 1.75, typicalWidth: 1.8, typicalHeight: 2.4, zone: "category_a", passable: false, auxiliary: true, sanitary: true },
@@ -127,9 +137,9 @@ export const ROOM_TYPES: Record<string, RoomTypeInfo> = {
   // as any other bedroom, even though it's not part of the family's own
   // wing. A live-in maid is modeled as Nanny Room; there is no separate
   // maid type.
-  driver_room: { label: "Driver Room", minWidth: 2.7, minHeight: 3.0, typicalWidth: 3.3, typicalHeight: 3.6, zone: "category_c", passable: false, tier: "private" },
+  driver_room: { label: "Driver Room", minWidth: 2.7, minHeight: 3.0, typicalWidth: 3.3, typicalHeight: 3.6, zone: "category_c", passable: false, tier: "private", sleeping: true },
   driver_bathroom: { label: "Driver Bathroom", minWidth: 1.5, minHeight: 1.75, typicalWidth: 1.8, typicalHeight: 2.4, zone: "category_c", passable: false, auxiliary: true, sanitary: true },
-  nanny_room: { label: "Nanny Room", minWidth: 2.7, minHeight: 3.0, typicalWidth: 3.3, typicalHeight: 3.6, zone: "category_c", passable: false, tier: "private" },
+  nanny_room: { label: "Nanny Room", minWidth: 2.7, minHeight: 3.0, typicalWidth: 3.3, typicalHeight: 3.6, zone: "category_c", passable: false, tier: "private", sleeping: true },
   nanny_bathroom: { label: "Nanny Bathroom", minWidth: 1.5, minHeight: 1.75, typicalWidth: 1.8, typicalHeight: 2.4, zone: "category_c", passable: false, auxiliary: true, sanitary: true },
   // No bathroom requirement -- it does not need to be ensuite.
   prayer_room: { label: "Prayer Room", minWidth: 2.0, minHeight: 2.5, typicalWidth: 2.5, typicalHeight: 3.0, zone: "category_a", passable: false, tier: "private" },
@@ -183,6 +193,10 @@ export function foodOf(roomType: string): boolean {
   return !!roomTypeInfo(roomType).food;
 }
 
+export function sleepingOf(roomType: string): boolean {
+  return !!roomTypeInfo(roomType).sleeping;
+}
+
 /** The whole set, as one object -- what `collectFindings`, `scoreCandidate`
  * and `generateLayout` take. The individual functions above stay exported
  * because the narrower checks still take exactly the one or two they read
@@ -196,4 +210,5 @@ export const ROOM_FACTS: RoomFacts = {
   circulation: circulationOf,
   sanitary: sanitaryOf,
   food: foodOf,
+  sleeping: sleepingOf,
 };
