@@ -1,0 +1,34 @@
+{
+  "pass": "pass-1",
+  "generations": 30,
+  "iterationsPerEval": 150,
+  "seed": 7,
+  "scenarioCount": 56,
+  "baseline": {
+    "scenarioCount": 56,
+    "meanHardProblems": 21.160714285714285,
+    "meanSoftRecommendations": 19.275927139744606,
+    "cleanRate": 0
+  },
+  "best": {
+    "scenarioCount": 56,
+    "meanHardProblems": 21.125,
+    "meanSoftRecommendations": 19.354446737017042,
+    "cleanRate": 0
+  },
+  "config": {
+    "tStart": 3,
+    "tEnd": 0.0016909593790590475,
+    "hardProblemWeight": 1000,
+    "stepFloorM": 0.1,
+    "stepScaleM": 2.5,
+    "rotFloorDeg": 0.9650683235215882,
+    "rotScaleDeg": 19.914366700614874,
+    "moveWeights": {
+      "translate": 1,
+      "resize": 1,
+      "rotate": 1.0459978732978925,
+      "swap": 1
+    }
+  }
+}
