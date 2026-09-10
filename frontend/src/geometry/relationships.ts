@@ -58,19 +58,32 @@
  * stair opening straight into a specific bedroom or kitchen makes that
  * room an involuntary through-route for everyone using the stairs.
  *
- * `collectFindings`, at the bottom, ties this file's checks and
- * `circulation.ts`'s `reachabilityProblems` into the one call a consumer
+ * `collectFindings`, at the bottom, ties this file's checks,
+ * `circulation.ts`'s `reachabilityProblems` and `efficiency.ts`'s
+ * `unnecessaryGaps`/`circulationRatio` into the one call a consumer
  * needs -- but it hands back raw, structured results only (room ids,
  * tiers, relation kinds), no wording and no UI. Turning that into
  * something a person reads (icons, plain-language sentences, a panel) is
  * deliberately a separate step: this file's job stops at making the
  * findings computable, not at deciding how they look.
  *
+ * `unnecessaryGaps` and `circulationRatio` (efficiency.ts) are a
+ * different *kind* of finding from the four above, not just two more of
+ * the same: those four ask "does this work" (a real requirement unmet, a
+ * real conflict, a door that skips a tier, a stair that serves one room
+ * instead of everyone using it); the efficiency pair asks "is this
+ * wasting money" (an unclosed gap trading a shared wall for two exterior
+ * ones, a hallway eating more of the floor than it needs to). A house
+ * with either issue still works -- so both are always soft
+ * recommendations, `adjacencySeverity`'s `desired` in spirit, never
+ * hard problems, whatever else is true of the plan.
+ *
  * All of these are read-only diagnostics. None of them ever moves, resizes or
  * auto-connects anything -- same "flag, never force" rule as the rest of
  * this tool.
  */
 import { buildCirculationGraph, levelTouchData, minHopCount, reachabilityProblems, type ReachabilityProblem } from "./circulation";
+import { circulationRatio, unnecessaryGaps, type CirculationRatioFinding, type GapFinding } from "./efficiency";
 import { liveBoxes } from "./snap";
 import type { Arrow, Box, PrivacyTier } from "./types";
 
@@ -379,6 +392,17 @@ export interface Findings {
   adjacency: AdjacencyStatus[];
   tier: TierViolation[];
   stairConnection: StairConnectionProblem[];
+  gaps: GapFinding[];
+  circulationRatio: CirculationRatioFinding[];
+}
+
+/** Whether two room types are meant to stay apart -- efficiency.ts's
+ * `unnecessaryGaps` takes this as a parameter rather than reading
+ * `ROOM_RELATIONSHIPS` itself, so that file never has to import this one
+ * (which already imports it, for `collectFindings`). Order-independent:
+ * `ROOM_RELATIONSHIPS` never lists the same pair both ways round. */
+function isUndesiredPair(a: string, b: string): boolean {
+  return ROOM_RELATIONSHIPS.some((r) => r.relation === "undesired" && ((r.a === a && r.b === b) || (r.a === b && r.b === a)));
 }
 
 /**
@@ -408,6 +432,8 @@ export function collectFindings(
     adjacency: checkAdjacency(boxes, storeys, arrows, autoCarve),
     tier: tierViolations(boxes, storeys, arrows, autoCarve, tierOf),
     stairConnection: stairConnectionProblems(boxes, storeys, arrows, autoCarve, circulationOf),
+    gaps: unnecessaryGaps(boxes, storeys, autoCarve, isUndesiredPair),
+    circulationRatio: circulationRatio(boxes, storeys, autoCarve, circulationOf),
   };
 }
 
@@ -417,7 +443,8 @@ export interface Score {
    * that would show up in the status bar's Problems line. A candidate
    * with any of these is not acceptable, whatever else it gets right. */
   hardProblems: number;
-  /** Every unmet `desired` adjacency row -- the status bar's
+  /** Every unmet `desired` adjacency row, plus every unnecessary gap and
+   * every over-ratio storey (efficiency.ts) -- the status bar's
    * Recommendations line. Never blocks a candidate from passing; only
    * ranks it against other candidates that are equally free of hard
    * problems. */
@@ -458,7 +485,8 @@ export function scoreCandidate(
     findings.reachability.length +
     findings.stairConnection.length +
     unmetAdjacency.filter((r) => adjacencySeverity(r) === "problem").length;
-  const softRecommendations = unmetAdjacency.filter((r) => adjacencySeverity(r) === "recommendation").length;
+  const softRecommendations =
+    unmetAdjacency.filter((r) => adjacencySeverity(r) === "recommendation").length + findings.gaps.length + findings.circulationRatio.length;
   return { hardProblems, softRecommendations, findings };
 }
 

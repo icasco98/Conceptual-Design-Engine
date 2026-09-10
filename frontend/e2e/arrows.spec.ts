@@ -16,11 +16,15 @@ test.describe("door arrows: two-way, and flagged once a carve takes their wall",
     const before = page.locator(".plan-svg .arrow.stale");
     await expect(before).toHaveCount(0);
 
-    // .last(): the Garage's own exterior door -- alone on its own wall
-    // (nothing sits south of the Garage), away from the cluster of doors
-    // around the entry, so a carve centred on it never reaches a
-    // neighbour by accident.
-    const targetArrow = page.locator(".plan-svg .arrow.exterior-side").last();
+    // .first(): the Diwaniya's own street door -- alone on its own wall
+    // (nothing sits north of the Diwaniya), clear of both the cluster of
+    // doors around the entry and the plan's own left-hand tool rail, so
+    // a carve centred on it never reaches a neighbour, or clips the
+    // rail's own controls, by accident. The Garage's own door sits
+    // further left on screen -- close enough to that rail, once the
+    // whole plan is zoomed out to fit, that the carve rectangle's own
+    // start point can land on the rail instead of the canvas.
+    const targetArrow = page.locator(".plan-svg .arrow.exterior-side").first();
     const arrowBox = await targetArrow.boundingBox();
     if (!arrowBox) throw new Error("no arrow bounding box");
     // A door renders at a fixed plan-meter size, so its own screen size
@@ -51,7 +55,9 @@ test.describe("door arrows: two-way, and flagged once a carve takes their wall",
   });
 
   test("the add-door preview hugs the wall under the cursor near a carve, never stretches across the zone's original shape", async ({ page }) => {
-    const targetArrow = page.locator(".plan-svg .arrow.exterior-side").last();
+    // .first(): the Diwaniya's own street door -- see the earlier test's
+    // own comment for why not the Garage's.
+    const targetArrow = page.locator(".plan-svg .arrow.exterior-side").first();
     const arrowBox = await targetArrow.boundingBox();
     if (!arrowBox) throw new Error("no arrow bounding box");
     const half = Math.max(arrowBox.width, arrowBox.height) * 1.3;

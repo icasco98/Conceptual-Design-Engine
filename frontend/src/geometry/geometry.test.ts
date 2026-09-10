@@ -8,6 +8,7 @@ import { footprintRings } from "./footprint";
 import { clampDrawnRect, clampGroup, isOutsidePlot, limitGrowth, limitPointGrowth, settleInPlot, shiftInside } from "./plot";
 import { anchorPoint, polyArea, polyOfBox, rectPolyOf, resizedFromAnchor } from "./poly";
 import { boxesTrulyIntersect, centerOf, obbOf, obbsSeparated, rectOf } from "./rect";
+import { circulationRatio, unnecessaryGaps } from "./efficiency";
 import { checkAdjacency, collectFindings, compareScores, scoreCandidate, stairConnectionProblems, tierViolations } from "./relationships";
 import { isOpenToBelow, liveBoxes, nearestNeighborPoint, snapToGrid, snapToNearbyNeighbors, wallSnapAdjust } from "./snap";
 import { touchDelta, touchSelected, polyGap } from "./touch";
@@ -1050,16 +1051,17 @@ describe("circulation: a route is the shortest walk of real doors", () => {
       expect(segments[segments.length - 1].pts.at(-1)).toEqual(centerOf(rectOf(dining)));
     });
 
-    it("routes from the garage to the dining room through the shared hallway -- the only doored way there", () => {
+    it("routes from the garage to the dining room through the household's own chain, not the hallway hub", () => {
       // Garage and Dining Room don't touch at all in this house; the
-      // only real route between them runs through the Hallway spine,
-      // which both are doored onto directly.
+      // only real route between them is the household's own chain --
+      // Garage, Mudroom, Laundry, Kitchen, Dining Room -- rather than a
+      // detour through the Hallway hub, which neither is doored onto.
       const { segments, broken } = actorRoute(graph, boxes, [byName("Garage").id, byName("Dining Room").id]);
       expect(broken).toHaveLength(0);
       expect(segments).toHaveLength(1);
       expect(segments[0].level).toBe(0);
-      const hallwayCentre = centerOf(rectOf(byName("Hallway")));
-      expect(segments[0].pts.some((p) => p[0] === hallwayCentre[0] && p[1] === hallwayCentre[1])).toBe(true);
+      const kitchenCentre = centerOf(rectOf(byName("Kitchen")));
+      expect(segments[0].pts.some((p) => p[0] === kitchenCentre[0] && p[1] === kitchenCentre[1])).toBe(true);
     });
 
     it("finds a direct route between the kitchen and the dining room -- a real, required door", () => {
@@ -1511,7 +1513,7 @@ describe("tierViolations: a real door may connect adjacent tiers, never skip one
   });
 });
 
-describe("collectFindings: the one call that ties all three checks together", () => {
+describe("collectFindings: the one call that ties all the checks together", () => {
   it("returns each check's own result under its own key, computed fresh, nothing cached", () => {
     const entry = box({ id: "entry", left: 0, top: 0, width: 4, height: 4, roomType: "entry" });
     const bed = box({ id: "bed", left: 4, top: 0, width: 4, height: 4, roomType: "bedroom" });
@@ -1521,11 +1523,16 @@ describe("collectFindings: the one call that ties all three checks together", ()
     // Same door, evaluated three different ways: it does connect the
     // household to the entry (no reachability problem), it is not a
     // room-type pair the adjacency table has an opinion on, and it does
-    // skip a privacy tier. No stair involved at all, so nothing there either.
+    // skip a privacy tier. No stair involved at all, so nothing there
+    // either. The two of them touch (the door sits on a real shared
+    // wall), so no gap; but a two-room house that is half Entry is
+    // exactly the circulation-ratio rule's own case.
     expect(findings.reachability).toEqual([]);
     expect(findings.adjacency).toEqual([]);
     expect(findings.tier).toHaveLength(1);
     expect(findings.stairConnection).toEqual([]);
+    expect(findings.gaps).toEqual([]);
+    expect(findings.circulationRatio).toEqual([{ level: 0, ratio: 0.5 }]);
   });
 });
 
@@ -1553,14 +1560,81 @@ describe("stairConnectionProblems: a stair should open onto circulation, not a s
   });
 });
 
+describe("unnecessaryGaps: two rooms close enough that closing the gap trades two exterior walls for one shared interior one", () => {
+  const noneUndesired = () => false;
+
+  it("reports nothing for two rooms that already touch", () => {
+    const a = box({ id: "a", left: 0, top: 0, width: 4, height: 4, roomType: "kitchen" });
+    const b = box({ id: "b", left: 4, top: 0, width: 4, height: 4, roomType: "dining_room" });
+    expect(unnecessaryGaps([a, b], 1, false, noneUndesired)).toEqual([]);
+  });
+
+  it("reports nothing for two rooms nowhere near each other", () => {
+    const a = box({ id: "a", left: 0, top: 0, width: 4, height: 4, roomType: "kitchen" });
+    const b = box({ id: "b", left: 20, top: 0, width: 4, height: 4, roomType: "laundry" });
+    expect(unnecessaryGaps([a, b], 1, false, noneUndesired)).toEqual([]);
+  });
+
+  it("flags two rooms close enough to have meant to touch", () => {
+    // 0.5 m apart -- inside the 1.0 m "these were probably meant to
+    // meet" reach touch.ts's own "make zones touch" feature already uses.
+    const a = box({ id: "a", left: 0, top: 0, width: 4, height: 4, roomType: "kitchen" });
+    const b = box({ id: "b", left: 4.5, top: 0, width: 4, height: 4, roomType: "laundry" });
+    const gaps = unnecessaryGaps([a, b], 1, false, noneUndesired);
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0]).toMatchObject({ roomAId: "a", roomBId: "b", level: 0 });
+    expect(gaps[0].gapM).toBeCloseTo(0.5, 6);
+  });
+
+  it("does not flag a gap beyond the reach -- not every distance is a problem, only a suspiciously small one", () => {
+    const a = box({ id: "a", left: 0, top: 0, width: 4, height: 4, roomType: "kitchen" });
+    const b = box({ id: "b", left: 5.5, top: 0, width: 4, height: 4, roomType: "laundry" });
+    expect(unnecessaryGaps([a, b], 1, false, noneUndesired)).toEqual([]);
+  });
+
+  it("exempts a gap between room types the relationship table already says should stay apart", () => {
+    const bed = box({ id: "bed", left: 0, top: 0, width: 4, height: 4, roomType: "bedroom" });
+    const garage = box({ id: "garage", left: 4.5, top: 0, width: 4, height: 4, roomType: "garage_single" });
+    const isUndesired = (a: string, b: string) => (a === "bedroom" && b === "garage_single") || (a === "garage_single" && b === "bedroom");
+    expect(unnecessaryGaps([bed, garage], 1, false, isUndesired)).toEqual([]);
+  });
+});
+
+describe("circulationRatio: how much of a storey its own hallways and landings are eating", () => {
+  it("reports nothing for a storey with no circulation rooms at all", () => {
+    const bed = box({ id: "bed", left: 0, top: 0, width: 4, height: 4, roomType: "bedroom" });
+    expect(circulationRatio([bed], 1, false, circulationOf)).toEqual([]);
+  });
+
+  it("reports nothing when circulation rooms stay under the threshold", () => {
+    // Hallway 4x4 = 16, a much larger Living Room alongside it: well
+    // under 15% of the storey's own total area.
+    const hall = box({ id: "hall", left: 0, top: 0, width: 4, height: 4, roomType: "hallway" });
+    const living = box({ id: "living", left: 4, top: 0, width: 30, height: 4, roomType: "living_room" });
+    expect(circulationRatio([hall, living], 1, false, circulationOf)).toEqual([]);
+  });
+
+  it("flags a storey whose circulation rooms eat more than 15% of its own area", () => {
+    const hall = box({ id: "hall", left: 0, top: 0, width: 4, height: 4, roomType: "hallway" });
+    const bed = box({ id: "bed", left: 4, top: 0, width: 4, height: 4, roomType: "bedroom" });
+    const findings = circulationRatio([hall, bed], 1, false, circulationOf);
+    expect(findings).toEqual([{ level: 0, ratio: 0.5 }]);
+  });
+});
+
 describe("scoreCandidate and compareScores: hard problems always decide first", () => {
   const score = (boxes: Box[], arrows: Arrow[] = []) =>
     scoreCandidate(boxes, 1, arrows, false, passableOf, tierOf, auxiliaryOf, circulationOf);
 
   it("scores a genuinely clean candidate 0 and 0", () => {
-    const entry = box({ id: "entry", left: 0, top: 0, width: 4, height: 4, roomType: "entry" });
-    const ext: Arrow = { id: "ext", level: 0, hostId: "entry", kind: "exterior-main", side: 3, t: 0.5, dir: 1 };
-    const s = score([entry], [ext]);
+    // A single, non-circulation room (not "entry"): a lone foyer would
+    // itself be 100% circulation, which is exactly what the new
+    // efficiency rule (efficiency.ts) exists to flag -- a degenerate
+    // fixture, not a real "clean candidate," so it has no business in a
+    // baseline test for the other four checks.
+    const living = box({ id: "living", left: 0, top: 0, width: 4, height: 4, roomType: "living_room" });
+    const ext: Arrow = { id: "ext", level: 0, hostId: "living", kind: "exterior-main", side: 3, t: 0.5, dir: 1 };
+    const s = score([living], [ext]);
     expect(s.hardProblems).toBe(0);
     expect(s.softRecommendations).toBe(0);
   });
@@ -1568,9 +1642,12 @@ describe("scoreCandidate and compareScores: hard problems always decide first", 
   it("counts a reachability problem as hard, not soft", () => {
     // Entry has its own exterior door; Living Room touches it but has no
     // door of its own, so it's unreached -- one hard problem, and no
-    // adjacency row involves Living Room at all, so nothing soft.
+    // adjacency row involves Living Room at all, so nothing soft. Living
+    // Room is sized well past Entry's own footprint so Entry's own area
+    // stays under the efficiency rule's circulation-ratio threshold too
+    // -- this test is about reachability, not circulation ratio.
     const entry = box({ id: "entry", left: 0, top: 0, width: 4, height: 4, roomType: "entry" });
-    const living = box({ id: "living", left: 4, top: 0, width: 4, height: 4, roomType: "living_room" });
+    const living = box({ id: "living", left: 4, top: 0, width: 30, height: 4, roomType: "living_room" });
     const ext: Arrow = { id: "ext", level: 0, hostId: "entry", kind: "exterior-main", side: 3, t: 0.5, dir: 1 };
     const s = score([entry, living], [ext]);
     expect(s.hardProblems).toBe(1);
@@ -1591,14 +1668,14 @@ describe("scoreCandidate and compareScores: hard problems always decide first", 
   });
 
   it("a candidate with zero hard problems always outranks one with any, however many recommendations it's missing", () => {
-    const empty = { reachability: [], adjacency: [], tier: [], stairConnection: [] };
+    const empty = { reachability: [], adjacency: [], tier: [], stairConnection: [], gaps: [], circulationRatio: [] };
     const worseHard = { hardProblems: 1, softRecommendations: 0, findings: empty };
     const worseSoft = { hardProblems: 0, softRecommendations: 5, findings: empty };
     expect(compareScores(worseSoft, worseHard)).toBeLessThan(0);
   });
 
   it("among equal hard problems, fewer recommendations wins", () => {
-    const empty = { reachability: [], adjacency: [], tier: [], stairConnection: [] };
+    const empty = { reachability: [], adjacency: [], tier: [], stairConnection: [], gaps: [], circulationRatio: [] };
     const moreSoft = { hardProblems: 2, softRecommendations: 3, findings: empty };
     const fewerSoft = { hardProblems: 2, softRecommendations: 1, findings: empty };
     expect(compareScores(fewerSoft, moreSoft)).toBeLessThan(0);
@@ -1606,7 +1683,7 @@ describe("scoreCandidate and compareScores: hard problems always decide first", 
   });
 
   it("is 0 when both counts match", () => {
-    const empty = { reachability: [], adjacency: [], tier: [], stairConnection: [] };
+    const empty = { reachability: [], adjacency: [], tier: [], stairConnection: [], gaps: [], circulationRatio: [] };
     const a = { hardProblems: 1, softRecommendations: 1, findings: empty };
     const b = { hardProblems: 1, softRecommendations: 1, findings: empty };
     expect(compareScores(a, b)).toBe(0);

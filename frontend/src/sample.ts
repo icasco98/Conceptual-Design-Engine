@@ -6,58 +6,50 @@
  * drawing, so its starting layout is one a person drew. It is here so
  * that trying the editor never means building a plan from nothing first.
  *
- * Rebuilt from scratch around this tool's own room-relationship rules
- * (geometry/relationships.ts, geometry/circulation.ts) rather than
- * adapted from an earlier layout: every required door, every privacy-tier
- * step, every stair landing and almost every "easy access" pairing here
- * is deliberately engineered to score cleanly against `scoreCandidate` --
- * see the door-by-door reasoning below. The two rooms it does NOT force
- * (a nanny's quick access to the kitchen and to the laundry, both
- * upstairs-to-downstairs) are left as the honest, minor recommendations
- * they are, rather than contorted into a false zero.
+ * Rebuilt a second time around two more rules (geometry/efficiency.ts)
+ * the first rebuild's own single, house-spanning Hallway broke: real
+ * construction charges for exterior wall and for floor area spent on
+ * moving between rooms rather than living in them, and a hub-and-spoke
+ * plan that gives every room its own corridor door is the cheapest way
+ * to satisfy "easy access" (checkAdjacency's `desired`, at most two
+ * doors) while ignoring both. This house does the opposite on purpose:
  *
- * The plan is one long spine on each storey -- Hallway on the ground
- * floor, Landing above it, both the same rectangle so the stair's fixed
- * footprint (one box, shared across both levels) lands against each of
- * them the same way -- with every room its own spoke off that spine. A
- * spoke touches nothing but the spine unless the two are meant to be
- * door-connected: a small gap (never a door's own doing, since no door
- * can be cut into a gap) keeps every other pair of neighbours from
- * touching by accident, the same way a two-tier privacy skip or an
- * unwanted stair landing would be a real, checked mistake here, not a
- * cosmetic one. Every interior door is hand-placed for exactly this
- * reason: `suggestArrows`'s own entry-rooted walk doors only one wall per
- * newly-found room (a spanning tree, not every touching wall), which is
- * the right choice for letting a person's own drawing decide its own
- * doors, but the wrong one for a spoke that legitimately needs two doors
- * (a Kitchen needs both its Hallway door and its Dining Room door) --
- * this house's doors are load-bearing for the checks below, not a
- * demonstration of that walk.
+ * - Every room that can reasonably abut its neighbour does, a real
+ *   shared wall, not a gap held open in case a door needs cutting later.
+ *   Two rooms are left apart only where relationships.ts actually calls
+ *   for it (`undesired`) -- and even then, by putting a different,
+ *   compatible room between them (Bathroom between Bedroom 2 and Nanny
+ *   Room, below), not by leaving a void in the building.
+ * - The household's living rooms chain into each other -- Living Room to
+ *   Dining Room to Kitchen to Laundry to Mudroom to Garage/Driver Room --
+ *   the way a real open plan does, rather than each hanging its own
+ *   spoke off a corridor. Only Entry, Diwaniya, Living Room and Stair
+ *   touch the ground floor's own Hallway, and only because the privacy
+ *   gradient (tierViolations) genuinely requires a Semi-public step
+ *   between Entry/Diwaniya (Public) and everything behind them
+ *   (Private): that is what the Hallway is *for*, not a place to dock
+ *   every room in the house. It stays a single small room, 2.4 x 2.4.
+ * - Upstairs, bedrooms genuinely do want their own private door off one
+ *   shared corridor -- nobody wants to walk through someone else's room
+ *   to reach their own -- so Landing keeps that shape, but narrow (1.2 m,
+ *   the tool's own corridor minimum) rather than room-width, and no
+ *   longer than the row of doors it actually carries.
  *
- * Kitchen and Dining Room keep a direct required door (Sourced,
- * relationships.ts); Master Bedroom and its Ensuite, Driver Room and its
- * own Bathroom, Nanny Room and its own Bathroom, and Entry and Reception
- * each keep one too. Every other "desired" pairing (kitchen-laundry,
- * mudroom-laundry, garage-mudroom, garage-entry, driver-garage,
- * driver-diwaniya, bedroom-bathroom, nanny-bedroom) is satisfied by
- * giving both rooms their own direct spine door: two spokes off the same
- * hub are always exactly two doors apart, whatever the plan's actual
- * shape, which is what "easy access" (EASY_ACCESS_HOPS = 2) asks for.
- * Diwaniya sits on the spine's *other* side from Entry -- its own
- * street-facing door for guests, and a second, ordinary door onto the
- * Hallway for the household (the internal door a diwaniya really has) --
- * so it is never physically adjacent to Entry (undesired) while still
- * being two doors from Driver Room (desired) through that shared
- * Hallway. Upstairs, Nanny Room's own spine door keeps it two doors from
- * every bedroom (desired) while a full bay of Bathroom sits physically
- * between it and Bedroom 2, so the two never actually touch (undesired).
+ * The honest cost of building this way rather than gaming the hop count:
+ * two `desired` rows this house cannot cheaply reach in two doors any
+ * more (Driver Room to the Diwaniya it once reached only by having its
+ * own corridor spur; Garage to Entry, the same way) join the two it
+ * already couldn't (a nanny's own quick access to the kitchen and to the
+ * laundry, both a floor away). All four are left as the honest, minor
+ * recommendations they are. `scoreCandidate` still reports zero hard
+ * problems -- these were never requirements, only nice-to-haves, and a
+ * real plan is allowed to not have every nice-to-have.
  *
  * Two storeys, one stair spanning both, its own two doors landing on
- * Hallway and Landing and nothing else (a stair may only open onto
- * circulation space). Three exterior doors -- the front door on Entry,
- * the diwaniya's own street door, and the garage's own -- so the
- * household, a diwaniya guest and a car each have a door that is
- * actually theirs.
+ * Hallway and Landing and nothing else. Three exterior doors -- the
+ * front door on Entry, the diwaniya's own street door, and the garage's
+ * own -- so the household, a diwaniya guest and a car each have a door
+ * that is actually theirs.
  *
  * "Reset to the sample layout" brings all of this back.
  */
@@ -87,7 +79,7 @@ export function storeysSpanned(heightM: number): number {
 /** The drawing sheet. Purely a reference area — a faint rectangle on the
  *  plan and the ground plane under the 3D — and nothing stops a room being
  *  drawn outside it. To constrain a layout, switch the plot on instead. */
-export const SHEET = { width: 35, depth: 20 };
+export const SHEET = { width: 40, depth: 22 };
 
 /** The plot a project starts with: the sheet's own rectangle, switched
  *  off. Off is the only honest default — the tool cannot know the site
@@ -95,15 +87,13 @@ export const SHEET = { width: 35, depth: 20 };
  *  fence a layout in for no reason. */
 export const DEFAULT_PLOT: Plot = { on: false, left: 0, top: 0, width: SHEET.width, depth: SHEET.depth };
 
-/** Where the sample house's own origin sits on the sheet. */
-const OX = 1;
+/** Where the sample house's own origin sits on the sheet -- chosen so
+ *  every room, on both storeys, lands at a positive coordinate; the two
+ *  storeys are laid out independently (only the Stair's one shared
+ *  footprint has to agree between them) and do not happen to share a
+ *  footprint outline. */
+const OX = 15;
 const OY = 3;
-
-/** Kept clear between any two spokes that are not meant to share a wall
- *  -- see the file doc comment: a gap, not a doorless wall, is what
- *  actually keeps them apart, since a carve or a future edit could still
- *  find a doorless-but-touching wall and put a door in it. */
-const GAP = 0.3;
 
 interface Placed {
   name: string;
@@ -117,88 +107,91 @@ interface Placed {
 }
 
 // Each rect is [left, top, width, height] in meters relative to the house
-// origin. Two spines -- Hallway (level 0) and Landing (level 1) -- share
-// the same [left, top, width] so the Stair's one fixed footprint (a
-// single box, spanning both levels) touches each of them identically.
-// Every other room is a spoke off one spine or the other; see the file
-// doc comment for which walls are meant to touch and which are kept
-// apart by a deliberate GAP.
-const SPINE: [number, number, number] = [0, 6.0, 32.4];
-const SPINE_H = 1.4;
-// Ground floor, west to east along the spine's south face.
-const GARAGE_X = 0;
-const DRIVER_ROOM_X = GARAGE_X + 3.6 + GAP;
-const MUDROOM_X = DRIVER_ROOM_X + 3.3 + GAP;
-const LAUNDRY_X = MUDROOM_X + 1.8 + GAP;
-const KITCHEN_X = LAUNDRY_X + 1.8 + GAP;
-const DINING_X = KITCHEN_X + 3.6; // no gap: required door, shared wall
-const LIVING_X = DINING_X + 3.6 + GAP;
-const STAIR_X = LIVING_X + 4.5 + GAP;
-const ENTRY_X = STAIR_X + 1.2 + GAP;
-const RECEPTION_X = ENTRY_X + 2.4; // no gap: required door, shared wall
-// First floor, west to east along the spine's south face -- independent
-// x positions from the ground floor's (only the Stair's fixed footprint,
-// below, has to agree between the two).
-const MASTER_X = 0;
-const BEDROOM1_X = MASTER_X + 4.0 + GAP;
-const BEDROOM2_X = BEDROOM1_X + 3.3 + GAP;
-const BATH_SHARED_X = BEDROOM2_X + 3.3 + GAP;
-const NANNY_X = BATH_SHARED_X + 1.8 + GAP;
-const OFFICE_X = NANNY_X + 3.3 + GAP;
-
+// origin. Every touching pair below shares a real wall (no gap) unless
+// relationships.ts's ROOM_RELATIONSHIPS actually lists that pair
+// `undesired` -- see the file doc comment.
 const PLACED: Placed[] = [
-  // ---- the two spines ---------------------------------------------------
-  { name: "Hallway", roomType: "hallway", level: 0, kind: "corridor", rect: [...SPINE, SPINE_H] },
-  { name: "Landing", roomType: "hallway", level: 1, kind: "corridor", rect: [...SPINE, SPINE_H] },
+  // ---- ground floor: the small hub the privacy gradient requires -------
+  // Public (Entry) may only ever step down to Semi-public, never straight
+  // to Private -- Hallway is that one step, and stays exactly large
+  // enough to be one: 2.4 x 2.4, three spokes, nothing routed through it
+  // that doesn't need the step. The diwaniya's own household door goes
+  // straight to Dining Room instead (below) -- also Semi-public, and a
+  // real Gulf diwaniya's dining room often is dual-use this way -- rather
+  // than fighting Hallway's own small footprint for a fourth spoke.
+  // Wider than its own minimum on purpose: Entry's row sits on the east
+  // part of this same south wall (below), clear of Living Room's own
+  // wall to the west -- Living Room has to reach almost 2 m south of
+  // Hallway's own floor to be tall enough for Dining Room (its own
+  // required neighbour) to fit inside it, well past where Entry's row
+  // starts, so the two need real separation, not just the corridor's
+  // own width, to stay off each other's walls.
+  { name: "Hallway", roomType: "hallway", level: 0, kind: "corridor", rect: [0, 6.65, 3.6, 2.4] },
+  { name: "Entry", roomType: "entry", level: 0, rect: [1.2, 9.05, 2.4, 2.4], isEntry: true },
+  { name: "Reception", roomType: "reception", level: 0, rect: [1.2, 11.45, 4.5, 5.5] },
+  // Exactly Hallway's own height, its minimum -- contains Hallway's full
+  // east wall with nothing left over, which is what keeps it clear of
+  // Reception's own row (below) rather than reaching into it.
+  { name: "Stair", roomType: "stair", level: 0, heightM: 2 * STOREY_HEIGHT_M, rect: [3.6, 6.65, 1.2, 2.4] },
 
-  // ---- ground floor, north of the spine ----------------------------------
-  // Its own street door for guests (sampleArrows, below) plus an
-  // ordinary door onto the Hallway for the household -- the internal
-  // door a real diwaniya has -- but never physically next to Entry
-  // (relationships.ts: diwaniya-entry undesired), which sits at the
-  // spine's opposite end, far along the south face.
-  { name: "Diwaniya", roomType: "diwaniya", level: 0, rect: [0, -2.0, 6.5, 8.0] },
+  // ---- ground floor: the household's own chain, room to room ----------
+  // Living Room is Hallway's one Private-side spoke; everything else
+  // here reaches the house by walking through the room next to it, the
+  // way an open plan actually works, not by each having its own
+  // corridor door. Dining Room is sized to Diwaniya's own width so its
+  // household door is a real, full-length shared wall, not a sliver of
+  // one -- not an unusual size for a dining room built to double as
+  // overflow seating for the diwaniya's own gatherings. Living Room is
+  // sized to match Dining Room's own height for the same reason.
+  { name: "Living Room", roomType: "living_room", level: 0, rect: [-4.5, 6.65, 4.5, 4.2] },
+  { name: "Dining Room", roomType: "dining_room", level: 0, rect: [-11.0, 6.65, 6.5, 4.2] },
+  { name: "Diwaniya", roomType: "diwaniya", level: 0, rect: [-11.0, -1.35, 6.5, 8.0] },
+  { name: "Kitchen", roomType: "kitchen", level: 0, rect: [-14.6, 6.65, 3.6, 4.2] },
+  // Widened to Dining Room's own left wall (matching it exactly, no
+  // sliver of unclaimed floor left between them) rather than the
+  // narrower footprint a laundry alone would need.
+  { name: "Laundry", roomType: "laundry", level: 0, rect: [-13.7, 10.85, 2.7, 2.4] },
+  // Widened to match, so its own east wall reaches Driver Room's -- a
+  // deeper mudroom is not an unusual real trade for that.
+  { name: "Mudroom", roomType: "mudroom", level: 0, rect: [-13.7, 13.25, 2.7, 2.85] },
+  { name: "Garage", roomType: "garage_single", level: 0, rect: [-17.3, 10.85, 3.6, 6.5] },
+  { name: "Driver Room", roomType: "driver_room", level: 0, rect: [-11.0, 12.5, 3.3, 3.6] },
+  { name: "Driver Bathroom", roomType: "driver_bathroom", level: 0, rect: [-11.0, 16.1, 3.3, 2.4] },
 
-  // ---- ground floor, south of the spine, west to east --------------------
-  { name: "Garage", roomType: "garage_single", level: 0, rect: [GARAGE_X, 7.4, 3.6, 6.5] },
-  { name: "Driver Room", roomType: "driver_room", level: 0, rect: [DRIVER_ROOM_X, 7.4, 3.3, 3.6] },
-  // Full width of Driver Room's own south wall, not a narrower slice of
-  // it -- so its required door's t=0.5 lands inside the shared wall
-  // regardless of which way `t` runs on that side.
-  { name: "Driver Bathroom", roomType: "driver_bathroom", level: 0, rect: [DRIVER_ROOM_X, 11.0, 3.3, 2.4] },
-  { name: "Mudroom", roomType: "mudroom", level: 0, rect: [MUDROOM_X, 7.4, 1.8, 2.1] },
-  { name: "Laundry", roomType: "laundry", level: 0, rect: [LAUNDRY_X, 7.4, 1.8, 2.4] },
-  { name: "Kitchen", roomType: "kitchen", level: 0, rect: [KITCHEN_X, 7.4, 3.6, 4.2] },
-  // Same height as Kitchen, so their shared wall runs its full length --
-  // required, relationships.ts.
-  { name: "Dining Room", roomType: "dining_room", level: 0, rect: [DINING_X, 7.4, 3.6, 4.2] },
-  { name: "Living Room", roomType: "living_room", level: 0, rect: [LIVING_X, 7.4, 4.5, 5.5] },
-  { name: "Stair", roomType: "stair", level: 0, heightM: 2 * STOREY_HEIGHT_M, rect: [STAIR_X, 7.4, 1.2, 3.0] },
-  { name: "Entry", roomType: "entry", level: 0, rect: [ENTRY_X, 7.4, 2.4, 2.4], isEntry: true },
-  // Entry's own height (2.4) is the shorter of the two, so it is also
-  // the shared wall's full extent -- required, relationships.ts.
-  { name: "Reception", roomType: "reception", level: 0, rect: [RECEPTION_X, 7.4, 4.5, 5.5] },
-
-  // ---- first floor, south of the spine, west to east ---------------------
-  { name: "Master Bedroom", roomType: "master_bedroom", level: 1, rect: [MASTER_X, 7.4, 4.0, 4.5] },
-  // Full width of Master Bedroom's own south wall -- required,
-  // relationships.ts, same reasoning as Driver Bathroom above.
-  { name: "Ensuite", roomType: "bathroom", level: 1, rect: [MASTER_X, 11.9, 4.0, 2.4] },
-  { name: "Bedroom 1", roomType: "bedroom", level: 1, rect: [BEDROOM1_X, 7.4, 3.3, 3.6] },
-  { name: "Bedroom 2", roomType: "bedroom", level: 1, rect: [BEDROOM2_X, 7.4, 3.3, 3.6] },
-  // Its own Landing door keeps it two doors from every bedroom (desired)
-  // without ever needing to touch one directly. Physically, it is also
-  // what keeps Bedroom 2 and Nanny Room apart -- see below.
-  { name: "Bathroom", roomType: "bathroom", level: 1, rect: [BATH_SHARED_X, 7.4, 1.8, 2.4] },
-  // Bathroom, immediately west, is the whole reason Nanny Room's west
-  // wall never touches Bedroom 2's east wall: nanny_room-bedroom is
-  // *both* desired (easy access -- satisfied via the Landing, two doors
-  // either way) *and* undesired (no shared wall) in relationships.ts,
-  // the deliberate "close by, never adjoining" reading of where a
-  // nanny's own room sits relative to the children's.
-  { name: "Nanny Room", roomType: "nanny_room", level: 1, rect: [NANNY_X, 7.4, 3.3, 3.6] },
-  { name: "Nanny Bathroom", roomType: "nanny_bathroom", level: 1, rect: [NANNY_X, 11.0, 3.3, 2.4] },
-  { name: "Office", roomType: "office", level: 1, rect: [OFFICE_X, 7.4, 3.0, 3.3] },
+  // ---- first floor: a narrow corridor, only as long as its own doors --
+  // Same reasoning as Hallway below it, but for a different, entirely
+  // legitimate reason a corridor exists at all: nobody wants to walk
+  // through one bedroom to reach another, so each gets its own door here
+  // -- kept to the tool's own minimum corridor width (1.2 m) rather than
+  // a full room's, so six doors still costs a fraction of the floor.
+  // Rooms alternate which side of it they sit on, Master/Bathroom/Nanny
+  // south and Bedroom 1/Bedroom 2/Office north, which is also what keeps
+  // Nanny Room off both bedrooms' own walls without needing a buffer
+  // room between them -- opposite sides of a corridor never touch. The
+  // south row starts well clear of Stair's own footprint (below the
+  // corridor, same as the south row itself, unlike the north row, which
+  // sits above the corridor and so never shares Stair's own strip of it
+  // at all -- a real gap here, not a shared wall, since Stair is barely
+  // taller than the corridor itself and whatever sits beside it on this
+  // side is not).
+  { name: "Landing", roomType: "hallway", level: 1, kind: "corridor", rect: [2.4, 5.45, 12.55, 1.2] },
+  { name: "Master Bedroom", roomType: "master_bedroom", level: 1, rect: [5.85, 6.65, 4.0, 5.5] },
+  // Full width of its owner's own wall -- required, relationships.ts --
+  // so its door's t=0.5 lands inside the shared wall regardless of which
+  // way `t` runs on that side.
+  { name: "Ensuite", roomType: "bathroom", level: 1, rect: [5.85, 12.15, 4.0, 2.7] },
+  { name: "Bathroom", roomType: "bathroom", level: 1, rect: [9.85, 6.65, 1.8, 3.0] },
+  // nanny_room-bedroom is *both* desired (easy access -- two doors
+  // either way, via Landing) *and* undesired (no shared wall) in
+  // relationships.ts, the deliberate "close by, never adjoining" reading
+  // of where a nanny's own room sits relative to the children's -- Master
+  // Bedroom sits between Nanny Room and the corridor's own end on this
+  // side, so neither bedroom ever shares a wall with it.
+  { name: "Nanny Room", roomType: "nanny_room", level: 1, rect: [11.65, 6.65, 3.3, 4.5] },
+  { name: "Nanny Bathroom", roomType: "nanny_bathroom", level: 1, rect: [11.65, 11.15, 3.3, 2.7] },
+  { name: "Bedroom 1", roomType: "bedroom", level: 1, rect: [2.4, 0.85, 3.3, 4.6] },
+  { name: "Bedroom 2", roomType: "bedroom", level: 1, rect: [5.7, 0.85, 3.3, 4.6] },
+  { name: "Office", roomType: "office", level: 1, rect: [9.0, 1.15, 3.0, 4.3] },
 ];
 
 export function sampleBoxes(): Box[] {
@@ -250,37 +243,36 @@ export function sampleArrows(boxes: Box[]): Arrow[] {
   };
   return [
     // ---- exterior doors: the household, a diwaniya guest, a car -------
-    door("Entry", 2, { kind: "exterior-main" }),
+    door("Entry", 1, { kind: "exterior-main" }),
     door("Diwaniya", 0, { kind: "exterior-side" }),
-    door("Garage", 2, { kind: "exterior-side" }),
+    door("Garage", 3, { kind: "exterior-side" }),
 
-    // ---- ground floor spine doors --------------------------------------
-    door("Diwaniya", 2), // the diwaniya's own internal, household door
-    door("Garage", 0),
-    door("Driver Room", 0),
-    door("Mudroom", 0),
-    door("Laundry", 0),
-    door("Kitchen", 0),
-    door("Dining Room", 0),
-    door("Living Room", 0),
-    door("Stair", 0),
-    door("Entry", 0),
+    // ---- ground floor: Hallway's three spokes ----------------------------
+    door("Entry", 0), // Entry <-> Hallway
+    door("Entry", 2), // Entry <-> Reception
+    door("Hallway", 3), // Hallway <-> Living Room
+    door("Hallway", 1), // Hallway <-> Stair
 
-    // ---- ground floor direct doors --------------------------------------
-    door("Entry", 1), // Entry <-> Reception
+    // ---- ground floor: the household's own chain -------------------------
+    door("Dining Room", 0), // Dining Room <-> Diwaniya (the diwaniya's own household door)
+    door("Dining Room", 1), // Dining Room <-> Living Room
     door("Kitchen", 1), // Kitchen <-> Dining Room
+    door("Laundry", 0), // Laundry <-> Kitchen
+    door("Mudroom", 0), // Mudroom <-> Laundry
+    door("Mudroom", 3), // Mudroom <-> Garage
+    door("Mudroom", 1), // Mudroom <-> Driver Room
     door("Driver Room", 2), // Driver Room <-> Driver Bathroom
 
-    // ---- first floor spine doors ----------------------------------------
+    // ---- first floor: Landing's own row of doors -------------------------
+    door("Stair", 0, { level: 1 }), // Stair <-> Landing (the same Stair box, its upper door)
     door("Master Bedroom", 0),
-    door("Bedroom 1", 0),
-    door("Bedroom 2", 0),
     door("Bathroom", 0),
     door("Nanny Room", 0),
-    door("Office", 0),
-    door("Stair", 0, { level: 1 }), // the same Stair box, its upper door
+    door("Bedroom 1", 2),
+    door("Bedroom 2", 2),
+    door("Office", 2),
 
-    // ---- first floor direct doors ----------------------------------------
+    // ---- first floor: direct doors -----------------------------------------
     door("Master Bedroom", 2), // Master Bedroom <-> Ensuite
     door("Nanny Room", 2), // Nanny Room <-> Nanny Bathroom
   ];

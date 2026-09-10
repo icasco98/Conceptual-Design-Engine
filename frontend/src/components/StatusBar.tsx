@@ -14,6 +14,7 @@ import { useMemo } from "react";
 
 import { displayShapes } from "../geometry/carve";
 import { actorRoute, buildCirculationGraph, sharedSegments, type ReachabilityProblem } from "../geometry/circulation";
+import type { CirculationRatioFinding, GapFinding } from "../geometry/efficiency";
 import { outsidePlot } from "../geometry/plot";
 import { polyArea } from "../geometry/poly";
 import { adjacencySeverity, collectFindings, TIER_ORDER, type AdjacencyStatus, type StairConnectionProblem, type TierViolation } from "../geometry/relationships";
@@ -101,6 +102,26 @@ function adjacencyRecommendationFindings(rows: AdjacencyStatus[]): Finding[] {
     });
 }
 
+/** A cost/efficiency finding, not a correctness one (geometry/efficiency.ts)
+ * -- always a recommendation, never a problem, same as a `desired` miss:
+ * the house still works, it just costs more than it needs to. */
+function gapFindings(gaps: GapFinding[], boxesById: Map<string, Box>): Finding[] {
+  return gaps.flatMap((g) => {
+    const a = boxesById.get(g.roomAId);
+    const b = boxesById.get(g.roomBId);
+    if (!a || !b) return [];
+    const cm = Math.round(g.gapM * 100);
+    return [{ level: g.level, text: `${a.name} and ${b.name} are ${cm} cm apart -- close enough to share a wall and save the cost of two` }];
+  });
+}
+
+function circulationRatioFindings(findings: CirculationRatioFinding[]): Finding[] {
+  return findings.map((f) => ({
+    level: f.level,
+    text: `Hallways and landings take up ${Math.round(f.ratio * 100)}% of this floor -- more than usual for a house this size`,
+  }));
+}
+
 /** Every finding, floor by floor -- lowest first, a floor's own findings
  * kept in whichever order they arrived in (stable sort), not scattered
  * across the list in whatever order the four checks happened to run.
@@ -154,24 +175,30 @@ export function StatusBar() {
     return sharedSegments(routes, level).length;
   }, [showCirculation, actors, boxes, storeys, level, arrows, autoCarve]);
 
-  // Every storey at once, the same reasoning as `strays` above: a privacy
-  // problem two floors up is exactly the kind of thing a person would not
+  // Every storey at once, the same reasoning as `strays` above: an issue
+  // two floors up is exactly the kind of thing a person would not
   // otherwise notice. Split into hard problems (a real requirement unmet
   // or conflict present -- tier skips, reachability problems and a
   // stair opening onto the wrong room are always this severity) and soft
-  // recommendations (a `desired` miss), so the two never read as equally
+  // recommendations (a `desired` miss, an unnecessary gap, an over-ratio
+  // hallway -- correct but costly), so the two never read as equally
   // urgent. Each list is organized floor by floor, not left in whatever
-  // order the four checks happened to produce them in.
-  const { privacyProblems, privacyRecommendations } = useMemo(() => {
+  // order the checks happened to produce them in.
+  const { problems, recommendations } = useMemo(() => {
     const boxesById = new Map(boxes.map((b) => [b.id, b]));
     const findings = collectFindings(boxes, storeys, arrows, autoCarve, passableOf, tierOf, auxiliaryOf, circulationOf);
-    const problems = [
+    const hard = [
       ...tierFindings(findings.tier, boxesById),
       ...reachabilityFindings(findings.reachability, boxesById),
       ...stairConnectionFindings(findings.stairConnection, boxesById),
       ...adjacencyProblemFindings(findings.adjacency),
     ];
-    return { privacyProblems: organizeByFloor(problems), privacyRecommendations: organizeByFloor(adjacencyRecommendationFindings(findings.adjacency)) };
+    const soft = [
+      ...adjacencyRecommendationFindings(findings.adjacency),
+      ...gapFindings(findings.gaps, boxesById),
+      ...circulationRatioFindings(findings.circulationRatio),
+    ];
+    return { problems: organizeByFloor(hard), recommendations: organizeByFloor(soft) };
   }, [boxes, storeys, arrows, autoCarve]);
 
   const plotArea = plot.width * plot.depth;
@@ -212,18 +239,17 @@ export function StatusBar() {
             <IconFootprints size={12} /> {sharedCount} shared stretch{sharedCount === 1 ? "" : "es"} of wall on this floor
           </span>
         )}
-        {privacyProblems.flat.length > 0 && (
-          <span className="status-item error" title={privacyProblems.grouped}>
-            <IconWarn size={12} /> {privacyProblems.flat.length} privacy {privacyProblems.flat.length === 1 ? "problem" : "problems"}:{" "}
-            {privacyProblems.flat.slice(0, 2).join("; ")}
-            {privacyProblems.flat.length > 2 && ` — and ${privacyProblems.flat.length - 2} more (hover to see all, by floor)`}
+        {problems.flat.length > 0 && (
+          <span className="status-item error" title={problems.grouped}>
+            <IconWarn size={12} /> {problems.flat.length} privacy {problems.flat.length === 1 ? "problem" : "problems"}: {problems.flat.slice(0, 2).join("; ")}
+            {problems.flat.length > 2 && ` — and ${problems.flat.length - 2} more (hover to see all, by floor)`}
           </span>
         )}
-        {privacyRecommendations.flat.length > 0 && (
-          <span className="status-item muted" title={privacyRecommendations.grouped}>
-            {privacyRecommendations.flat.length} {privacyRecommendations.flat.length === 1 ? "recommendation" : "recommendations"}:{" "}
-            {privacyRecommendations.flat.slice(0, 2).join("; ")}
-            {privacyRecommendations.flat.length > 2 && ` — and ${privacyRecommendations.flat.length - 2} more (hover to see all, by floor)`}
+        {recommendations.flat.length > 0 && (
+          <span className="status-item muted" title={recommendations.grouped}>
+            {recommendations.flat.length} {recommendations.flat.length === 1 ? "recommendation" : "recommendations"}:{" "}
+            {recommendations.flat.slice(0, 2).join("; ")}
+            {recommendations.flat.length > 2 && ` — and ${recommendations.flat.length - 2} more (hover to see all, by floor)`}
           </span>
         )}
       </div>
